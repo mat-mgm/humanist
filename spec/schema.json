@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-os.local/schema.json",
+  "title": "Spatial-Analytical Knowledge OS Ontology",
+  "description": "The unified trait-based compositional schema for generating Rust and TypeScript models.",
+  "type": "object",
+  "definitions": {
+    "EntityKind": {
+      "type": "string",
+      "enum": ["physical", "digital", "abstract", "agent"]
+    },
+    "Entity": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "SurrealDB record ID (e.g., entity:01HGW...)" },
+        "kind": { "$ref": "#/definitions/EntityKind" },
+        "label": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "metadata": { "type": "object", "additionalProperties": true },
+        "deleted_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "required": ["id", "kind", "label", "tags", "metadata"]
+    },
+    "SpatialTrait": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "SurrealDB record ID (e.g., spatial_trait:01HGW...)" },
+        "owner": { "type": "string", "description": "Pointer to Entity ID" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "alt": { "type": "number", "description": "Meters above ellipsoid" },
+        "heading": { "type": "number" }
+      },
+      "required": ["id", "owner", "lat", "lng", "alt", "heading"]
+    },
+    "BlobTrait": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "owner": { "type": "string" },
+        "storage_id": { "type": "string", "description": "S3 Key or local file path" },
+        "bucket": { "type": "string" },
+        "mime": { "type": "string", "description": "e.g., model/gltf-binary, application/pdf" },
+        "hash": { "type": "string", "description": "SHA-256 hash for integrity" },
+        "size": { "type": "integer", "description": "File size in bytes" }
+      },
+      "required": ["id", "owner", "storage_id", "bucket", "mime", "hash", "size"]
+    },
+    "AnalyticsTrait": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "owner": { "type": "string" },
+        "formula": { "type": "string", "description": "LaTeX or raw math string" },
+        "data_source": { "type": "string" },
+        "params": { "type": "object", "additionalProperties": true }
+      },
+      "required": ["id", "owner", "formula", "data_source", "params"]
+    },
+    "ContextProfile": {
+      "type": "object",
+      "description": "A Reified Node defining custom graph traversal boundaries",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string", "description": "e.g., 'Maintenance View Context'" },
+        "allowed_edges": { "type": "array", "items": { "type": "string" }, "description": "List of relationships to traverse, e.g., ['contained_in', 'authored_by']" },
+        "max_depth": { "type": "integer", "default": 2 }
+      },
+      "required": ["id", "label", "allowed_edges", "max_depth"]
+    }
+  }
+}
