@@ -1,0 +1,22 @@
+[package]
+name = "core_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ulid = "1.1"
+async-trait = "0.1"
+surrealdb = { version = "2.2", features = ["kv-surrealkv"] }
+aws-config = { version = "1.5.17", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.77.2"
+tokio = { version = "1.43", features = ["full", "sync", "time"] }
+tonic = "0.12.3"
+prost = "0.13.4"
+futures = "0.3.31"
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12.3"

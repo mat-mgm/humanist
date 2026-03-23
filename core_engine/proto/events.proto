@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package events;
+
+service EventStream {
+  rpc ListenEvents (ListenRequest) returns (stream EventResponse);
+}
+
+message ListenRequest {
+  string filter_topic = 1;
+}
+
+message EventResponse {
+  string topic = 1;
+  uint64 revision = 2;
+  string ulid = 3;
+}
