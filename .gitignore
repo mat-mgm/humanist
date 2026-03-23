@@ -24,7 +24,7 @@ lerna-debug.log*
 # Local environment files
 *.local
 # Project-specific
-public/cesium
+**/public/cesium/
 
 # Local environment files
 *.local
@@ -39,8 +39,7 @@ result-*
 # Agent directory
 .agent/
 # Editors / OS
-.vscode/*
-!.vscode/extensions.json
+**/.vscode/
 .idea
 .DS_Store
 *.suo
