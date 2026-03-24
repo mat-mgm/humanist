@@ -141,6 +141,16 @@ async fn handle_blob(db: SurrealDbAdapter, bus: EventBus, blob: Arc<core_engine:
             if let Err(e) = blob.upload(&file, &storage_id).await {
                 return Err(format!("Failed to upload physical blob: {}", e).into());
             }
+
+            // Auto-upload adjacent .bin files for .gltf to ensure geometries aren't broken
+            let file_path = std::path::Path::new(&file);
+            if file_path.extension().and_then(|e| e.to_str()) == Some("gltf") {
+                let bin_path = file_path.with_extension("bin");
+                if bin_path.exists() {
+                    let bin_storage_id = format!("{}/{}", ulid, bin_path.file_name().and_then(|n| n.to_str()).unwrap_or("blob.bin"));
+                    let _ = blob.upload(&bin_path.to_string_lossy(), &bin_storage_id).await;
+                }
+            }
             
             let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
             let l_path = file.to_lowercase();
@@ -164,7 +174,7 @@ async fn handle_blob(db: SurrealDbAdapter, bus: EventBus, blob: Arc<core_engine:
 
             let entity = Entity {
                 id: id.clone(),
-                kind: EntityKind::Digital,
+                kind: EntityKind::Blob,
                 label: label.clone(),
                 tags: vec!["blob".to_string()],
                 metadata: {
