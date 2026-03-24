@@ -59,13 +59,74 @@ export const TerminalPanel = memo(function TerminalPanel() {
     const themeObserver = new MutationObserver(updateTheme);
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-    // Simple shell echo simulation
+    // Explicit Ctrl+Shift+C / Ctrl+Shift+V handling
+    term.attachCustomKeyEventHandler((e) => {
+      // We only want to handle keydown events, not keyup, to avoid double-firing
+      if (e.type !== 'keydown') return true;
+
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (isModifier && e.shiftKey) {
+        const key = e.key.toLowerCase();
+        
+        if (key === 'c' && term.hasSelection()) {
+          // navigator.clipboard is often blocked in secure contexts without explicit permissions
+          // xterm structures its hidden textarea precisely so this standard synchronous copy works
+          document.execCommand('copy');
+          term.clearSelection();
+          return false; // Prevent xterm from processing this
+        }
+        
+        if (key === 'v') {
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            navigator.clipboard.readText().then((text) => {
+              const cleanText = text.replace(/[\r\n]/g, '');
+              if (!cleanText) return;
+              commandBuffer = commandBuffer.slice(0, cursorIdx) + cleanText + commandBuffer.slice(cursorIdx);
+              cursorIdx += cleanText.length;
+              redrawLine();
+            }).catch(err => console.error('Clipboard async read failed (permissions?):', err));
+          }
+          return false; // Prevent xterm from processing this
+        }
+      }
+      return true; // Let xterm handle everything else normally (like Ctrl+C interrupt)
+    });
+
+    // History array and cursor state
+    const history: string[] = [];
+    let historyIdx = -1;
     let commandBuffer = '';
+    let cursorIdx = 0; // relative to the start of the command
+
+    const printPrompt = () => {
+      term.write('\x1b[1;32m$\x1b[0m ');
+    };
+
+    const redrawLine = () => {
+      // Clear line from cursor, backtrack to prompt, print buffer, then position cursor
+      term.write('\x1b[2K\x1b[G');
+      printPrompt();
+      term.write(commandBuffer);
+      
+      // Move cursor back if it's not at the end of the buffer
+      if (cursorIdx < commandBuffer.length) {
+        term.write(`\x1b[${commandBuffer.length - cursorIdx}D`);
+      }
+    };
+
     term.onData(e => {
       switch (e) {
         case '\r': // Enter
           term.writeln('');
           const cmd = commandBuffer.trim();
+          
+          if (cmd.length > 0) {
+            if (history[history.length - 1] !== cmd) {
+              history.push(cmd);
+            }
+          }
+          historyIdx = history.length;
+
           if (cmd === 'help') {
             term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
           } else if (cmd === 'clear') {
@@ -82,19 +143,77 @@ export const TerminalPanel = memo(function TerminalPanel() {
             term.writeln(`\x1b[31mbash: ${cmd}: command not found\x1b[0m`);
           }
           commandBuffer = '';
-          term.write('\x1b[1;32m$\x1b[0m ');
+          cursorIdx = 0;
+          printPrompt();
           break;
+
         case '\x7F': // Backspace
-          if (term.buffer.active.cursorX > 2) {
-            term.write('\b \b');
-            commandBuffer = commandBuffer.slice(0, -1);
+          if (cursorIdx > 0) {
+            commandBuffer = commandBuffer.slice(0, cursorIdx - 1) + commandBuffer.slice(cursorIdx);
+            cursorIdx--;
+            redrawLine();
           }
           break;
-        default:
-          if (e.length === 1 && e.charCodeAt(0) >= 32) {
-            term.write(e);
-            commandBuffer += e;
+
+        case '\x1b[A': // Up arrow
+          if (history.length > 0 && historyIdx > 0) {
+            historyIdx--;
+            commandBuffer = history[historyIdx];
+            cursorIdx = commandBuffer.length;
+            redrawLine();
           }
+          break;
+
+        case '\x1b[B': // Down arrow
+          if (historyIdx < history.length - 1) {
+            historyIdx++;
+            commandBuffer = history[historyIdx];
+            cursorIdx = commandBuffer.length;
+            redrawLine();
+          } else {
+            historyIdx = history.length;
+            commandBuffer = '';
+            cursorIdx = 0;
+            redrawLine();
+          }
+          break;
+
+        case '\x1b[C': // Right arrow
+          if (cursorIdx < commandBuffer.length) {
+            cursorIdx++;
+            term.write('\x1b[C');
+          }
+          break;
+
+        case '\x1b[D': // Left arrow
+          if (cursorIdx > 0) {
+            cursorIdx--;
+            term.write('\x1b[D');
+          }
+          break;
+
+        case '\x03': // Ctrl+C (if not yielded to browser due to no selection)
+          term.writeln('^C');
+          commandBuffer = '';
+          cursorIdx = 0;
+          printPrompt();
+          break;
+
+        case '\x16': // Ctrl+V (won't usually trigger if yielded above)
+          break;
+
+        default:
+          // Ignore other control sequences
+          if (e.length === 1 && e.charCodeAt(0) < 32 && e !== '\x03' && e !== '\t') return;
+          if (e.startsWith('\x1b')) return;
+
+          // Process input (could be single char from typing or multi-char from paste)
+          const cleanText = e.replace(/[\r\n]/g, ''); // strip newlines so paste stays inline
+          if (!cleanText) return;
+
+          commandBuffer = commandBuffer.slice(0, cursorIdx) + cleanText + commandBuffer.slice(cursorIdx);
+          cursorIdx += cleanText.length;
+          redrawLine();
       }
     });
 
