@@ -24,7 +24,7 @@ impl SurrealDbAdapter {
         
         let schema_ql = r#"
             DEFINE TABLE entity SCHEMAFULL;
-            DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent'];
+            DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob'];
             DEFINE FIELD label ON entity TYPE string;
             DEFINE FIELD tags ON entity TYPE array;
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
@@ -92,9 +92,14 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn save_spatial_trait(&self, trait_: SpatialTrait) -> Result<(), String> {
         let qs = format!("CREATE {} CONTENT $trait_;", trait_.id);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
         self.db.query(qs)
-            .bind(("trait_", trait_))
-            .await.map_err(|e| e.to_string())?;
+            .bind(("trait_", value))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -107,9 +112,14 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn save_blob_trait(&self, trait_: crate::models::BlobTrait) -> Result<(), String> {
         let qs = format!("CREATE {} CONTENT $trait_;", trait_.id);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
         self.db.query(qs)
-            .bind(("trait_", trait_))
-            .await.map_err(|e| e.to_string())?;
+            .bind(("trait_", value))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -117,16 +127,7 @@ impl GraphDatabase for SurrealDbAdapter {
         let mut response = self.db.query("SELECT *, type::string(id) AS id, type::string(owner) AS owner FROM blob_trait;")
             .await.map_err(|e| e.to_string())?;
             
-        let raw_records: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
-        
-        let mut traits = Vec::new();
-        for record in raw_records {
-            match serde_json::from_value::<crate::models::BlobTrait>(record.clone()) {
-                Ok(t) => traits.push(t),
-                Err(e) => eprintln!("❌ BlobTrait Deserialization Failure: {} | Payload: {}", e, serde_json::to_string(&record).unwrap_or_default()),
-            }
-        }
-        
+        let traits: Vec<crate::models::BlobTrait> = response.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
     }
 

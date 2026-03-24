@@ -8,6 +8,7 @@ pub enum EntityKind {
     Digital,
     Abstract,
     Agent,
+    Blob,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
