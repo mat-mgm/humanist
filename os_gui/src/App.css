@@ -1,60 +1,88 @@
 /* Removed @import to fix WebKit strict parser crash */
 
 /* ── Themes — applied via data-theme attribute on <html> ────── */
-:root, [data-theme="dark"] {
+
+/* ── Catppuccin Mocha (dark) ── */
+:root,
+[data-theme="catppuccin-mocha"] {
   color-scheme: dark;
-  --bg-primary:      #0d0f14;
-  --bg-secondary:    #13161e;
-  --bg-panel:        #171a23;
-  --bg-panel-header: #1e2230;
-  --border:          #2a2f42;
-  --accent:          #5b8af0;
-  --accent-dim:      #3a5fbd;
-  --text-primary:    #e4e6f0;
-  --text-secondary:  #8b91a8;
-  --text-hint:       #4a5068;
-  --success:         #4ecb71;
-  --warning:         #f0c040;
-  --terminal-bg:     #0a0c11;
-  --font:            'Inter', system-ui, sans-serif;
-  --font-mono:       'JetBrains Mono', 'Fira Code', monospace;
+  --bg-primary:      #1e1e2e;
+  --bg-secondary:    #181825;
+  --bg-panel:        #1e1e2e;
+  --bg-panel-header: #313244;
+  --border:          #45475a;
+  --accent:          #cba6f7;
+  --accent-dim:      #89b4fa;
+  --text-primary:    #cdd6f4;
+  --text-secondary:  #bac2de;
+  --text-hint:       #6c7086;
+  --success:         #a6e3a1;
+  --warning:         #f9e2af;
+  --error:           #f38ba8;
+  --terminal-bg:     #181825;
+  --font: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
-[data-theme="midnight"] {
-  color-scheme: dark;
-  --bg-primary:      #060810;
-  --bg-secondary:    #0d1020;
-  --bg-panel:        #0f1325;
-  --bg-panel-header: #161b30;
-  --border:          #1f2845;
-  --accent:          #8b5cf6;
-  --accent-dim:      #6d28d9;
-  --text-primary:    #dde1ff;
-  --text-secondary:  #7b83b0;
-  --text-hint:       #3d4470;
-  --success:         #34d399;
-  --warning:         #fbbf24;
-  --terminal-bg:     #020408;
-}
-
-[data-theme="light"] {
+/* ── Catppuccin Latte (light) ── */
+[data-theme="catppuccin-latte"] {
   color-scheme: light;
-  --bg-primary:      #f1f3f8;
-  --bg-secondary:    #e4e8f0;
-  --bg-panel:        #ffffff;
-  --bg-panel-header: #eef0f6;
-  --border:          #cdd3e0;
-  --accent:          #2563eb;
-  --accent-dim:      #1d4ed8;
-  --text-primary:    #1a1d2e;
-  --text-secondary:  #4a5180;
-  --text-hint:       #9098c0;
-  --success:         #16a34a;
-  --warning:         #d97706;
-  --terminal-bg:     #e8ecf4;
+  --bg-primary:      #eff1f5;
+  --bg-secondary:    #e6e9ef;
+  --bg-panel:        #dce0e8;
+  --bg-panel-header: #ccd0da;
+  --border:          #bcc0cc;
+  --accent:          #7287fd;
+  --accent-dim:      #1e66f5;
+  --text-primary:    #4c4f69;
+  --text-secondary:  #5c5f77;
+  --text-hint:       #9ca0b0;
+  --success:         #40a02b;
+  --warning:         #df8e1d;
+  --error:           #d20f39;
+  --terminal-bg:     #e6e9ef;
 }
 
-[data-theme="solarized"] {
+/* ── Dracula ── */
+[data-theme="dracula"] {
+  color-scheme: dark;
+  --bg-primary:      #282a36;
+  --bg-secondary:    #21222c;
+  --bg-panel:        #282a36;
+  --bg-panel-header: #343746;
+  --border:          #44475a;
+  --accent:          #bd93f9;
+  --accent-dim:      #6272a4;
+  --text-primary:    #f8f8f2;
+  --text-secondary:  #6272a4;
+  --text-hint:       #44475a;
+  --success:         #50fa7b;
+  --warning:         #f1fa8c;
+  --error:           #ff5555;
+  --terminal-bg:     #1e1f29;
+}
+
+/* ── Tokyo Night ── */
+[data-theme="tokyo-night"] {
+  color-scheme: dark;
+  --bg-primary:      #1a1b26;
+  --bg-secondary:    #16161e;
+  --bg-panel:        #1f2335;
+  --bg-panel-header: #24283b;
+  --border:          #292e42;
+  --accent:          #7aa2f7;
+  --accent-dim:      #3d59a1;
+  --text-primary:    #c0caf5;
+  --text-secondary:  #a9b1d6;
+  --text-hint:       #565f89;
+  --success:         #9ece6a;
+  --warning:         #e0af68;
+  --error:           #f7768e;
+  --terminal-bg:     #13131d;
+}
+
+/* ── Solarized Dark ── */
+[data-theme="solarized-dark"] {
   color-scheme: dark;
   --bg-primary:      #002b36;
   --bg-secondary:    #073642;
@@ -63,22 +91,103 @@
   --border:          #094652;
   --accent:          #268bd2;
   --accent-dim:      #2176ae;
-  --text-primary:    #839496;
+  --text-primary:    #93a1a1;
   --text-secondary:  #657b83;
   --text-hint:       #405860;
   --success:         #859900;
   --warning:         #b58900;
+  --error:           #dc322f;
   --terminal-bg:     #001f27;
 }
 
+/* ── Solarized Light ── */
+[data-theme="solarized-light"] {
+  color-scheme: light;
+  --bg-primary:      #fdf6e3;
+  --bg-secondary:    #eee8d5;
+  --bg-panel:        #fdf6e3;
+  --bg-panel-header: #e8e2cf;
+  --border:          #d3ceba;
+  --accent:          #268bd2;
+  --accent-dim:      #2176ae;
+  --text-primary:    #657b83;
+  --text-secondary:  #839496;
+  --text-hint:       #b4b8c5;
+  --success:         #859900;
+  --warning:         #b58900;
+  --error:           #dc322f;
+  --terminal-bg:     #eee8d5;
+}
 
-*, *::before, *::after {
+/* ── Nord ── */
+[data-theme="nord"] {
+  color-scheme: dark;
+  --bg-primary:      #2e3440;
+  --bg-secondary:    #3b4252;
+  --bg-panel:        #2e3440;
+  --bg-panel-header: #434c5e;
+  --border:          #4c566a;
+  --accent:          #88c0d0;
+  --accent-dim:      #81a1c1;
+  --text-primary:    #eceff4;
+  --text-secondary:  #d8dee9;
+  --text-hint:       #e5e9f0;
+  --success:         #a3be8c;
+  --warning:         #ebcb8b;
+  --error:           #bf616a;
+  --terminal-bg:     #2e3440;
+}
+
+/* ── Gruvbox Dark ── */
+[data-theme="gruvbox-dark"] {
+  color-scheme: dark;
+  --bg-primary:      #282828;
+  --bg-secondary:    #3c3836;
+  --bg-panel:        #282828;
+  --bg-panel-header: #504945;
+  --border:          #665c54;
+  --accent:          #fe8019;
+  --accent-dim:      #fabd2f;
+  --text-primary:    #ebdbb2;
+  --text-secondary:  #d5c4a1;
+  --text-hint:       #a89984;
+  --success:         #b8bb26;
+  --warning:         #fabd2f;
+  --error:           #fb4934;
+  --terminal-bg:     #1d2021;
+}
+
+/* ── GitHub Light ── */
+[data-theme="github-light"] {
+  color-scheme: light;
+  --bg-primary:      #f6f8fa;
+  --bg-secondary:    #ffffff;
+  --bg-panel:        #ffffff;
+  --bg-panel-header: #f6f8fa;
+  --border:          #d0d7de;
+  --accent:          #0969da;
+  --accent-dim:      #0550ae;
+  --text-primary:    #24292f;
+  --text-secondary:  #57606a;
+  --text-hint:       #8c959f;
+  --success:         #1a7f37;
+  --warning:         #9a6700;
+  --error:           #cf222e;
+  --terminal-bg:     #f6f8fa;
+}
+
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -132,6 +241,7 @@ html, body, #root {
   cursor: pointer;
   outline: none;
 }
+
 .theme-select:hover {
   border-color: var(--accent);
 }
@@ -326,8 +436,15 @@ html, body, #root {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .event-badge {
@@ -403,10 +520,31 @@ html, body, #root {
   border-radius: 3px;
   font-weight: 500;
 }
-.kind-digital   { background: rgba(91, 138, 240, 0.15); color: #7eb0ff; }
-.kind-physical  { background: rgba(78, 203, 113, 0.15); color: #6de096; }
-.kind-abstract  { background: rgba(240, 192, 64, 0.15);  color: #f5d060; }
-.kind-agent     { background: rgba(200, 100, 255, 0.15); color: #d680ff; }
+
+.kind-digital {
+  background: rgba(91, 138, 240, 0.15);
+  color: #7eb0ff;
+}
+
+.kind-physical {
+  background: rgba(78, 203, 113, 0.15);
+  color: #6de096;
+}
+
+.kind-abstract {
+  background: rgba(240, 192, 64, 0.15);
+  color: #f5d060;
+}
+
+.kind-agent {
+  background: rgba(200, 100, 255, 0.15);
+  color: #d680ff;
+}
+
+.kind-blob {
+  background: rgba(255, 159, 67, 0.15);
+  color: #ff9f43;
+}
 
 /* ── Terminal Overlay ────────────────────────────────────────── */
 .terminal-overlay {
@@ -508,6 +646,7 @@ html, body, #root {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
+
 .titlebar-btn:hover {
   background: rgba(91, 138, 240, 0.28);
   border-color: var(--accent);
@@ -577,8 +716,13 @@ html, body, #root {
 }
 
 @keyframes fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .dialog {
@@ -591,8 +735,15 @@ html, body, #root {
 }
 
 @keyframes slide-up {
-  from { transform: translateY(16px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .dialog-header {
@@ -640,9 +791,11 @@ html, body, #root {
   outline: none;
   transition: border-color 0.15s;
 }
+
 .dialog-input:focus {
   border-color: var(--accent);
 }
+
 .dialog-input::placeholder {
   color: var(--text-hint);
 }
@@ -661,9 +814,11 @@ html, body, #root {
   transition: background 0.15s, opacity 0.15s;
   align-self: flex-end;
 }
+
 .dialog-submit:hover:not(:disabled) {
   background: #7aaafe;
 }
+
 .dialog-submit:disabled {
   opacity: 0.4;
   cursor: not-allowed;

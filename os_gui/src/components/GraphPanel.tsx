@@ -9,50 +9,70 @@ interface GNode { id: string; label: string; kind: string; }
 
 const KIND_COLORS: Record<string, string> = {
   physical: '#6de096',
-  digital:  '#7eb0ff',
+  digital: '#7eb0ff',
   abstract: '#f5d060',
-  agent:    '#d680ff',
+  agent: '#d680ff',
+  blob: '#ff9f43',
 };
 
-const selectEntities     = (s: ReturnType<typeof useOsStore.getState>) => s.entities;
-const selectEdges        = (s: ReturnType<typeof useOsStore.getState>) => s.edges;
-const selectSelectedId   = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
+const selectEntities = (s: ReturnType<typeof useOsStore.getState>) => s.entities;
+const selectEdges = (s: ReturnType<typeof useOsStore.getState>) => s.edges;
+const selectSelectedId = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
 const selectSelectEntity = (s: ReturnType<typeof useOsStore.getState>) => s.selectEntity;
-const selectBlobTraits   = (s: ReturnType<typeof useOsStore.getState>) => s.blobTraits;
+const selectBlobTraits = (s: ReturnType<typeof useOsStore.getState>) => s.blobTraits;
 
 export const GraphPanel = memo(function GraphPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const graphRef     = useRef<any>(null);
-  const readyRef     = useRef(false);
+  const graphRef = useRef<any>(null);
+  const readyRef = useRef(false);
 
-  const entities     = useOsStore(selectEntities);
-  const edges        = useOsStore(selectEdges);
-  const selectedId   = useOsStore(selectSelectedId);
+  const entities = useOsStore(selectEntities);
+  const edges = useOsStore(selectEdges);
+  const selectedId = useOsStore(selectSelectedId);
   const selectEntity = useOsStore(selectSelectEntity);
-  
+
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
-  
+
   const nodePositions = useOsStore(s => s.nodePositions);
   const updateNodePosition = useOsStore(s => s.updateNodePosition);
   const blobTraits = useOsStore(selectBlobTraits);
+
+  const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
   
   const searchQueryRef = useRef('');
   const selectedIdRef = useRef<string | null>(null);
   const showGridRef = useRef(true);
   const blobTraitsRef = useRef(blobTraits);
+  const toggledImageNodesRef = useRef(toggledImageNodes);
   const prevCounts = useRef({ entities: 0, edges: 0 });
 
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
   useEffect(() => { blobTraitsRef.current = blobTraits; }, [blobTraits]);
+  useEffect(() => {
+    toggledImageNodesRef.current = toggledImageNodes;
+    if (readyRef.current && graphRef.current) {
+      graphRef.current.nodeColor(graphRef.current.nodeColor());
+    }
+  }, [toggledImageNodes]);
 
   const onNodeClick = useCallback((node: any) => {
     // Keep full "entity:" prefix so ViewportPanel can find it in the store
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
-    selectEntity(fullId);
+    
+    if (selectedIdRef.current === fullId) {
+      setToggledImageNodes(prev => {
+        const next = new Set(prev);
+        if (next.has(fullId)) next.delete(fullId);
+        else next.add(fullId);
+        return next;
+      });
+    } else {
+      selectEntity(fullId);
+    }
   }, [selectEntity]);
 
   // Bootstrap once
@@ -82,18 +102,20 @@ export const GraphPanel = memo(function GraphPanel() {
         const isMatch = sq ? n.label?.toLowerCase().includes(sq) : true;
         // selectedIdRef stores full id like "entity:XYZ", node.id is stripped "XYZ"
         const isSelected = `entity:${n.id}` === selectedIdRef.current;
-        
+
         ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
-        
+
         const radius = 6;
         let isImageReady = false;
 
         const bTraits = blobTraitsRef.current;
-        const blobTrait = bTraits.find(b => b.owner === `entity:${n.id}` || b.owner === n.id);
+        const fullId = `entity:${n.id}`;
+        const blobTrait = bTraits.find(b => b.owner === fullId || b.owner === n.id);
         const sourcePath = blobTrait?.localUrl;
         const isImage = blobTrait && blobTrait.mime.startsWith('image/');
+        const isToggled = toggledImageNodesRef.current.has(fullId);
 
-        if (isImage && sourcePath) {
+        if (isImage && sourcePath && isToggled) {
           if (!n.img) {
             n.img = new Image();
             n.img.src = convertFileSrc(sourcePath);
@@ -104,44 +126,55 @@ export const GraphPanel = memo(function GraphPanel() {
               }
             };
           }
-          
+
           if (n.img.complete && n.img.naturalWidth > 0) {
             isImageReady = true;
-            const size = radius * 3.5; // Make image slightly larger than normal nodes
+            const maxDim = 80;
+            const aspect = n.img.naturalWidth / n.img.naturalHeight;
+            let w = maxDim;
+            let h = maxDim;
+            if (aspect > 1) {
+              h = maxDim / aspect;
+            } else {
+              w = maxDim * aspect;
+            }
+            n.__imgW = w;
+            n.__imgH = h;
+
             ctx.save();
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, radius + 2.5, 0, 2 * Math.PI, false);
-            ctx.clip(); 
-            ctx.drawImage(n.img, n.x - size / 2, n.y - size / 2, size, size);
+            ctx.drawImage(n.img, n.x - w / 2, n.y - h / 2, w, h);
             ctx.restore();
-            
+
             // outline for image node
             ctx.beginPath();
-            ctx.arc(n.x, n.y, radius + 2.5, 0, 2 * Math.PI, false);
+            ctx.rect(n.x - w / 2, n.y - h / 2, w, h);
             ctx.lineWidth = 1.5 / globalScale;
             ctx.strokeStyle = KIND_COLORS[n.kind] ?? '#8b91a8';
             ctx.stroke();
           }
-        } 
-        
+        }
+
         if (!isImageReady) {
           ctx.beginPath();
           ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI, false);
           ctx.fillStyle = KIND_COLORS[n.kind] ?? '#8b91a8';
           ctx.fill();
         }
-        
+
         // Selection Ring (Theme Dependant)
         if (isSelected) {
-          let selRadius = isImageReady ? radius + 2.5 : radius;
           ctx.beginPath();
-          ctx.arc(n.x, n.y, selRadius + 1, 0, 2 * Math.PI, false); // slightly larger than radius to form an outline
+          if (isImageReady && n.__imgW) {
+            ctx.rect(n.x - n.__imgW / 2 - 2, n.y - n.__imgH / 2 - 2, n.__imgW + 4, n.__imgH + 4);
+          } else {
+            ctx.arc(n.x, n.y, radius + 1.5, 0, 2 * Math.PI, false); 
+          }
           ctx.lineWidth = 2.5 / globalScale; // Thick outline
           const accentObj = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0';
           ctx.strokeStyle = accentObj; // Accent color
           ctx.stroke();
         }
-        
+
         if (globalScale > 0.8) {
           const fontSize = 4; // Scaled relative to the 6px node
           ctx.textAlign = 'center';
@@ -149,7 +182,7 @@ export const GraphPanel = memo(function GraphPanel() {
           const txtCol = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#e4e6f0';
           ctx.fillStyle = txtCol;
           ctx.font = `${fontSize}px "JetBrains Mono", sans-serif`;
-          ctx.fillText(n.label, n.x, n.y + radius + 3.5);
+          ctx.fillText(n.label, n.x, n.y + (isImageReady ? (n.__imgH / 2 + 5) : radius + 3.5));
         }
         ctx.globalAlpha = 1;
       })
@@ -159,23 +192,23 @@ export const GraphPanel = memo(function GraphPanel() {
         const sm = !sq || (link.source?.label && link.source.label.toLowerCase().includes(sq));
         const tm = !sq || (link.target?.label && link.target.label.toLowerCase().includes(sq));
         if (sq && !sm && !tm) return; // faded
-        
+
         if (!link.source || !link.target || typeof link.source !== 'object' || typeof link.target !== 'object') return;
         if (link.source.x == null || link.source.y == null || Number.isNaN(link.source.x) || Number.isNaN(link.source.y)) return;
         if (link.target.x == null || link.target.y == null || Number.isNaN(link.target.x) || Number.isNaN(link.target.y)) return;
         if (link.source.id === link.target.id) return; // Hide text over self-loop clumps
-        
+
         const label = link.label;
         if (!label) return;
-        
+
         const fontSize = 3; // Even smaller for edges
         ctx.font = `${fontSize}px "JetBrains Mono", sans-serif`;
         const textWidth = ctx.measureText(label).width;
-        const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); 
+        const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
 
         const x = link.source.x + (link.target.x - link.source.x) / 2;
         const y = link.source.y + (link.target.y - link.source.y) / 2;
-        
+
         const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#1a1b26';
         ctx.fillStyle = bgColor;
         ctx.fillRect(x - bckgDimensions[0] / 2, y - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
@@ -188,25 +221,25 @@ export const GraphPanel = memo(function GraphPanel() {
       })
       .onRenderFramePre((ctx: CanvasRenderingContext2D, _globalScale: number) => {
         if (!showGridRef.current) return;
-        
+
         const canvas = ctx.canvas;
-        const width  = canvas.width;
+        const width = canvas.width;
         const height = canvas.height;
-        
+
         // d3-zoom stores its state on the element as __zoom (an internal property)
         const t = (canvas as any).__zoom ?? { x: 0, y: 0, k: 1 };
         const tx = t.x;
         const ty = t.y;
-        const k  = t.k;
-        
+        const k = t.k;
+
         const spacing = 50 * k;
         if (spacing < 4) return; // perf guard
-        
+
         ctx.save();
         ctx.resetTransform();
         const borderCol =
           getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#444';
-        
+
         // Major grid lines (every 5 cells)
         const majorSpacing = spacing * 5;
         ctx.beginPath();
@@ -220,7 +253,7 @@ export const GraphPanel = memo(function GraphPanel() {
           ctx.moveTo(0, y); ctx.lineTo(width, y);
         }
         ctx.stroke();
-        
+
         // Minor grid lines
         ctx.beginPath();
         ctx.globalAlpha = 0.18;
@@ -232,17 +265,17 @@ export const GraphPanel = memo(function GraphPanel() {
           ctx.moveTo(0, y); ctx.lineTo(width, y);
         }
         ctx.stroke();
-        
+
         ctx.restore();
       })
       .cooldownTicks(300)
       .d3AlphaDecay(0.02)
       .d3VelocityDecay(0.3);
 
-    // Using stock physics constants to avoid excessive spacing between nodes
-    g.d3Force('charge').strength(-120);
+    // Softer repulsion so isolated nodes don't fly off violently
+    g.d3Force('charge').strength(-50).distanceMin(8).distanceMax(300);
     g.d3Force('link').distance(40);
-    
+
     // Position persistence sync only if user is dragging or sim has high energy
     g.onNodeDragEnd((node: any) => {
       if (node.id) updateNodePosition(node.id, node.x, node.y);
@@ -280,7 +313,7 @@ export const GraphPanel = memo(function GraphPanel() {
           live.label = edge.label;
         }
       }
-      
+
       // Force visual update without simulation reset
       g.nodeLabel(g.nodeLabel()).linkLabel(g.linkLabel());
       return;
@@ -288,7 +321,7 @@ export const GraphPanel = memo(function GraphPanel() {
     prevCounts.current = { entities: entities.length, edges: edges.length };
 
     const liveById = new Map<string, any>(liveNodes.map((n: any) => [n.id, n]));
-    
+
     // Also map live links by source-target to preserve object identity
     const liveLinksMap = new Map<string, any>(
       liveLinks.map((l: any) => {
@@ -304,17 +337,17 @@ export const GraphPanel = memo(function GraphPanel() {
       const strippedId = entity.id.replace('entity:', '');
       const live = liveById.get(strippedId);
       const saved = nodePositions[strippedId];
-      
+
       if (live) {
         live.label = entity.label;
-        live.kind  = entity.kind;
+        live.kind = entity.kind;
         live.metadata = entity.metadata;
         nextNodes.push(live);
       } else {
         // Init with saved position to prevent "scattering" on remount
-        nextNodes.push({ 
-          id: strippedId, 
-          label: entity.label, 
+        nextNodes.push({
+          id: strippedId,
+          label: entity.label,
           kind: entity.kind,
           metadata: entity.metadata,
           x: saved?.x,
@@ -328,7 +361,7 @@ export const GraphPanel = memo(function GraphPanel() {
     for (const e of edges) {
       const sourceNodeId = e.from.replace('entity:', '');
       const targetNodeId = e.to.replace('entity:', '');
-      
+
       if (!nextNodesMap.has(sourceNodeId) || !nextNodesMap.has(targetNodeId)) continue;
       if (sourceNodeId === targetNodeId) continue; // Forbid self loops
 
@@ -372,13 +405,13 @@ export const GraphPanel = memo(function GraphPanel() {
             <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
             Grid
           </label>
-          <button 
+          <button
             onClick={() => {
               if (graphRef.current) {
                 // To avoid sending camera to infinity on zoomToFit (if padding algorithm glitches with sparse nodes), 
                 // just command a flat zoom reduction centered exactly physically inside the bounds.
                 graphRef.current.zoom(1, 400);
-                setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450); 
+                setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
               }
             }}
             style={{
@@ -393,7 +426,7 @@ export const GraphPanel = memo(function GraphPanel() {
           >
             Reset View
           </button>
-          <input 
+          <input
             type="text"
             placeholder="Search..."
             value={searchQuery}

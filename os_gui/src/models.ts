@@ -1,4 +1,4 @@
-export type EntityKind = "physical" | "digital" | "abstract" | "agent";
+export type EntityKind = "physical" | "digital" | "abstract" | "agent" | "blob";
 
 export interface Entity {
   id: string;

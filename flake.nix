@@ -47,6 +47,11 @@
               pango
               webkitgtk_4_1
               openssl
+              gst_all_1.gstreamer
+              gst_all_1.gst-plugins-base
+              gst_all_1.gst-plugins-good
+              gst_all_1.gst-plugins-bad
+              gst_all_1.gst-plugins-ugly
             ];
 
             shellHook = ''
@@ -58,6 +63,8 @@
                 glib
                 dbus
                 openssl
+                gst_all_1.gstreamer
+                gst_all_1.gst-plugins-base
               ])}:$LD_LIBRARY_PATH
             '';
           };

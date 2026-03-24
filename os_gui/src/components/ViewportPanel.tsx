@@ -50,9 +50,14 @@ export const ViewportPanel = memo(function ViewportPanel() {
   );
 
   const blobTrait = selected ? blobTraits.find(b => b.owner === selected.id) : null;
+  // Debug: log whenever selection changes
+  if (selected) {
+    console.log('[BlobTrait Debug] selected.id:', selected.id, '| blobTraits:', blobTraits.map(b => ({ owner: b.owner, mime: b.mime })));
+    console.log('[BlobTrait Debug] matched:', blobTrait);
+  }
   const isImage = blobTrait && blobTrait.mime.startsWith('image/');
   const isPdf   = blobTrait && blobTrait.mime === 'application/pdf';
-  const isCad   = blobTrait && blobTrait.mime === 'model/gltf-binary';
+  const isCad   = blobTrait && (blobTrait.mime === 'model/gltf-binary' || blobTrait.mime === 'model/gltf+json');
 
   const imageSrc = blobTrait?.localUrl ? convertFileSrc(blobTrait.localUrl) : null;
 

@@ -11,19 +11,24 @@ import { IngestDialog } from './components/IngestDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TilingLayout, LayoutMode, PaneConfig } from './components/TilingLayout';
 
-type Theme = 'dark' | 'midnight' | 'light' | 'solarized';
+type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night' | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
 const THEMES: { id: Theme; label: string }[] = [
-  { id: 'dark', label: '🌑 Dark' },
-  { id: 'midnight', label: '🔮 Midnight' },
-  { id: 'light', label: '☀️ Light' },
-  { id: 'solarized', label: '🌿 Solarized' },
+  { id: 'catppuccin-mocha', label: '🪻 Catppuccin Mocha' },
+  { id: 'catppuccin-latte', label: '☕ Catppuccin Latte' },
+  { id: 'dracula', label: '🧛 Dracula' },
+  { id: 'tokyo-night', label: '🗼 Tokyo Night' },
+  { id: 'solarized-dark', label: '🌘 Solarized Dark' },
+  { id: 'solarized-light', label: '☀️ Solarized Light' },
+  { id: 'nord', label: '❄️ Nord' },
+  { id: 'gruvbox-dark', label: '📦 Gruvbox Dark' },
+  { id: 'github-light', label: '🐙 GitHub Light' },
 ];
 
 const ALL_PANES: PaneConfig[] = [
   { id: 'graph', label: 'Knowledge Graph', icon: '🕸', content: <ErrorBoundary label="Knowledge Graph"><GraphPanel /></ErrorBoundary> },
   { id: 'viewport', label: 'Properties / Preview', icon: '📐', content: <ErrorBoundary label="Properties"><ViewportPanel /></ErrorBoundary> },
   { id: 'terminal', label: 'Terminal', icon: '⬛', content: <ErrorBoundary label="Terminal"><TerminalPanel /></ErrorBoundary> },
-  { id: 'globe', label: 'Globe', icon: '🌍', content: <ErrorBoundary label="Globe"><Suspense fallback={<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--text-hint)'}}>Loading globe…</div>}><GlobePanel /></Suspense></ErrorBoundary> },
+  { id: 'globe', label: 'Globe', icon: '🌍', content: <ErrorBoundary label="Globe"><Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>}><GlobePanel /></Suspense></ErrorBoundary> },
 ];
 
 export const KEYBINDS = {
@@ -48,7 +53,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   // Theme & Window
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>('github-light');
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   // UI State: Layout & Panes

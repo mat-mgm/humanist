@@ -66,7 +66,7 @@ async fn ingest_entity(
 
     let entity = Entity {
         id: id.clone(),
-        kind: EntityKind::Digital,
+        kind: EntityKind::Blob,
         label: label.clone(),
         tags: vec!["gui_ingested".to_string()],
         metadata: {
@@ -109,7 +109,16 @@ async fn get_spatial_traits(state: State<'_, Mutex<AppState>>) -> Result<Vec<Spa
 #[tauri::command]
 async fn get_blob_traits(state: State<'_, Mutex<AppState>>) -> Result<Vec<core_engine::models::BlobTrait>, String> {
     let st = state.lock().await;
-    st.db.get_blob_traits().await
+    let result = st.db.get_blob_traits().await;
+    if let Ok(ref traits) = result {
+        eprintln!("[DEBUG] get_blob_traits returned {} records", traits.len());
+        for t in traits {
+            eprintln!("  blob id={} owner={} mime={}", t.id, t.owner, t.mime);
+        }
+    } else {
+        eprintln!("[DEBUG] get_blob_traits error: {:?}", result);
+    }
+    result
 }
 
 #[tauri::command]

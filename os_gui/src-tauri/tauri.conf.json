@@ -19,7 +19,11 @@
       }
     ],
     "security": {
-      "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob: asset:; connect-src * data: blob:; worker-src * blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval' blob:;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/.local/share/spatial-os/**"]
+      },
+      "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob: asset:; connect-src * data: blob: asset:; worker-src * blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval' blob:;",
       "dangerousDisableAssetCspModification": true
     }
   },
