@@ -1,0 +1,9 @@
+[package]
+name = "prolog_engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+scryer-prolog = "0.9.4"
+tokio = { version = "1.43", features = ["full"] }
+core_engine = { path = "../core_engine" }

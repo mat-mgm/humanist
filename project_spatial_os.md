@@ -24,17 +24,27 @@ State rules:
 * Success criteria: Stable graph editing/viewing resisting layout transitions, functional 3D globe with satellite imagery, flawless DWM-like window management within the app, reliable CAS and Prolog backend integration.
 * Constraints / priorities: Must run locally and efficiently. High performance 3D globe using Cesium, preventing massive bottlenecks by using pre-signed URLs for blobs.
 
+## Development Guidelines
+* Environment: Use Nix flakes (`nix develop`) to setup the dependencies. Enter the nix shell once and perform all development inside it to prevent re-accessing every time.
+* Version Control: Use `git` to track changes. Commit every time a new phase or feature is implemented and verified to work as expected.
+* Workflow: After each phase implementation is done, wait for explicit user confirmation before marking the verification boxes in the roadmap and committing.
+* Style: Use suckless coding style and robust coding practices.
+* Warnings: Always address and fix compiler warnings.
+* Roadmap Expansion: Once all currently defined phases are complete, expand the roadmap with consequent development phases and verification plans.
+
 ## Architecture
 * Structure: Monorepo Cargo Workspace adopting Hexagonal Architecture.
 * Components / assets:
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, blob storage via `aws-sdk-s3`, background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
+  - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
   - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries.
 * Layout Matrix: 
   - Left Pane: Knowledge Graph (`force-graph`) and Entity Registry.
   - Right Pane: 3D Globe (`cesium`) and Properties/Preview panel.
   - Floating Terminal Overlay (`xterm.js`).
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`). Context entities emit semantic edges.
+* Rules Engine: Integrates Scryer Prolog using a Dynamic Predicates model naturally representing entities and edges for complex deductive inference synced via external state changes on the EventBus.
 
 ## Roadmap
 
@@ -158,3 +168,31 @@ Upgrade the rudimentary xterm.js echo simulation into a robust, keyboard-navigab
 - [✓] Support explicit standard terminal clipboard commands: `Ctrl+Shift+C` (copy) and `Ctrl+Shift+V` (paste), ensuring they yield properly to the browser's native async `navigator.clipboard` APIs.
 - [✓] Ensure `Ctrl+C` accurately acts as an interrupt signal (`^C`) when triggered natively.
 - [✓] Use `document.execCommand('copy')` as a robust fallback to guarantee copying text works synchronously within xterm's hidden textarea, bypassing Tauri's rigid environment permission snags on async clipboard writes.
+
+### Phase 25: Scryer Prolog Module & Inference Engine
+**Description**
+Integrate a dynamic-predicate Scryer Prolog rules system into the Hexagonal Core to facilitate semantic edge discovery and topological inference natively on topological knowledge graph data.
+
+**Tasks**
+- [✓] Initialize the `ScryerMachine` in memory within an independent `prolog_engine` workspace crate.
+- [✓] Implement the `StateSynchronizerTask` to map `EventBus` SurrealDB signals back into dynamically registered trait and relational Prolog predicates via gRPC or internal bus.
+- [✓] Build the `InferenceEngine` interface allowing the Rust backend to asynchronously request deductions (`prolog_adapter.query(...)`).
+- [✓] Provide mechanism to materialize resulting deductions back to `EventBus` as persistent semantic edges.
+
+**Checks**
+- [✓] Prolog machine initiates safely in the new crate (tested via standard cargo tests).
+- [✓] Dynamic predicates and queries accurately unify strings during basic IO evaluations.
+
+### Phase 26: Interfacing Prolog Engine via CLI and GUI Terminal
+**Description**
+Integrate the standalone `prolog_engine` deduction functionality outward to the user interfaces, enabling direct evaluation of semantic queries via headless CLI arguments and the embedded xterm.js GUI terminal.
+
+**Tasks**
+- [ ] Implement `prolog_engine` query handler interface within `os_cli` subcommands (e.g., `spatial-os query "reachable(X, Y)."`).
+- [ ] Expose an asynchronous Tauri IPC command (e.g. `invoke('run_prolog_query')`) routing strictly validated payload strings to the `InferenceEngine`.
+- [ ] Connect the `xterm.js` integrated terminal ecosystem in `os_gui` to support querying Prolog facts natively within the 3D dashboard view.
+- [ ] Safely capture `run_query` output bindings to return human-readable parsed logs to the frontend terminal stdout stream.
+
+**Checks**
+- [ ] The CLI returns factual answers from the database correctly via the Inference rules engine.
+- [ ] Firing a query through the inner GUI terminal displays formatted resulting bindings instantly without disrupting UI reactivity.
