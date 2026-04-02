@@ -9,7 +9,7 @@ use core_engine::{
 use ulid::Ulid;
 use std::{collections::HashMap, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 // ── Shared App State ─────────────────────────────────────────────────────────
 
@@ -17,6 +17,7 @@ pub struct AppState {
     pub db: SurrealDbAdapter,
     pub bus: EventBus,
     pub blob: LocalBlobAdapter,
+    pub query_tx: mpsc::Sender<(String, oneshot::Sender<Result<Vec<String>, String>>)>,
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -184,6 +185,14 @@ async fn get_edges(state: State<'_, Mutex<AppState>>) -> Result<Vec<serde_json::
     Ok(edges.into_iter().map(|(f, t, l)| serde_json::json!({"from": f, "to": t, "label": l})).collect())
 }
 
+#[tauri::command]
+async fn run_prolog_query(query: String, state: State<'_, Mutex<AppState>>) -> Result<Vec<String>, String> {
+    let st = state.lock().await;
+    let (tx, rx) = oneshot::channel();
+    st.query_tx.send((query, tx)).await.map_err(|_| "Inference engine thread died".to_string())?;
+    rx.await.map_err(|_| "Failed to recv response".to_string())?
+}
+
 // ── App Entry ─────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -215,7 +224,38 @@ pub fn run() {
                     }
                 });
 
-                app_handle.manage(Mutex::new(AppState { db, bus: bus_clone, blob }));
+                // Prolog Machine Injection in Dedicated Thread
+                let (query_tx, mut query_rx) = mpsc::channel::<(String, oneshot::Sender<Result<Vec<String>, String>>)>(32);
+                let db_p = db.clone();
+                let bus_p = bus_clone.clone();
+
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    let local = tokio::task::LocalSet::new();
+
+                    local.block_on(&rt, async move {
+                        let machine = Arc::new(prolog_engine::ScryerMachine::new());
+                        if let Err(e) = prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(&machine, &db_p).await {
+                            eprintln!("Failed to load facts into Prolog Engine: {}", e);
+                        }
+
+                        let sync_task = prolog_engine::synchronizer::StateSynchronizerTask::new(machine.clone(), db_p.clone());
+                        let sync_rx = bus_p.sender.subscribe();
+                        
+                        tokio::task::spawn_local(async move {
+                            sync_task.run(sync_rx).await;
+                        });
+
+                        let inference = prolog_engine::InferenceEngine::new((*machine).clone());
+                        
+                        while let Some((query, resp_tx)) = query_rx.recv().await {
+                            let res = inference.query(&query).map_err(|e| e.to_string());
+                            let _ = resp_tx.send(res);
+                        }
+                    });
+                });
+
+                app_handle.manage(Mutex::new(AppState { db, bus: bus_clone, blob, query_tx }));
             });
 
             Ok(())
@@ -230,6 +270,7 @@ pub fn run() {
             query_context,
             add_edge,
             get_edges,
+            run_prolog_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5220,6 +5220,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "core_engine",
+ "prolog_engine",
  "serde_json",
  "tokio",
  "ulid",
@@ -5230,6 +5231,7 @@ name = "os_gui"
 version = "0.1.0"
 dependencies = [
  "core_engine",
+ "prolog_engine",
  "serde",
  "serde_json",
  "tauri",

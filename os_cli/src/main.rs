@@ -38,6 +38,11 @@ enum Commands {
         #[command(subcommand)]
         sub: EdgeSub,
     },
+    /// Prolog OS Logic Engine
+    Prolog {
+        #[command(subcommand)]
+        sub: PrologSub,
+    },
     /// Start the Graphical Interface
     Gui,
 }
@@ -100,6 +105,12 @@ enum EdgeSub {
     Rm { from: String, to: String },
 }
 
+#[derive(Subcommand)]
+enum PrologSub {
+    /// Interpret logic query against graph state natively
+    Query { query: String },
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -117,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Db { sub } => handle_db(db, sub).await?,
         Commands::Entity { sub } => handle_entity(db, bus, sub).await?,
         Commands::Edge { sub } => handle_edge(db, sub).await?,
+        Commands::Prolog { sub } => handle_prolog(db, sub).await?,
         Commands::Gui => {
             println!("🚀 Starting OS GUI...");
             std::process::Command::new("./target/release/os_gui")
@@ -347,3 +359,25 @@ async fn handle_edge(db: SurrealDbAdapter, sub: EdgeSub) -> Result<(), Box<dyn s
     Ok(())
 }
 
+async fn handle_prolog(db: SurrealDbAdapter, sub: PrologSub) -> Result<(), Box<dyn std::error::Error>> {
+    match sub {
+        PrologSub::Query { query } => {
+            let machine = prolog_engine::ScryerMachine::new();
+            println!("🔄 Loading logical graph layout into memory...");
+            prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(&machine, &db).await?;
+            let engine = prolog_engine::InferenceEngine::new(machine);
+            
+            println!("🔍 Executing query: {}", query);
+            let results = engine.query(&query)?;
+            
+            if results.is_empty() {
+                println!("No standard output matched, check inference validation.");
+            } else {
+                for res in results {
+                    println!("{}", res);
+                }
+            }
+        }
+    }
+    Ok(())
+}

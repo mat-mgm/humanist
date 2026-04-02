@@ -2,6 +2,7 @@ use scryer_prolog::machine::Machine;
 use std::sync::{Arc, Mutex};
 
 /// Core Application Service managing the Scryer Prolog Instance
+#[derive(Clone)]
 pub struct ScryerMachine {
     pub machine: Arc<Mutex<Machine>>,
 }

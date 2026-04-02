@@ -128,7 +128,7 @@ export const TerminalPanel = memo(function TerminalPanel() {
           historyIdx = history.length;
 
           if (cmd === 'help') {
-            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
+            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mpl\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
           } else if (cmd === 'clear') {
             term.clear();
           } else if (cmd === 'date') {
@@ -139,6 +139,30 @@ export const TerminalPanel = memo(function TerminalPanel() {
             term.writeln(cmd.substring(5));
           } else if (cmd === 'ping') {
             term.writeln('pong');
+          } else if (cmd.startsWith('?- ') || cmd.startsWith('pl ')) {
+            const pq = cmd.replace(/^(\?- |pl )/, '');
+            
+            // Dynamic async import of @tauri-apps/api/core to prevent breaking environments outside Tauri
+            import('@tauri-apps/api/core').then(async ({ invoke }) => {
+              try {
+                const results = await invoke('run_prolog_query', { query: pq }) as string[];
+                if (results.length === 0) {
+                  term.writeln('\x1b[33mNo matches found.\x1b[0m');
+                } else {
+                  results.forEach(res => term.writeln(`\x1b[36m${res}\x1b[0m`));
+                }
+              } catch (err: any) {
+                term.writeln(`\x1b[31merror: ${typeof err === 'object' ? JSON.stringify(err) : err}\x1b[0m`);
+              }
+              printPrompt();
+            }).catch(() => {
+              term.writeln('\x1b[31merror: Tauri IPC not available\x1b[0m');
+              printPrompt();
+            });
+            // We return early and omit printPrompt() because the async call will print it later
+            commandBuffer = '';
+            cursorIdx = 0;
+            return;
           } else if (cmd.length > 0) {
             term.writeln(`\x1b[31mbash: ${cmd}: command not found\x1b[0m`);
           }

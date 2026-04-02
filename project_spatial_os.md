@@ -188,11 +188,40 @@ Integrate a dynamic-predicate Scryer Prolog rules system into the Hexagonal Core
 Integrate the standalone `prolog_engine` deduction functionality outward to the user interfaces, enabling direct evaluation of semantic queries via headless CLI arguments and the embedded xterm.js GUI terminal.
 
 **Tasks**
-- [ ] Implement `prolog_engine` query handler interface within `os_cli` subcommands (e.g., `spatial-os query "reachable(X, Y)."`).
-- [ ] Expose an asynchronous Tauri IPC command (e.g. `invoke('run_prolog_query')`) routing strictly validated payload strings to the `InferenceEngine`.
-- [ ] Connect the `xterm.js` integrated terminal ecosystem in `os_gui` to support querying Prolog facts natively within the 3D dashboard view.
-- [ ] Safely capture `run_query` output bindings to return human-readable parsed logs to the frontend terminal stdout stream.
+- [✓] Implement `prolog_engine` query handler interface within `os_cli` subcommands (e.g., `spatial-os prolog query "reachable(X, Y)."`).
+- [✓] Expose an asynchronous Tauri IPC command (e.g. `invoke('run_prolog_query')`) routing strictly validated payload strings to the `InferenceEngine`.
+- [✓] Connect the `xterm.js` integrated terminal ecosystem in `os_gui` to support querying Prolog facts natively via the `pl` command.
+- [✓] Safely capture `run_query` output bindings to return human-readable parsed logs to the frontend terminal stdout stream.
 
 **Checks**
-- [ ] The CLI returns factual answers from the database correctly via the Inference rules engine.
-- [ ] Firing a query through the inner GUI terminal displays formatted resulting bindings instantly without disrupting UI reactivity.
+- [✓] The CLI returns factual answers from the database correctly via the Inference rules engine.
+- [✓] Firing a `pl` query through the inner GUI terminal displays formatted resulting bindings instantly without disrupting UI reactivity.
+
+### Phase 27: GUI Terminal Expansion (SQL & Lifecycle)
+**Description**
+Expand the embedded GUI terminal toolset to gracefully handle native graph queries and application lifecycle management.
+
+**Tasks**
+- [ ] Add the `sql <STATEMENT>` terminal command to the React frontend.
+- [ ] Connect `sql` logic through Tauri IPC to execute raw SurrealQL statements against `core_engine`.
+- [ ] Add the `exit` command to safely and gracefully terminate the Tauri UI application.
+- [ ] Update the `help` menu to expose both new commands to the user.
+
+**Checks**
+- [ ] The `sql` command resolves valid graph database outputs instantly to standard out.
+- [ ] Typing `exit` fully and safely terminates the system process.
+
+### Phase 28: Graph Traversal & Visualization
+**Description**
+Enhance the graph visualization to support interactive traversal and display of complex relationships.
+
+**Tasks**
+- [ ] Implement graph traversal logic to find paths between nodes.
+- [ ] Visualize paths in the 3D graph with distinct styling.
+- [ ] Add support for different types of relationships (edges) with varying visual styles.
+- [ ] Implement filtering based on edge types and node properties.
+
+**Checks**
+- [ ] Users can find paths between any two nodes in the graph.
+- [ ] Different edge types are visually distinguishable.
+- [ ] Graph filtering works as expected.

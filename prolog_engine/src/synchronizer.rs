@@ -16,6 +16,25 @@ impl StateSynchronizerTask {
         Self { machine, db }
     }
 
+    /// Pulls the entire state from GraphDatabase and maps it into Prolog memory layout.
+    pub async fn load_all_facts(machine: &ScryerMachine, db: &SurrealDbAdapter) -> Result<(), String> {
+        let entities = db.list_entities().await?;
+        for e in entities {
+            let label_safe = e.label.replace('\'', "\\'");
+            let fact = format!("entity('{}', '{}').", e.id, label_safe);
+            let _ = machine.ingest(&fact);
+        }
+
+        let edges = db.get_edges().await?;
+        for (from, to, label) in edges {
+            let label_safe = label.replace('\'', "\\'");
+            let fact = format!("edge('{}', '{}', '{}').", from, to, label_safe);
+            let _ = machine.ingest(&fact);
+        }
+        
+        Ok(())
+    }
+
     /// Long running async loop to map incoming bus signals to the local Scryer context
     pub async fn run(&self, mut rx: tokio::sync::broadcast::Receiver<EventResponse>) {
         while let Ok(event) = rx.recv().await {
