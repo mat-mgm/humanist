@@ -27,7 +27,7 @@ State rules:
 ## Development Guidelines
 * Environment: Use Nix flakes (`nix develop`) to setup the dependencies. Enter the nix shell once and perform all development inside it to prevent re-accessing every time.
 * Version Control: Use `git` to track changes. Commit every time a new phase or feature is implemented and verified to work as expected.
-* Workflow: After each phase implementation is done, wait for explicit user confirmation before marking the verification boxes in the roadmap and committing.
+* Workflow: After each phase implementation is done, wait for explicit user confirmation before marking the verification boxes in the roadmap and committing. Commits should be coherent with phases.
 * Style: Use suckless coding style and robust coding practices.
 * Warnings: Always address and fix compiler warnings.
 * Roadmap Expansion: Once all currently defined phases are complete, expand the roadmap with consequent development phases and verification plans.
@@ -45,6 +45,14 @@ State rules:
   - Floating Terminal Overlay (`xterm.js`).
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`). Context entities emit semantic edges.
 * Rules Engine: Integrates Scryer Prolog using a Dynamic Predicates model naturally representing entities and edges for complex deductive inference synced via external state changes on the EventBus.
+* **CLI Interactivity & Data Management (`os_cli`)**:
+  - **Create Entities**: `cargo run -p os_cli -- entity add <KIND> <LABEL>` (e.g., `entity add physical "Main Server"`)
+  - **Read/Search Entities**: `cargo run -p os_cli -- entity ls` or `entity search "Server"`
+  - **Update Metadata**: `cargo run -p os_cli -- entity update <ID_OR_LABEL> '{"key": "value"}'` (JSON block)
+  - **Modify Tags**: `cargo run -p os_cli -- entity tag <ID_OR_LABEL> "critical"` or `entity untag <ID_OR_LABEL> "critical"`
+  - **Delete Entities**: `cargo run -p os_cli -- entity rm <ID_OR_LABEL>`
+  - **Relate Entities (Edges)**: `cargo run -p os_cli -- edge add <FROM> <TO> --label "connected_to"`
+  - **Remove Relations**: `cargo run -p os_cli -- edge rm <FROM> <TO>`
 
 ## Roadmap
 
@@ -212,7 +220,24 @@ Expand the embedded GUI terminal toolset to gracefully handle native graph queri
 - [✓] The `sql` command resolves valid graph database outputs instantly to standard out.
 - [✓] Typing `exit` fully and safely terminates the system process.
 
-### Phase 28: Graph Traversal & Visualization
+### Phase 28: CLI Data Management & Entity CRUD Hardening
+**Description**
+Harden the CLI entity management pipeline to support full CRUD operations, tag manipulation, and fix underlying database schema and serialization issues preventing field updates.
+
+**Tasks**
+- [✓] Add `tag` and `untag` CLI subcommands for entity tag manipulation.
+- [✓] Fix `save_entity` to use `UPSERT` instead of `CREATE` so entity updates don't fail on existing records.
+- [✓] Fix `get_entity` to cast IDs via `type::string(id)` to prevent SurrealDB Thing deserialization errors.
+- [✓] Fix `tags` schema from `TYPE array` to `TYPE array<string>` with `OVERWRITE` to allow string tag persistence on SCHEMAFULL tables.
+- [✓] Document CLI interactivity and data management in the Architecture section.
+
+**Checks**
+- [✓] All entity CRUD commands work: `entity add`, `entity ls`, `entity search`, `entity update`, `entity rm`.
+- [✓] Tags persist correctly: `entity tag` adds, `entity untag` removes, duplicates are detected.
+- [✓] Edges work: `edge add` links entities, `edge rm` removes links.
+- [✓] `cargo check --workspace` passes with zero warnings.
+
+### Phase 29: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 

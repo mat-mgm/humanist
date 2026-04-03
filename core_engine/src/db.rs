@@ -26,7 +26,7 @@ impl SurrealDbAdapter {
             DEFINE TABLE entity SCHEMAFULL;
             DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob'];
             DEFINE FIELD label ON entity TYPE string;
-            DEFINE FIELD tags ON entity TYPE array;
+            DEFINE FIELD OVERWRITE tags ON entity TYPE array<string>;
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
 
@@ -60,7 +60,7 @@ impl SurrealDbAdapter {
 #[async_trait]
 impl GraphDatabase for SurrealDbAdapter {
     async fn save_entity(&self, entity: Entity) -> Result<(), String> {
-        let qs = format!("CREATE {} CONTENT $entity;", entity.id);
+        let qs = format!("UPSERT {} CONTENT $entity;", entity.id);
         self.db.query(qs)
             .bind(("entity", entity))
             .await.map_err(|e| e.to_string())?
@@ -69,7 +69,7 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn get_entity(&self, id: &str) -> Result<Entity, String> {
-        let qs = format!("SELECT * FROM {};", id);
+        let qs = format!("SELECT *, type::string(id) AS id FROM {};", id);
         
         let mut response = self.db.query(qs)
             .await.map_err(|e| e.to_string())?;

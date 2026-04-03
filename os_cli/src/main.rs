@@ -90,6 +90,10 @@ enum EntitySub {
     Search { term: String },
     /// Update metadata via JSON
     Update { term: String, json: String },
+    /// Add a tag to an entity
+    Tag { term: String, tag: String },
+    /// Remove a tag from an entity
+    Untag { term: String, tag: String },
 }
 
 #[derive(Subcommand)]
@@ -317,12 +321,40 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
             }
         }
         EntitySub::Update { term, json } => {
-            if let Some(id) = db.resolve_label(&term).await? {
+            if let Some(id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
                 let metadata: HashMap<String, serde_json::Value> = serde_json::from_str(&json)?;
                 let mut e = db.get_entity(&id).await?;
                 e.metadata = metadata;
                 db.save_entity(e).await?;
                 println!("✅ Updated metadata for: {}", term);
+            } else {
+                println!("❌ Could not find entity: {}", term);
+            }
+        }
+        EntitySub::Tag { term, tag } => {
+            if let Some(id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
+                let mut e = db.get_entity(&id).await?;
+                if !e.tags.contains(&tag) {
+                    e.tags.push(tag.clone());
+                    db.save_entity(e).await?;
+                    println!("✅ Added tag '{}' to {}", tag, term);
+                } else {
+                    println!("ℹ️ Entity {} already has tag '{}'", term, tag);
+                }
+            } else {
+                println!("❌ Could not find entity: {}", term);
+            }
+        }
+        EntitySub::Untag { term, tag } => {
+            if let Some(id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
+                let mut e = db.get_entity(&id).await?;
+                if let Some(pos) = e.tags.iter().position(|t| t == &tag) {
+                    e.tags.remove(pos);
+                    db.save_entity(e).await?;
+                    println!("✅ Removed tag '{}' from {}", tag, term);
+                } else {
+                    println!("ℹ️ Entity {} did not have tag '{}'", term, tag);
+                }
             } else {
                 println!("❌ Could not find entity: {}", term);
             }
