@@ -232,7 +232,9 @@ async fn handle_db(db: SurrealDbAdapter, sub: DbSub) -> Result<(), Box<dyn std::
     match sub {
         DbSub::Sql { query } => {
             let res = db.execute_raw_sql(&query).await?;
-            println!("{}", serde_json::to_string_pretty(&res)?);
+            for txt in res {
+                println!("{}", txt);
+            }
         }
         DbSub::Verify => {
             println!("🔍 Checking graph consistency...");

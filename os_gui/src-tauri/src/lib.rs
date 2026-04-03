@@ -193,6 +193,18 @@ async fn run_prolog_query(query: String, state: State<'_, Mutex<AppState>>) -> R
     rx.await.map_err(|_| "Failed to recv response".to_string())?
 }
 
+#[tauri::command]
+async fn execute_sql(query: String, state: State<'_, Mutex<AppState>>) -> Result<String, String> {
+    let st = state.lock().await;
+    let res = st.db.execute_raw_sql(&query).await?;
+    Ok(res.join("\n"))
+}
+
+#[tauri::command]
+fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 // ── App Entry ─────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -271,6 +283,8 @@ pub fn run() {
             add_edge,
             get_edges,
             run_prolog_query,
+            execute_sql,
+            exit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

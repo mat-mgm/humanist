@@ -197,10 +197,26 @@ impl GraphDatabase for SurrealDbAdapter {
         Ok(())
     }
 
-    async fn execute_raw_sql(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {
+    async fn execute_raw_sql(&self, query: &str) -> Result<Vec<String>, String> {
         let mut resp = self.db.query(query).await.map_err(|e| e.to_string())?;
-        let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
-        Ok(rows)
+        
+        // Take the raw surrealdb::Value natively!
+        // This invokes `impl QueryResult<Value> for usize` which safely retrieves the raw AST
+        // bypassing `serde` deserialization bugs on Record Enums inside Vec<T>.
+        let raw_val: Result<surrealdb::Value, _> = resp.take(0);
+        match raw_val {
+            Ok(val) => {
+                // val.to_string() formats it nicely. But if it's an inline string, it might be compact.
+                // We'll return it formatted using the #? Debug formatter if we want it pretty printed, 
+                // but #? on Value might be an AST structure.
+                // Let's print it formatted like JSON!
+                let formatted = format!("{:#}", val); 
+                Ok(vec![formatted])
+            },
+            Err(e) => {
+                Ok(vec![format!("Error extracting raw AST: {}", e)])
+            }
+        }
     }
 
     async fn list_entities(&self) -> Result<Vec<Entity>, String> {

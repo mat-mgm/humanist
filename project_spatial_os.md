@@ -202,14 +202,15 @@ Integrate the standalone `prolog_engine` deduction functionality outward to the 
 Expand the embedded GUI terminal toolset to gracefully handle native graph queries and application lifecycle management.
 
 **Tasks**
-- [ ] Add the `sql <STATEMENT>` terminal command to the React frontend.
-- [ ] Connect `sql` logic through Tauri IPC to execute raw SurrealQL statements against `core_engine`.
-- [ ] Add the `exit` command to safely and gracefully terminate the Tauri UI application.
-- [ ] Update the `help` menu to expose both new commands to the user.
+- [✓] Add the `sql <STATEMENT>` terminal command to the React frontend.
+- [✓] Connect `sql` logic through Tauri IPC to execute raw SurrealQL statements against `core_engine`.
+- [✓] Add the `exit` command to safely and gracefully terminate the Tauri UI application.
+- [✓] Update the `help` menu to expose both new commands to the user.
+- [✓] Fix JSON Enum Serialization runtime panics in GUI and CLI by safely extracting the Surreal AST natively.
 
 **Checks**
-- [ ] The `sql` command resolves valid graph database outputs instantly to standard out.
-- [ ] Typing `exit` fully and safely terminates the system process.
+- [✓] The `sql` command resolves valid graph database outputs instantly to standard out.
+- [✓] Typing `exit` fully and safely terminates the system process.
 
 ### Phase 28: Graph Traversal & Visualization
 **Description**

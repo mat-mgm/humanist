@@ -128,7 +128,7 @@ export const TerminalPanel = memo(function TerminalPanel() {
           historyIdx = history.length;
 
           if (cmd === 'help') {
-            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mpl\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
+            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mpl\x1b[0m, \x1b[36msql\x1b[0m, \x1b[36mexit\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
           } else if (cmd === 'clear') {
             term.clear();
           } else if (cmd === 'date') {
@@ -160,6 +160,34 @@ export const TerminalPanel = memo(function TerminalPanel() {
               printPrompt();
             });
             // We return early and omit printPrompt() because the async call will print it later
+            commandBuffer = '';
+            cursorIdx = 0;
+            return;
+          } else if (cmd === 'exit' || cmd === 'quit') {
+            import('@tauri-apps/api/core').then(async ({ invoke }) => {
+              await invoke('exit_app');
+            });
+            return;
+          } else if (cmd.startsWith('sql ')) {
+            let qs = cmd.replace(/^sql /, '').trim();
+            // Allow user to wrap query in quotes optionally
+            if ((qs.startsWith('"') && qs.endsWith('"')) || (qs.startsWith("'") && qs.endsWith("'"))) {
+              qs = qs.substring(1, qs.length - 1);
+            }
+            import('@tauri-apps/api/core').then(async ({ invoke }) => {
+              try {
+                const res: string[] | string = await invoke('execute_sql', { query: qs });
+                let formatted = Array.isArray(res) ? res.join('\n') : String(res);
+                formatted = formatted.replace(/\n/g, '\r\n');
+                term.writeln(`\x1b[35m${formatted}\x1b[0m`);
+              } catch (err: any) {
+                term.writeln(`\x1b[31merror: ${typeof err === 'object' ? JSON.stringify(err) : err}\x1b[0m`);
+              }
+              printPrompt();
+            }).catch(() => {
+              term.writeln('\x1b[31merror: Tauri IPC not available\x1b[0m');
+              printPrompt();
+            });
             commandBuffer = '';
             cursorIdx = 0;
             return;

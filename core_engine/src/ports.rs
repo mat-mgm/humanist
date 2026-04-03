@@ -37,6 +37,6 @@ pub trait GraphDatabase {
     async fn resolve_label(&self, label: &str) -> Result<Option<String>, String>;
     async fn resolve_path(&self, path: &str) -> Result<Option<String>, String>;
     async fn delete_edge(&self, from_id: &str, to_id: &str) -> Result<(), String>;
-    async fn execute_raw_sql(&self, query: &str) -> Result<Vec<serde_json::Value>, String>;
+    async fn execute_raw_sql(&self, query: &str) -> Result<Vec<String>, String>;
     async fn list_entities(&self) -> Result<Vec<crate::models::Entity>, String>;
 }
