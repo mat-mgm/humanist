@@ -192,7 +192,6 @@ async fn handle_blob(db: SurrealDbAdapter, bus: EventBus, blob: Arc<core_engine:
                 id: id.clone(),
                 kind: EntityKind::Blob,
                 label: label.clone(),
-                tags: vec!["blob".to_string()],
                 metadata: {
                     let mut m = HashMap::new();
                     m.insert("source_path".to_string(), serde_json::Value::String(file.clone()));
@@ -214,7 +213,7 @@ async fn handle_blob(db: SurrealDbAdapter, bus: EventBus, blob: Arc<core_engine:
         }
         BlobSub::Ls => {
             let entities = db.list_entities().await?;
-            for e in entities.iter().filter(|e| e.tags.contains(&"blob".to_string())) {
+            for e in entities.iter().filter(|e| matches!(e.kind, core_engine::models::EntityKind::Blob)) {
                 let path = e.metadata.get("source_path").and_then(|v| v.as_str()).unwrap_or("?");
                 println!("- {} [{}] ({})", e.label, path, e.id);
             }
@@ -284,7 +283,6 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 id: id.clone(),
                 kind: kind_enum,
                 label: label.clone(),
-                tags: vec![],
                 metadata: HashMap::new(),
                 deleted_at: None,
             };
@@ -309,8 +307,20 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
         }
         EntitySub::Search { term } => {
             let entities = db.list_entities().await?;
+            let tag_id = db.resolve_label(&term).await?;
+            let tagged_ids: std::collections::HashSet<_> = if let Some(t_id) = tag_id {
+                let edges = db.get_edges().await?;
+                let raw_t_id = t_id.replace("entity:", "");
+                edges.into_iter()
+                    .filter(|(_, to, lbl)| lbl == "tagged_as" && *to == raw_t_id)
+                    .map(|(from, _, _)| format!("entity:{}", from))
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
+
             let matches: Vec<_> = entities.into_iter()
-                .filter(|e| e.label.contains(&term) || e.tags.contains(&term))
+                .filter(|e| e.label.contains(&term) || tagged_ids.contains(&e.id))
                 .collect();
             if matches.is_empty() {
                 println!("No results found for '{}'", term);
@@ -332,28 +342,41 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
             }
         }
         EntitySub::Tag { term, tag } => {
-            if let Some(id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
-                let mut e = db.get_entity(&id).await?;
-                if !e.tags.contains(&tag) {
-                    e.tags.push(tag.clone());
-                    db.save_entity(e).await?;
-                    println!("✅ Added tag '{}' to {}", tag, term);
+            if let Some(target_id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
+                // Find or create the tag entity natively
+                let tag_id = if let Some(id) = db.resolve_label(&tag).await? {
+                    id
                 } else {
-                    println!("ℹ️ Entity {} already has tag '{}'", term, tag);
-                }
+                    let ulid = ulid::Ulid::new().to_string();
+                    let id = format!("entity:{}", ulid);
+                    let mut entity = Entity {
+                        id: id.clone(),
+                        kind: EntityKind::Abstract,
+                        label: tag.clone(),
+                        metadata: HashMap::new(),
+                        deleted_at: None,
+                    };
+                    entity.metadata.insert("is_tag".to_string(), serde_json::Value::Bool(true));
+                    db.save_entity(entity).await?;
+                    bus.on_event("entity.created".to_string(), 1, ulid).await;
+                    id
+                };
+                
+                // Add the edge linking them!
+                db.add_edge(&target_id, &tag_id, "tagged_as").await?;
+                println!("✅ Added tag '{}' to {}", tag, term);
             } else {
                 println!("❌ Could not find entity: {}", term);
             }
         }
         EntitySub::Untag { term, tag } => {
-            if let Some(id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
-                let mut e = db.get_entity(&id).await?;
-                if let Some(pos) = e.tags.iter().position(|t| t == &tag) {
-                    e.tags.remove(pos);
-                    db.save_entity(e).await?;
+            if let Some(target_id) = db.resolve_label(&term).await.unwrap_or(if term.starts_with("entity:") { Some(term.clone()) } else { None }) {
+                if let Some(tag_id) = db.resolve_label(&tag).await.unwrap_or(if tag.starts_with("entity:") { Some(tag.clone()) } else { None }) {
+                    // Softly remove the semantic edge linking them without erasing the Tag Node itself!
+                    db.delete_edge(&target_id, &tag_id, Some("tagged_as")).await?;
                     println!("✅ Removed tag '{}' from {}", tag, term);
                 } else {
-                    println!("ℹ️ Entity {} did not have tag '{}'", term, tag);
+                    println!("❌ Could not find tag entity: {}", tag);
                 }
             } else {
                 println!("❌ Could not find entity: {}", term);
@@ -383,7 +406,7 @@ async fn handle_edge(db: SurrealDbAdapter, sub: EdgeSub) -> Result<(), Box<dyn s
             
             match (f_id, t_id) {
                 (Some(f), Some(t)) => {
-                    db.delete_edge(&f, &t).await?;
+                    db.delete_edge(&f, &t, None).await?;
                     println!("✅ Removed edge: {} → {}", from, to);
                 }
                 _ => println!("❌ Could not resolve one or both entities."),

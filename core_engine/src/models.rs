@@ -17,7 +17,6 @@ pub struct Entity {
     pub id: String,
     pub kind: EntityKind,
     pub label: String,
-    pub tags: Vec<String>,
     pub metadata: HashMap<String, serde_json::Value>,
     pub deleted_at: Option<String>,
 }

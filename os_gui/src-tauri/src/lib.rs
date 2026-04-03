@@ -69,7 +69,6 @@ async fn ingest_entity(
         id: id.clone(),
         kind: EntityKind::Blob,
         label: label.clone(),
-        tags: vec!["gui_ingested".to_string()],
         metadata: {
             let mut m = HashMap::new();
             m.insert("source_path".to_string(), serde_json::Value::String(immutable_path));

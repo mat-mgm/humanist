@@ -26,7 +26,6 @@ impl SurrealDbAdapter {
             DEFINE TABLE entity SCHEMAFULL;
             DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob'];
             DEFINE FIELD label ON entity TYPE string;
-            DEFINE FIELD OVERWRITE tags ON entity TYPE array<string>;
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
 
@@ -189,8 +188,11 @@ impl GraphDatabase for SurrealDbAdapter {
             .map(|e| e.id))
     }
 
-    async fn delete_edge(&self, from_id: &str, to_id: &str) -> Result<(), String> {
-        let qs = format!("DELETE edge WHERE in = {} AND out = {};", from_id, to_id);
+    async fn delete_edge(&self, from_id: &str, to_id: &str, label: Option<&str>) -> Result<(), String> {
+        let qs = match label {
+            Some(lbl) => format!("DELETE edge WHERE in = {} AND out = {} AND label = '{}';", from_id, to_id, lbl),
+            None => format!("DELETE edge WHERE in = {} AND out = {};", from_id, to_id),
+        };
         self.db.query(qs)
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;

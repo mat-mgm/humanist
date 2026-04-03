@@ -44,6 +44,11 @@ State rules:
   - Right Pane: 3D Globe (`cesium`) and Properties/Preview panel.
   - Floating Terminal Overlay (`xterm.js`).
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`). Context entities emit semantic edges.
+* **Unified Semantic Relationships (Graph Edges & Tags)**: 
+  - To achieve a true "Git for Data" mental model, all relationships (1:1 and Many:1) are merged into a single generic **Edge** mechanism. 
+  - **Relational Tagging**: Tags are no longer static string arrays inside an entity's record. Instead, they are independent `Abstract` entities. 
+  - Tagging an entity creates a directed edge (`tagged_as`) from the target to the tag node. This allows for complex graph traversal using tags as central hubs, rather than simple metadata filtering. 
+  - Removing a tag merely deletes the relationship edge, preserving the tag's identity as a first-class citizen in the knowledge graph.
 * Rules Engine: Integrates Scryer Prolog using a Dynamic Predicates model naturally representing entities and edges for complex deductive inference synced via external state changes on the EventBus.
 * **CLI Interactivity & Data Management (`os_cli`)**:
   - **Create Entities**: `cargo run -p os_cli -- entity add <KIND> <LABEL>` (e.g., `entity add physical "Main Server"`)
@@ -237,7 +242,24 @@ Harden the CLI entity management pipeline to support full CRUD operations, tag m
 - [✓] Edges work: `edge add` links entities, `edge rm` removes links.
 - [✓] `cargo check --workspace` passes with zero warnings.
 
-### Phase 29: Graph Traversal & Visualization
+### Phase 29: Unified Semantic Graph & Relational Tagging
+**Description**
+Refactor the legacy scalar tag model into a unified relational graph. Tags are transformed from static string arrays into independent `Abstract` entities linked via semantic edges, merging one-to-one and many-to-one relationships into a single architectural class.
+
+**Tasks**
+- [✓] Remove `tags` field from `Entity` model and SurrealDB schema.
+- [✓] Modify `delete_edge` to support optional label-based filtering for precise relationship dismantling.
+- [✓] Implement automatic `Abstract` entity creation during tagging operations in `os_cli`.
+- [✓] Refactor `entity tag` and `entity untag` to manage `tagged_as` graph edges.
+- [✓] Update `entity search` to traverse semantic edges for relational discovery.
+
+**Checks**
+- [✓] Tagging an entity creates a new `Abstract` node if the tag doesn't exist.
+- [✓] Removing a tag destroys the edge but preserves the tag entity itself.
+- [✓] Search results include entities linked via tag edges.
+- [✓] System compiles with zero warnings after removing redundant `tags` property references.
+
+### Phase 30: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 
