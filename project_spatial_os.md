@@ -283,7 +283,23 @@ Extend the GUI from read-only display into a fully interactive entity management
 - [✓] Soft-deleting an entity removes it from all lists.
 - [✓] `cargo check --workspace` and TypeScript build pass with zero errors/warnings.
 
-### Phase 31: Graph Traversal & Visualization
+### Phase 31: Tag-Based Visual Grouping (Hatched Regions)
+**Description**
+Enhance the `GraphPanel` to visualize semantic groups by drawing colored, hatched regions around nodes sharing the same tag. This clarifies the graph's high-level hierarchy while managing tag-entities as first-class citizens.
+
+**Tasks**
+- [✓] Implement `selectTagGroups` in `store.ts` to map tag-entities to member nodes.
+- [✓] Add `showRegions` and node-filtering logic to `GraphPanel`.
+- [✓] Implement `getConvexHull` and `createHatchPattern` utilities.
+- [✓] Render hatched hulls and tag labels in `onRenderFramePre`.
+- [✓] Add a "Regions" toggle to the Graph Panel toolbar.
+
+**Checks**
+- [✓] Tagged nodes are enclosed in hatched regions with the correct tag label.
+- [✓] Tag nodes are hidden when region mode is active (unless other relationships exist).
+- [✓] Hatching colors adapt to the active theme.
+
+### Phase 32: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 

@@ -40,6 +40,7 @@ interface OsStore {
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
   nodePositions: Record<string, { x: number, y: number }>;
+  showRegions: boolean;
 
   // Actions — read
   updateNodePosition: (id: string, x: number, y: number) => void;
@@ -60,6 +61,7 @@ interface OsStore {
   untagEntity: (targetId: string, tagLabel: string) => Promise<void>;
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
+  toggleRegions: () => void;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -73,6 +75,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   isLoading: false,
   lastEvent: null,
   nodePositions: {},
+  showRegions: true,
 
   updateNodePosition: (id, x, y) => {
     set(state => ({
@@ -194,6 +197,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
     await invoke('remove_edge', { fromId, toId, label: label ?? null });
     await get().fetchEdges();
     if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
+  },
+
+  toggleRegions: () => {
+    set(state => ({ showRegions: !state.showRegions }));
   },
 
   startListening: async () => {
