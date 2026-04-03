@@ -26,7 +26,6 @@ const EntityRow = memo(function EntityRow({
     >
       <td title={entity.id}>{entity.label}</td>
       <td><span className={`kind-badge kind-${entity.kind}`}>{entity.kind}</span></td>
-      <td>{entity.tags.join(', ')}</td>
       <td>{isSelected ? '◉' : isContext ? '◎' : ''}</td>
     </tr>
   );
@@ -61,7 +60,7 @@ export const DataTablePanel = memo(function DataTablePanel() {
           <table className="entity-table">
             <thead>
               <tr>
-                <th>Label</th><th>Kind</th><th>Tags</th><th>Context</th>
+                <th>Label</th><th>Kind</th><th>Context</th>
               </tr>
             </thead>
             <tbody>

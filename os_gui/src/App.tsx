@@ -8,6 +8,7 @@ const GlobePanel = lazy(() => import('./components/GlobePanel').then(m => ({ def
 import { ViewportPanel } from './components/ViewportPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { IngestDialog } from './components/IngestDialog';
+import { CreateEntityDialog } from './components/CreateEntityDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TilingLayout, LayoutMode, PaneConfig } from './components/TilingLayout';
 
@@ -45,11 +46,13 @@ export const KEYBINDS = {
   toggleTerminal: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 't',
   toggleGlobe: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'm',
   ingestData: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'i',
+  createEntity: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'n',
 };
 
 export default function App() {
   const { fetchEntities, fetchSpatialTraits, fetchEdges, startListening } = useOsStore();
   const [ingestVisible, setIngestVisible] = useState(false);
+  const [createVisible, setCreateVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   // Theme & Window
@@ -87,6 +90,7 @@ export default function App() {
   // Global Keybinds (DWM-style bindings)
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (KEYBINDS.ingestData(e)) { e.preventDefault(); setIngestVisible(v => !v); }
+    if (KEYBINDS.createEntity(e)) { e.preventDefault(); setCreateVisible(v => !v); }
 
     // Layouts
     if (KEYBINDS.layoutMaster(e)) { e.preventDefault(); setLayoutMode('master'); }
@@ -167,7 +171,11 @@ export default function App() {
               <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 1000, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 4, padding: 4, minWidth: 140, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
                 <div className="menu-action" onClick={() => { setIngestVisible(true); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
                   <span>Ingest Data...</span>
-                  <span style={{ color: 'var(--text-hint)' }}>Ctrl+I</span>
+                  <span style={{ color: 'var(--text-hint)' }}>Alt+I</span>
+                </div>
+                <div className="menu-action" onClick={() => { setCreateVisible(true); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>New Entity...</span>
+                  <span style={{ color: 'var(--text-hint)' }}>Ctrl+N</span>
                 </div>
                 <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
                 <div className="menu-action" onClick={() => window.close()} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3 }}>Exit</div>
@@ -284,6 +292,7 @@ export default function App() {
         visible={ingestVisible}
         onClose={() => setIngestVisible(false)}
       />
+      {createVisible && <CreateEntityDialog onClose={() => setCreateVisible(false)} />}
     </div>
   );
 }

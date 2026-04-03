@@ -204,6 +204,149 @@ fn exit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+async fn create_entity(
+    kind: String,
+    label: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let kind_enum = match kind.as_str() {
+        "physical" => EntityKind::Physical,
+        "digital"  => EntityKind::Digital,
+        "abstract" => EntityKind::Abstract,
+        "agent"    => EntityKind::Agent,
+        "blob"     => EntityKind::Blob,
+        _ => return Err(format!("Unknown entity kind: {}", kind)),
+    };
+    let ulid = Ulid::new().to_string();
+    let id = format!("entity:{}", ulid);
+    let entity = Entity {
+        id: id.clone(),
+        kind: kind_enum,
+        label: label.clone(),
+        metadata: HashMap::new(),
+        deleted_at: None,
+    };
+    let st = state.lock().await;
+    st.db.save_entity(entity).await?;
+    st.bus.on_event("entity.created".to_string(), 1, ulid.clone()).await;
+    app.emit("entity-updated", serde_json::json!({"topic": "entity.created", "ulid": ulid, "label": label}))
+        .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn update_metadata(
+    id: String,
+    metadata: serde_json::Value,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let mut entity = st.db.get_entity(&id).await?;
+    let map = metadata.as_object().ok_or("metadata must be a JSON object".to_string())?;
+    entity.metadata = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    st.db.save_entity(entity).await?;
+    app.emit("entity-updated", serde_json::json!({"topic": "entity.updated", "ulid": id}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_entity(
+    id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db.soft_delete(&id).await?;
+    app.emit("entity-updated", serde_json::json!({"topic": "entity.deleted", "ulid": id}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn tag_entity(
+    target_id: String,
+    tag_label: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    // Resolve or create the tag entity
+    let tag_id = match st.db.resolve_label(&tag_label).await? {
+        Some(id) => id,
+        None => {
+            let ulid = Ulid::new().to_string();
+            let id = format!("entity:{}", ulid);
+            let mut meta = HashMap::new();
+            meta.insert("is_tag".to_string(), serde_json::Value::Bool(true));
+            let tag_entity = Entity {
+                id: id.clone(),
+                kind: EntityKind::Abstract,
+                label: tag_label.clone(),
+                metadata: meta,
+                deleted_at: None,
+            };
+            st.db.save_entity(tag_entity).await?;
+            st.bus.on_event("entity.created".to_string(), 1, ulid).await;
+            id
+        }
+    };
+    st.db.add_edge(&target_id, &tag_id, "tagged_as").await?;
+    app.emit("graph-updated", serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn untag_entity(
+    target_id: String,
+    tag_label: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let tag_id = st.db.resolve_label(&tag_label).await?
+        .ok_or_else(|| format!("No entity found for tag '{}'", tag_label))?;
+    st.db.delete_edge(&target_id, &tag_id, Some("tagged_as")).await?;
+    app.emit("graph-updated", serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_edge(
+    from_id: String,
+    to_id: String,
+    label: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db.delete_edge(&from_id, &to_id, label.as_deref()).await?;
+    app.emit("graph-updated", serde_json::json!({"from": from_id, "to": to_id}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_entity_edges(
+    entity_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let st = state.lock().await;
+    let all_edges = st.db.get_edges().await?;
+    // Strip the "entity:" prefix the same way get_edges returns short ids
+    let short_id = entity_id.replace("entity:", "");
+    let filtered: Vec<serde_json::Value> = all_edges.into_iter()
+        .filter(|(f, t, _)| f == &short_id || t == &short_id)
+        .map(|(f, t, l)| serde_json::json!({"from": f, "to": t, "label": l}))
+        .collect();
+    Ok(filtered)
+}
+
 // ── App Entry ─────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -284,6 +427,13 @@ pub fn run() {
             run_prolog_query,
             execute_sql,
             exit_app,
+            create_entity,
+            update_metadata,
+            delete_entity,
+            tag_entity,
+            untag_entity,
+            remove_edge,
+            get_entity_edges,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

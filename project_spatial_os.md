@@ -259,7 +259,31 @@ Refactor the legacy scalar tag model into a unified relational graph. Tags are t
 - [✓] Search results include entities linked via tag edges.
 - [✓] System compiles with zero warnings after removing redundant `tags` property references.
 
-### Phase 30: Graph Traversal & Visualization
+### Phase 30: GUI Entity Management (CRUD, Tagging, Relations)
+**Description**
+Extend the GUI from read-only display into a fully interactive entity management interface. Users should be able to create, update, delete, tag, relate, and inspect entities without using the CLI.
+
+**Tasks**
+- [✓] Add 7 new Tauri IPC commands to `lib.rs`: `create_entity`, `update_metadata`, `delete_entity`, `tag_entity`, `untag_entity`, `remove_edge`, `get_entity_edges`.
+- [✓] Update frontend `models.ts` — remove stale `tags: string[]` field (now graph edges).
+- [✓] Expand Zustand `store.ts` with write actions and `selectedEntityEdges` state.
+- [✓] Create `CreateEntityDialog` component (kind + label form, `Alt+N`).
+- [✓] Create `RelateDialog` component (searchable entity picker + edge label).
+- [✓] Refactor `ViewportPanel` Properties tab into an interactive `EntityInspector`: inline metadata editing, tag chips with add/remove, relationship list with remove.
+- [✓] Enhance Registry tab: search bar, `[+ New]` button, context menu (select, tag, relate, delete).
+- [✓] Add right-click context menu to `GraphPanel` nodes (inspect, tag, relate, delete).
+
+**Checks**
+- [✓] `entity add <kind> <label>` via GUI creates and selects the new entity.
+- [✓] Metadata edits in the inspector persist after saving.
+- [✓] Adding a tag in the inspector creates an `Abstract` entity + `tagged_as` edge.
+- [✓] Removing a tag removes only the `tagged_as` edge; the tag entity survives.
+- [✓] Creating a relationship via RelateDialog adds an edge visible in the graph.
+- [✓] Removing a relationship from the inspector is reflected in the graph.
+- [✓] Soft-deleting an entity removes it from all lists.
+- [✓] `cargo check --workspace` and TypeScript build pass with zero errors/warnings.
+
+### Phase 31: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 

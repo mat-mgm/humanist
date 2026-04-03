@@ -34,13 +34,14 @@ interface OsStore {
   edges: GraphEdge[];
   selectedEntityId: string | null;
   contextEntities: Entity[];
+  selectedEntityEdges: GraphEdge[];
 
   // UI flags
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
   nodePositions: Record<string, { x: number, y: number }>;
 
-  // Actions
+  // Actions — read
   updateNodePosition: (id: string, x: number, y: number) => void;
   fetchEntities: () => Promise<void>;
   fetchSpatialTraits: () => Promise<void>;
@@ -48,7 +49,17 @@ interface OsStore {
   fetchEdges: () => Promise<void>;
   selectEntity: (id: string | null) => void;
   queryContext: (contextId: string) => Promise<void>;
+  fetchEntityEdges: (entityId: string) => Promise<void>;
   startListening: () => Promise<() => void>;
+
+  // Actions — write
+  createEntity: (kind: string, label: string) => Promise<string>;
+  updateMetadata: (id: string, metadata: Record<string, any>) => Promise<void>;
+  deleteEntity: (id: string) => Promise<void>;
+  tagEntity: (targetId: string, tagLabel: string) => Promise<void>;
+  untagEntity: (targetId: string, tagLabel: string) => Promise<void>;
+  addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
+  removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -58,6 +69,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   edges: [],
   selectedEntityId: null,
   contextEntities: [],
+  selectedEntityEdges: [],
   isLoading: false,
   lastEvent: null,
   nodePositions: {},
@@ -115,8 +127,11 @@ export const useOsStore = create<OsStore>((set, get) => ({
   },
 
   selectEntity: (id) => {
-    set({ selectedEntityId: id });
-    if (id) get().queryContext(id);
+    set({ selectedEntityId: id, selectedEntityEdges: [] });
+    if (id) {
+      get().queryContext(id);
+      get().fetchEntityEdges(id);
+    }
   },
 
   queryContext: async (contextId) => {
@@ -126,6 +141,59 @@ export const useOsStore = create<OsStore>((set, get) => ({
     } catch (e) {
       console.error('queryContext error:', e);
     }
+  },
+
+  fetchEntityEdges: async (entityId) => {
+    try {
+      const edges = await invoke<GraphEdge[]>('get_entity_edges', { entityId });
+      set({ selectedEntityEdges: edges });
+    } catch (e) {
+      console.error('fetchEntityEdges error:', e);
+    }
+  },
+
+  // ── Write actions ────────────────────────────────────────────────────────
+
+  createEntity: async (kind, label) => {
+    const id = await invoke<string>('create_entity', { kind, label });
+    await get().fetchEntities();
+    return id;
+  },
+
+  updateMetadata: async (id, metadata) => {
+    await invoke('update_metadata', { id, metadata });
+    await get().fetchEntities();
+  },
+
+  deleteEntity: async (id) => {
+    await invoke('delete_entity', { id });
+    set({ selectedEntityId: null, selectedEntityEdges: [] });
+    await get().fetchEntities();
+  },
+
+  tagEntity: async (targetId, tagLabel) => {
+    await invoke('tag_entity', { targetId, tagLabel });
+    await get().fetchEdges();
+    if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
+    await get().fetchEntities(); // tag entity may be new
+  },
+
+  untagEntity: async (targetId, tagLabel) => {
+    await invoke('untag_entity', { targetId, tagLabel });
+    await get().fetchEdges();
+    if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
+  },
+
+  addEdgeAction: async (fromId, toId, label) => {
+    await invoke('add_edge', { fromId, toId, label });
+    await get().fetchEdges();
+    if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
+  },
+
+  removeEdge: async (fromId, toId, label?) => {
+    await invoke('remove_edge', { fromId, toId, label: label ?? null });
+    await get().fetchEdges();
+    if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
   },
 
   startListening: async () => {
@@ -138,7 +206,9 @@ export const useOsStore = create<OsStore>((set, get) => ({
     });
 
     const unlistenGraph = await listen<GraphUpdateEvent>('graph-updated', () => {
-      useOsStore.getState().fetchEdges();
+      const store = useOsStore.getState();
+      store.fetchEdges();
+      if (store.selectedEntityId) store.fetchEntityEdges(store.selectedEntityId);
     });
 
     return () => {

@@ -3,6 +3,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 // @ts-ignore
 import ForceGraph2D from 'force-graph';
 import { useOsStore } from '../store';
+import { RelateDialog } from './RelateDialog';
 
 interface GNode { id: string; label: string; kind: string; }
 
@@ -37,9 +38,16 @@ export const GraphPanel = memo(function GraphPanel() {
   const nodePositions = useOsStore(s => s.nodePositions);
   const updateNodePosition = useOsStore(s => s.updateNodePosition);
   const blobTraits = useOsStore(selectBlobTraits);
+  const { deleteEntity, tagEntity } = useOsStore();
 
   const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
-  
+
+  // Context menu state
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string } | null>(null);
+  const [showRelate, setShowRelate] = useState(false);
+  const [quickTagNode, setQuickTagNode] = useState<{ id: string; label: string } | null>(null);
+  const [quickTagInput, setQuickTagInput] = useState('');
+
   const searchQueryRef = useRef('');
   const selectedIdRef = useRef<string | null>(null);
   const showGridRef = useRef(true);
@@ -62,7 +70,6 @@ export const GraphPanel = memo(function GraphPanel() {
     // Keep full "entity:" prefix so ViewportPanel can find it in the store
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
-    
     if (selectedIdRef.current === fullId) {
       setToggledImageNodes(prev => {
         const next = new Set(prev);
@@ -73,6 +80,15 @@ export const GraphPanel = memo(function GraphPanel() {
     } else {
       selectEntity(fullId);
     }
+    setCtxMenu(null);
+  }, [selectEntity]);
+
+  const onNodeRightClick = useCallback((node: any, event: MouseEvent) => {
+    event.preventDefault();
+    const nodeId: string = (node as GNode).id;
+    const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
+    selectEntity(fullId);
+    setCtxMenu({ x: event.clientX, y: event.clientY, nodeId: fullId, nodeLabel: node.label ?? nodeId });
   }, [selectEntity]);
 
   // Bootstrap once
@@ -95,6 +111,7 @@ export const GraphPanel = memo(function GraphPanel() {
       .linkDirectionalArrowLength(5)
       .linkDirectionalArrowRelPos(1)
       .onNodeClick(onNodeClick)
+      .onNodeRightClick(onNodeRightClick)
       .nodeCanvasObject((n: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         if (n.x == null || n.y == null || Number.isNaN(n.x) || Number.isNaN(n.y)) return;
 
@@ -167,7 +184,7 @@ export const GraphPanel = memo(function GraphPanel() {
           if (isImageReady && n.__imgW) {
             ctx.rect(n.x - n.__imgW / 2 - 2, n.y - n.__imgH / 2 - 2, n.__imgW + 4, n.__imgH + 4);
           } else {
-            ctx.arc(n.x, n.y, radius + 1.5, 0, 2 * Math.PI, false); 
+            ctx.arc(n.x, n.y, radius + 1.5, 0, 2 * Math.PI, false);
           }
           ctx.lineWidth = 2.5 / globalScale; // Thick outline
           const accentObj = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0';
@@ -447,7 +464,74 @@ export const GraphPanel = memo(function GraphPanel() {
       <div
         ref={containerRef}
         style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden' }}
+        onClick={() => setCtxMenu(null)}
       />
+
+      {/* Graph node right-click context menu */}
+      {ctxMenu && (
+        <div
+          style={{
+            position: 'fixed', zIndex: 500,
+            left: ctxMenu.x, top: ctxMenu.y,
+            background: 'var(--bg-panel)', border: '1px solid var(--border)',
+            borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+            minWidth: 140, padding: '4px 0',
+          }}
+          onMouseLeave={() => setCtxMenu(null)}
+        >
+          {[
+            { label: 'Inspect', action: () => { selectEntity(ctxMenu.nodeId); setCtxMenu(null); } },
+            { label: 'Relate…', action: () => { setShowRelate(true); setCtxMenu(null); } },
+            { label: 'Tag…', action: () => { setQuickTagNode({ id: ctxMenu.nodeId, label: ctxMenu.nodeLabel }); setCtxMenu(null); } },
+            { label: 'Delete', action: () => { deleteEntity(ctxMenu.nodeId); setCtxMenu(null); }, danger: true },
+          ].map(item => (
+            <div
+              key={item.label}
+              onClick={item.action}
+              style={{
+                padding: '7px 14px', fontSize: 12, cursor: 'pointer',
+                color: (item as any).danger ? '#ff6b6b' : 'var(--text-primary)',
+              }}
+              onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
+              onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+            >
+              {item.label}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Quick tag from graph */}
+      {quickTagNode && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={e => { if (e.target === e.currentTarget) setQuickTagNode(null); }}
+        >
+          <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 9, padding: '20px 24px', minWidth: 300, boxShadow: '0 6px 32px rgba(0,0,0,0.5)' }}>
+            <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-primary)' }}>Add tag to <strong>{quickTagNode.label}</strong></p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input autoFocus type="text" value={quickTagInput}
+                onChange={e => setQuickTagInput(e.target.value)}
+                onKeyDown={async ev => {
+                  if (ev.key === 'Enter') { await tagEntity(quickTagNode!.id, quickTagInput.trim()); setQuickTagNode(null); setQuickTagInput(''); }
+                  if (ev.key === 'Escape') setQuickTagNode(null);
+                }}
+                placeholder="Tag name…"
+                style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: 13, outline: 'none' }}
+              />
+              <button onClick={async () => { await tagEntity(quickTagNode!.id, quickTagInput.trim()); setQuickTagNode(null); setQuickTagInput(''); }}
+                style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '6px 14px', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>Tag</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRelate && ctxMenu && (
+        <RelateDialog
+          sourceEntityId={ctxMenu.nodeId}
+          sourceLabel={ctxMenu.nodeLabel}
+          onClose={() => setShowRelate(false)}
+        />
+      )}
     </div>
   );
 });

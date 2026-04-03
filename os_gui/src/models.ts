@@ -4,7 +4,6 @@ export interface Entity {
   id: string;
   kind: EntityKind;
   label: string;
-  tags: string[];
   metadata: Record<string, any>;
   deleted_at: string | null;
 }
