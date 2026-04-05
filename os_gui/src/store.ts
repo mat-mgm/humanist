@@ -33,6 +33,7 @@ interface OsStore {
   blobTraits: BlobTrait[];
   edges: GraphEdge[];
   selectedEntityId: string | null;
+  selectedIds: string[];
   contextEntities: Entity[];
   selectedEntityEdges: GraphEdge[];
 
@@ -49,6 +50,8 @@ interface OsStore {
   fetchBlobTraits: () => Promise<void>;
   fetchEdges: () => Promise<void>;
   selectEntity: (id: string | null) => void;
+  setSelectedIds: (ids: string[]) => void;
+  toggleSelection: (id: string) => void;
   queryContext: (contextId: string) => Promise<void>;
   fetchEntityEdges: (entityId: string) => Promise<void>;
   startListening: () => Promise<() => void>;
@@ -57,7 +60,9 @@ interface OsStore {
   createEntity: (kind: string, label: string) => Promise<string>;
   updateMetadata: (id: string, metadata: Record<string, any>) => Promise<void>;
   deleteEntity: (id: string) => Promise<void>;
+  deleteEntities: (ids: string[]) => Promise<void>;
   tagEntity: (targetId: string, tagLabel: string) => Promise<void>;
+  tagEntities: (targetIds: string[], tagLabel: string) => Promise<void>;
   untagEntity: (targetId: string, tagLabel: string) => Promise<void>;
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
@@ -70,6 +75,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   blobTraits: [],
   edges: [],
   selectedEntityId: null,
+  selectedIds: [],
   contextEntities: [],
   selectedEntityEdges: [],
   isLoading: false,
@@ -130,11 +136,28 @@ export const useOsStore = create<OsStore>((set, get) => ({
   },
 
   selectEntity: (id) => {
-    set({ selectedEntityId: id, selectedEntityEdges: [] });
+    set({ selectedEntityId: id, selectedIds: id ? [id] : [], selectedEntityEdges: [] });
     if (id) {
       get().queryContext(id);
       get().fetchEntityEdges(id);
     }
+  },
+
+  setSelectedIds: (ids) => {
+    const primary = ids.length > 0 ? ids[ids.length - 1] : null;
+    set({ selectedIds: ids, selectedEntityId: primary });
+    if (primary) {
+      get().queryContext(primary);
+      get().fetchEntityEdges(primary);
+    }
+  },
+
+  toggleSelection: (id) => {
+    const { selectedIds } = get();
+    const next = selectedIds.includes(id) 
+      ? selectedIds.filter(x => x !== id)
+      : [...selectedIds, id];
+    get().setSelectedIds(next);
   },
 
   queryContext: async (contextId) => {
@@ -170,7 +193,20 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   deleteEntity: async (id) => {
     await invoke('delete_entity', { id });
-    set({ selectedEntityId: null, selectedEntityEdges: [] });
+    set(state => ({ 
+      selectedEntityId: state.selectedEntityId === id ? null : state.selectedEntityId,
+      selectedIds: state.selectedIds.filter(x => x !== id),
+      selectedEntityEdges: state.selectedEntityId === id ? [] : state.selectedEntityEdges 
+    }));
+    await get().fetchEntities();
+  },
+
+  deleteEntities: async (ids) => {
+    await Promise.all(ids.map(id => invoke('delete_entity', { id })));
+    set(state => ({
+      selectedIds: state.selectedIds.filter(x => !ids.includes(x)),
+      selectedEntityId: ids.includes(state.selectedEntityId ?? '') ? null : state.selectedEntityId
+    }));
     await get().fetchEntities();
   },
 
@@ -179,6 +215,14 @@ export const useOsStore = create<OsStore>((set, get) => ({
     await get().fetchEdges();
     if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
     await get().fetchEntities(); // tag entity may be new
+  },
+
+  tagEntities: async (targetIds, tagLabel) => {
+    await Promise.all(targetIds.map(id => invoke('tag_entity', { targetId: id, tagLabel })));
+    await get().fetchEdges();
+    await get().fetchEntities();
+    const primary = get().selectedEntityId;
+    if (primary) await get().fetchEntityEdges(primary);
   },
 
   untagEntity: async (targetId, tagLabel) => {

@@ -299,7 +299,28 @@ Enhance the `GraphPanel` to visualize semantic groups by drawing colored, hatche
 - [✓] Tag nodes are hidden when region mode is active (unless other relationships exist).
 - [✓] Hatching colors adapt to the active theme.
 
-### Phase 32: Graph Traversal & Visualization
+### Phase 32: Multi-Selection & Squared Mouse Selection
+**Description**
+Enable advanced node management through bulk operations (tagging, relating) and visual "Marquee" selection (drag-to-select). This significantly improves efficiency for large graph manipulation.
+
+**Tasks**
+- [✓] Extend `OsStore` to support a collection of selected entity IDs (`selectedIds`).
+- [✓] Update `KEYBINDS` in `App.tsx` to include modifiers for multi-selection and marquee selection.
+- [✓] Implement `Ctrl/Shift + Click` logic in `GraphPanel` for toggling single node selection.
+- [✓] Implement "Selection Box" (Marquee) logic:
+  - [✓] Add state for drag start/end coordinates.
+  - [✓] Render a translucent colored rectangle during selection drag in `onRenderFramePre`.
+  - [✓] Use `graph.getNodesPartiallyInArea(x1, y1, x2, y2)` or coordinate math to find nodes inside the box.
+- [✓] Update Context Menu to detect "Selection Actions" (e.g., tag multiple nodes at once).
+- [✓] Implement bulk tagging/relating logic in the store and backend (if needed).
+
+**Checks**
+- [✓] Dragging the background with `Shift` (or a toggle) draws a selection box.
+- [✓] All nodes within the box are added to the selection state.
+- [✓] Highlighting correctly shows all selected nodes.
+- [✓] Context menu actions (Delete, Tag) apply to the entire selection.
+
+### Phase 33: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 

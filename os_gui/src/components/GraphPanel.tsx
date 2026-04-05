@@ -4,6 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import ForceGraph2D from 'force-graph';
 import { useOsStore } from '../store';
 import { RelateDialog } from './RelateDialog';
+import { KEYBINDS } from '../App';
 import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
 
 interface GNode {
@@ -60,9 +61,12 @@ export const GraphPanel = memo(function GraphPanel() {
   const entities = useOsStore(selectEntities);
   const edges = useOsStore(selectEdges);
   const selectedId = useOsStore(selectSelectedId);
+  const selectedIds = useOsStore((s: any) => s.selectedIds);
   const selectEntity = useOsStore(selectSelectEntity);
+  const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
+  const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, tagEntity, showRegions, toggleRegions, updateNodePosition, nodePositions } = useOsStore();
+  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions } = useOsStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
@@ -74,12 +78,21 @@ export const GraphPanel = memo(function GraphPanel() {
   const [quickTagNode, setQuickTagNode] = useState<{ id: string; label: string } | null>(null);
   const [quickTagInput, setQuickTagInput] = useState('');
 
+  // Marquee selection state
+  const selectionBoxRef = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
+  // Screen-space start point for the overlay (in container-relative pixels)
+  const selectionStartScreenRef = useRef<{ x: number; y: number } | null>(null);
+  // Screen-space rect for the overlay div (in px, relative to container)
+  const [selectionBoxScreen, setSelectionBoxScreen] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const isDraggingSelection = useRef(false);
+
   const searchQueryRef = useRef('');
   const selectedIdRef = useRef<string | null>(null);
   const showGridRef = useRef(true);
   const showRegionsRef = useRef(true);
   const blobTraitsRef = useRef(blobTraits);
   const toggledImageNodesRef = useRef(toggledImageNodes);
+  const selectedIdsRef = useRef(selectedIds);
   const prevCounts = useRef({ entities: 0, edges: 0 });
 
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
@@ -93,10 +106,18 @@ export const GraphPanel = memo(function GraphPanel() {
       graphRef.current.nodeColor(graphRef.current.nodeColor());
     }
   }, [toggledImageNodes]);
+  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
-  const onNodeClick = useCallback((node: any) => {
+  const onNodeClick = useCallback((node: any, event: MouseEvent) => {
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
+    
+    // Toggle multi-select
+    if (KEYBINDS.multiSelectModifier(event)) {
+      toggleSelection(fullId);
+      return;
+    }
+
     if (selectedIdRef.current === fullId) {
       setToggledImageNodes(prev => {
         const next = new Set(prev);
@@ -108,7 +129,7 @@ export const GraphPanel = memo(function GraphPanel() {
       selectEntity(fullId);
     }
     setCtxMenu(null);
-  }, [selectEntity]);
+  }, [selectEntity, toggleSelection]);
 
   const onNodeRightClick = useCallback((node: any, event: MouseEvent) => {
     event.preventDefault();
@@ -138,12 +159,19 @@ export const GraphPanel = memo(function GraphPanel() {
       .linkDirectionalArrowRelPos(1)
       .onNodeClick(onNodeClick)
       .onNodeRightClick(onNodeRightClick)
+      .onBackgroundClick(() => {
+        // Clear selection on background click
+        if (selectedIdsRef.current.length > 0) {
+          setSelectedIds([]);
+        }
+      })
       .nodeCanvasObject((n: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         if (n.x == null || n.y == null || Number.isNaN(n.x) || Number.isNaN(n.y)) return;
 
         const sq = searchQueryRef.current.toLowerCase();
         const isMatch = sq ? n.label?.toLowerCase().includes(sq) : true;
-        const isSelected = `entity:${n.id}` === selectedIdRef.current;
+        const isSelectionMaster = `entity:${n.id}` === selectedIdRef.current;
+        const isSelected = selectedIdsRef.current.includes(`entity:${n.id}`);
 
         ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
         const radius = 6;
@@ -202,11 +230,12 @@ export const GraphPanel = memo(function GraphPanel() {
           if (isImageReady && n.__imgW) {
             ctx.rect(n.x - n.__imgW / 2 - 2, n.y - n.__imgH / 2 - 2, n.__imgW + 4, n.__imgH + 4);
           } else {
-            ctx.arc(n.x, n.y, radius + 1.5, 0, 2 * Math.PI, false);
+            ctx.arc(n.x, n.y, radius + 2, 0, 2 * Math.PI, false);
           }
           ctx.lineWidth = 2.5 / globalScale;
-          const accentObj = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0';
-          ctx.strokeStyle = accentObj;
+          const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0';
+          const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#e4e6f0';
+          ctx.strokeStyle = isSelectionMaster ? accentColor : primaryColor;
           ctx.stroke();
         }
 
@@ -407,6 +436,8 @@ export const GraphPanel = memo(function GraphPanel() {
             }
           });
         }
+
+        // 3. (Marquee rect is now a React div overlay — no canvas drawing needed)
       })
       .cooldownTicks(300)
       .d3AlphaDecay(0.02)
@@ -420,7 +451,122 @@ export const GraphPanel = memo(function GraphPanel() {
     });
 
     graphRef.current = g;
+  }, [onNodeClick, onNodeRightClick]);
+
+  // Marquee: intercept at window capture phase to beat d3-zoom
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      if (!KEYBINDS.marqueeModifier(e)) return;
+      if (!containerRef.current || !graphRef.current) return;
+
+      // Only trigger if the event is inside our graph container
+      if (!containerRef.current.contains(e.target as Node)) return;
+
+      // Beat d3-zoom by stopping all propagation at earliest possible stage
+      e.stopImmediatePropagation();
+      e.preventDefault();
+
+      const containerRect = containerRef.current!.getBoundingClientRect();
+      const relX = e.clientX - containerRect.left;
+      const relY = e.clientY - containerRect.top;
+
+      isDraggingSelection.current = true;
+      const { x, y } = graphRef.current.screen2GraphCoords(relX, relY);
+      const box = { start: { x, y }, end: { x, y } };
+      selectionBoxRef.current = box;
+      selectionStartScreenRef.current = { x: relX, y: relY };
+
+      // Store screen coords for the overlay div
+      setSelectionBoxScreen({ left: relX, top: relY, width: 0, height: 0 });
+    };
+
+    // capture: true fires before any bubble-phase listener, including d3-zoom inside the canvas
+    window.addEventListener('mousedown', handleMouseDown, { capture: true });
+    return () => window.removeEventListener('mousedown', handleMouseDown, { capture: true });
   }, []);
+
+  // Marquee mouse listeners (using refs to avoid stale closures)
+  useEffect(() => {
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (!isDraggingSelection.current || !graphRef.current || !containerRef.current) return;
+      
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const relX = e.clientX - containerRect.left;
+      const relY = e.clientY - containerRect.top;
+
+      const { x, y } = graphRef.current.screen2GraphCoords(relX, relY);
+      if (selectionBoxRef.current) {
+        selectionBoxRef.current = { ...selectionBoxRef.current, end: { x, y } };
+      }
+      
+      // Update the screen-space overlay div
+      const start = selectionStartScreenRef.current;
+      if (start) {
+        setSelectionBoxScreen({
+          left: Math.min(start.x, relX),
+          top: Math.min(start.y, relY),
+          width: Math.abs(start.x - relX),
+          height: Math.abs(start.y - relY),
+        });
+      }
+    };
+
+    const handleWindowMouseUp = (e: MouseEvent) => {
+      if (!isDraggingSelection.current || !graphRef.current || !containerRef.current) {
+        isDraggingSelection.current = false;
+        return;
+      }
+      
+      // Use screen pixels for threshold (5px min width/height)
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const screenStart = selectionStartScreenRef.current;
+      const x2s = e.clientX - containerRect.left;
+      const y2s = e.clientY - containerRect.top;
+      const screenWidth = screenStart ? Math.abs(screenStart.x - x2s) : 0;
+      const screenHeight = screenStart ? Math.abs(screenStart.y - y2s) : 0;
+
+      isDraggingSelection.current = false;
+      const box = selectionBoxRef.current;
+      selectionBoxRef.current = null;
+      selectionStartScreenRef.current = null;
+      setSelectionBoxScreen(null);
+
+      if (!box || (screenWidth < 5 && screenHeight < 5)) return;
+
+      const { start, end } = box;
+      const xMin = Math.min(start.x, end.x);
+      const xMax = Math.max(start.x, end.x);
+      const yMin = Math.min(start.y, end.y);
+      const yMax = Math.max(start.y, end.y);
+
+      // Find nodes in box
+      const { nodes } = graphRef.current.graphData();
+      const inBox = nodes.filter((n: any) =>
+        n.x >= xMin && n.x <= xMax && n.y >= yMin && n.y <= yMax
+      ).map((n: any) => `entity:${n.id}`);
+
+      if (inBox.length > 0) {
+        // Hold shift to add to existing selection; otherwise replace
+        if (e.shiftKey) {
+          const cur = selectedIdsRef.current;
+          const next = Array.from(new Set([...cur, ...inBox]));
+          setSelectedIds(next);
+        } else {
+          setSelectedIds(inBox);
+        }
+      } else if (!e.shiftKey) {
+        // Empty box results in empty selection
+        setSelectedIds([]);
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [setSelectedIds]);
 
   // Sync data
   useEffect(() => {
@@ -552,20 +698,63 @@ export const GraphPanel = memo(function GraphPanel() {
           />
         </div>
       </div>
-      <div ref={containerRef} style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden' }} onClick={() => setCtxMenu(null)} />
+      <div ref={containerRef} style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative' }} onClick={() => setCtxMenu(null)}>
+        {/* Marquee selection overlay */}
+        {selectionBoxScreen && (
+          <div style={{
+            position: 'absolute',
+            left: selectionBoxScreen.left,
+            top: selectionBoxScreen.top,
+            width: selectionBoxScreen.width,
+            height: selectionBoxScreen.height,
+            background: 'rgba(100, 150, 255, 0.15)',
+            border: '1.5px solid rgba(100, 150, 255, 0.85)',
+            pointerEvents: 'none',
+            zIndex: 10,
+          }} />
+        )}
+      </div>
 
       {ctxMenu && (
-        <div style={{ position: 'fixed', zIndex: 500, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', minWidth: 140, padding: '4px 0' }} onMouseLeave={() => setCtxMenu(null)}>
-          {[
-            { label: 'Inspect', action: () => { selectEntity(ctxMenu.nodeId); setCtxMenu(null); } },
-            { label: 'Relate…', action: () => { setShowRelate(true); setCtxMenu(null); } },
-            { label: 'Tag…', action: () => { setQuickTagNode({ id: ctxMenu.nodeId, label: ctxMenu.nodeLabel }); setCtxMenu(null); } },
-            { label: 'Delete', action: () => { deleteEntity(ctxMenu.nodeId); setCtxMenu(null); }, danger: true },
-          ].map(item => (
-            <div key={item.label} onClick={item.action} style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: (item as any).danger ? '#ff6b6b' : 'var(--text-primary)' }} onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')} onMouseLeave={ev => (ev.currentTarget.style.background = '')}>
-              {item.label}
-            </div>
-          ))}
+        <div 
+          style={{ position: 'fixed', zIndex: 500, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', minWidth: 160, padding: '4px 0' }} 
+          onMouseLeave={() => setCtxMenu(null)}
+          onContextMenu={e => e.preventDefault()}
+        >
+          {selectedIds.length > 1 ? (
+            // Bulk Actions
+            <>
+              <div style={{ padding: '4px 14px', fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>SELECTION ({selectedIds.length})</div>
+              <div 
+                onClick={() => { setQuickTagNode({ id: 'selection', label: `${selectedIds.length} entities` }); setCtxMenu(null); }}
+                style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: 'var(--text-primary)' }}
+                onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
+                onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+              >
+                Tag Selection…
+              </div>
+              <div 
+                onClick={() => { if (confirm(`Delete ${selectedIds.length} entities?`)) deleteEntities(selectedIds); setCtxMenu(null); }}
+                style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: '#ff6b6b' }}
+                onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
+                onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+              >
+                Delete Selection
+              </div>
+            </>
+          ) : (
+            // Single Action
+            [
+              { label: 'Inspect', action: () => { selectEntity(ctxMenu.nodeId); setCtxMenu(null); } },
+              { label: 'Relate…', action: () => { setShowRelate(true); setCtxMenu(null); } },
+              { label: 'Tag…', action: () => { setQuickTagNode({ id: ctxMenu.nodeId, label: ctxMenu.nodeLabel }); setCtxMenu(null); } },
+              { label: 'Delete', action: () => { deleteEntity(ctxMenu.nodeId); setCtxMenu(null); }, danger: true },
+            ].map(item => (
+              <div key={item.label} onClick={item.action} style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: (item as any).danger ? '#ff6b6b' : 'var(--text-primary)' }} onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')} onMouseLeave={ev => (ev.currentTarget.style.background = '')}>
+                {item.label}
+              </div>
+            ))
+          )}
         </div>
       )}
 
@@ -575,10 +764,29 @@ export const GraphPanel = memo(function GraphPanel() {
             <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-primary)' }}>Add tag to <strong>{quickTagNode.label}</strong></p>
             <div style={{ display: 'flex', gap: 8 }}>
               <input autoFocus type="text" value={quickTagInput} onChange={e => setQuickTagInput(e.target.value)} onKeyDown={async ev => {
-                if (ev.key === 'Enter') { await tagEntity(quickTagNode!.id, quickTagInput.trim()); setQuickTagNode(null); setQuickTagInput(''); }
+                if (ev.key === 'Enter') { 
+                  if (quickTagNode.id === 'selection') {
+                    await tagEntities(selectedIds, quickTagInput.trim());
+                  } else {
+                    await tagEntity(quickTagNode.id, quickTagInput.trim());
+                  }
+                  setQuickTagNode(null); setQuickTagInput(''); 
+                }
                 if (ev.key === 'Escape') setQuickTagNode(null);
               }} placeholder="Tag name…" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
-              <button onClick={async () => { await tagEntity(quickTagNode!.id, quickTagInput.trim()); setQuickTagNode(null); setQuickTagInput(''); }} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '6px 14px', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>Tag</button>
+              <button 
+                onClick={async () => { 
+                  if (quickTagNode.id === 'selection') {
+                    await tagEntities(selectedIds, quickTagInput.trim());
+                  } else {
+                    await tagEntity(quickTagNode.id, quickTagInput.trim());
+                  }
+                  setQuickTagNode(null); setQuickTagInput(''); 
+                }} 
+                style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '6px 14px', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+              >
+                Tag
+              </button>
             </div>
           </div>
         </div>

@@ -7,6 +7,7 @@ import { CreateEntityDialog } from './CreateEntityDialog';
 
 // ── Atomic selectors ──────────────────────────────────────────────────────────
 const selectSelectedId = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
+const selectSelectedIds = (s: ReturnType<typeof useOsStore.getState>) => s.selectedIds;
 const selectEntities = (s: ReturnType<typeof useOsStore.getState>) => s.entities;
 const selectSelectEntity = (s: ReturnType<typeof useOsStore.getState>) => s.selectEntity;
 const selectContextEntities = (s: ReturnType<typeof useOsStore.getState>) => s.contextEntities;
@@ -32,6 +33,112 @@ const TagChip = memo(function TagChip({
         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11, padding: '0 0 0 2px', lineHeight: 1 }}
       >✕</button>
     </span>
+  );
+});
+
+// ── Selection Panel (multi-select) ────────────────────────────────────────────
+const SelectionPanel = memo(function SelectionPanel() {
+  const selectedIds = useOsStore(selectSelectedIds);
+  const entities = useOsStore(selectEntities);
+  const { tagEntities, addEdgeAction } = useOsStore();
+
+  const [tagInput, setTagInput] = useState('');
+  const [relLabel, setRelLabel] = useState('');
+  const [relError, setRelError] = useState('');
+
+  const selectedEntities = useMemo(
+    () => entities.filter(e => selectedIds.includes(e.id)),
+    [entities, selectedIds]
+  );
+
+  const isTwoSelected = selectedIds.length === 2;
+  const [nodeA, nodeB] = selectedEntities;
+
+  const handleBulkTag = async () => {
+    const t = tagInput.trim();
+    if (!t || selectedIds.length === 0) return;
+    await tagEntities(selectedIds, t);
+    setTagInput('');
+  };
+
+  const handleCreateEdge = async () => {
+    const label = relLabel.trim();
+    if (!label || !isTwoSelected) return;
+    setRelError('');
+    try {
+      await addEdgeAction(nodeA.id, nodeB.id, label);
+      setRelLabel('');
+    } catch (e: any) {
+      setRelError(String(e));
+    }
+  };
+
+  if (selectedIds.length < 2) return null;
+
+  return (
+    <div className="properties-view" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
+          {selectedIds.length} entities selected
+        </span>
+      </div>
+
+      {/* Selected entities list */}
+      <div style={{ margin: '0 0 12px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Selection</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+        {selectedEntities.map(e => (
+          <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+            <span className={`kind-badge kind-${e.kind}`}>{e.kind}</span>
+            <span style={{ color: 'var(--text-primary)', flex: 1 }}>{e.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Bulk Tag */}
+      <div style={{ margin: '8px 0 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Tag All</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          type="text"
+          value={tagInput}
+          onChange={ev => setTagInput(ev.target.value)}
+          onKeyDown={ev => ev.key === 'Enter' && handleBulkTag()}
+          placeholder="Tag name…"
+          style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+        />
+        <button
+          onClick={handleBulkTag}
+          style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+        >Tag</button>
+      </div>
+
+      {/* Relate (only when exactly 2 nodes selected) */}
+      {isTwoSelected && (
+        <>
+          <div style={{ margin: '16px 0 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Create Relationship</div>
+          <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, lineHeight: 1.5 }}>
+            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{nodeA?.label}</span>
+            {' → '}label{' → '}
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{nodeB?.label}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              value={relLabel}
+              onChange={ev => setRelLabel(ev.target.value)}
+              onKeyDown={ev => ev.key === 'Enter' && handleCreateEdge()}
+              placeholder="Relationship label…"
+              style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+            />
+            <button
+              onClick={handleCreateEdge}
+              style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+            >Relate</button>
+          </div>
+          {relError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '4px 0 0' }}>{relError}</p>}
+        </>
+      )}
+    </div>
   );
 });
 
@@ -374,6 +481,7 @@ export const ViewportPanel = memo(function ViewportPanel() {
   const [showRelateFor, setShowRelateFor] = useState<{ id: string; label: string } | null>(null);
 
   const selectedEntityId = useOsStore(selectSelectedId);
+  const selectedIds = useOsStore(selectSelectedIds);
   const entities = useOsStore(selectEntities);
   const contextEntities = useOsStore(selectContextEntities);
   const selectEntity = useOsStore(selectSelectEntity);
@@ -414,7 +522,9 @@ export const ViewportPanel = memo(function ViewportPanel() {
       <div className="panel-body" style={{ padding: activeTab === 'registry' ? 0 : 12, overflow: 'auto' }}>
 
         {/* ── Properties Tab ───────────────────────────────────────────── */}
-        {activeTab === 'properties' && <EntityInspector />}
+        {activeTab === 'properties' && (
+          selectedIds.length > 1 ? <SelectionPanel /> : <EntityInspector />
+        )}
 
         {/* ── Preview Tab ──────────────────────────────────────────────── */}
         {activeTab === 'preview' && (

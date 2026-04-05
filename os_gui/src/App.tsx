@@ -47,6 +47,8 @@ export const KEYBINDS = {
   toggleGlobe: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'm',
   ingestData: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'i',
   createEntity: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'n',
+  multiSelectModifier: (e: any) => e.shiftKey || e.ctrlKey,
+  marqueeModifier: (e: any) => e.shiftKey,
 };
 
 export default function App() {
