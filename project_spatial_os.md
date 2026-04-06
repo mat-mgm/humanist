@@ -320,7 +320,25 @@ Enable advanced node management through bulk operations (tagging, relating) and 
 - [✓] Highlighting correctly shows all selected nodes.
 - [✓] Context menu actions (Delete, Tag) apply to the entire selection.
 
-### Phase 33: Graph Traversal & Visualization
+### Phase 33: Entity Kind Filtering
+**Description**
+Implement a specialized graph filter that isolates specific entity kinds (physical, digital, abstract, agent, blob). The filter isolates the graph to show a strict inner subgraph: only nodes of the chosen kinds and the relationships where both endpoints belong to the selection.
+
+**Tasks**
+- [✓] Add `filterKinds: string[]` state to `OsStore` to manage multi-kind filtering.
+- [✓] Create a `MultiKindFilter` control in the `GraphPanel` toolbar (allowing selection of all, some, or a single kind).
+- [✓] Refactor the graph data update loop to implement "Strict Inner Subgraph" filtering:
+    - Include only nodes matching the selected kinds.
+    - Include only edges where both source and target nodes are in the selection.
+- [✓] Update UI feedback (e.g., active filter chips or dropdown state).
+- [✓] Ensure the physics simulation behaves predictably during subset transitions.
+
+**Checks**
+- [✓] Selecting one or more kinds (e.g., "Physical" + "Digital") shows only those nodes and edges between them.
+- [✓] Selecting "All" (or clearing the filter) restores the full graph.
+- [✓] The graph count badge reflects the strict filtered state (nodes and inner edges only).
+
+### Phase 34: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 

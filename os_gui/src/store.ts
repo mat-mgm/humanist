@@ -42,6 +42,7 @@ interface OsStore {
   lastEvent: EntityUpdateEvent | null;
   nodePositions: Record<string, { x: number, y: number }>;
   showRegions: boolean;
+  filterKinds: string[];
 
   // Actions — read
   updateNodePosition: (id: string, x: number, y: number) => void;
@@ -67,6 +68,8 @@ interface OsStore {
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
   toggleRegions: () => void;
+  toggleFilterKind: (kind: string) => void;
+  setFilterKinds: (kinds: string[]) => void;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -82,6 +85,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   lastEvent: null,
   nodePositions: {},
   showRegions: true,
+  filterKinds: [],
 
   updateNodePosition: (id, x, y) => {
     set(state => ({
@@ -245,6 +249,20 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   toggleRegions: () => {
     set(state => ({ showRegions: !state.showRegions }));
+  },
+
+  toggleFilterKind: (kind) => {
+    set(state => {
+      const { filterKinds } = state;
+      const next = filterKinds.includes(kind)
+        ? filterKinds.filter(k => k !== kind)
+        : [...filterKinds, kind];
+      return { filterKinds: next };
+    });
+  },
+
+  setFilterKinds: (kinds) => {
+    set({ filterKinds: kinds });
   },
 
   startListening: async () => {

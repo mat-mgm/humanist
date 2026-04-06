@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 // @ts-ignore
 import ForceGraph2D from 'force-graph';
@@ -66,7 +66,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions } = useOsStore();
+  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds } = useOsStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
@@ -93,7 +93,6 @@ export const GraphPanel = memo(function GraphPanel() {
   const blobTraitsRef = useRef(blobTraits);
   const toggledImageNodesRef = useRef(toggledImageNodes);
   const selectedIdsRef = useRef(selectedIds);
-  const prevCounts = useRef({ entities: 0, edges: 0 });
 
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
@@ -568,35 +567,29 @@ export const GraphPanel = memo(function GraphPanel() {
     };
   }, [setSelectedIds]);
 
-  // Sync data
+  // Synchronous filtering for UI stats and data preparation
+  const filteredData = useMemo(() => {
+    const isFiltered = filterKinds.length > 0;
+    const kindNodes = isFiltered 
+      ? entities.filter((e: any) => filterKinds.includes(e.kind))
+      : entities;
+    
+    const nodeIds = new Set(kindNodes.map((e: any) => e.id.replace('entity:', '')));
+    const kindEdges = edges.filter((e: any) => {
+      const sourceId = e.from.replace('entity:', '');
+      const targetId = e.to.replace('entity:', '');
+      return nodeIds.has(sourceId) && nodeIds.has(targetId);
+    });
+
+    return { nodes: kindNodes, edges: kindEdges };
+  }, [entities, edges, filterKinds]);
+
+  // Sync data to force-graph instance
   useEffect(() => {
     const g = graphRef.current;
     if (!g) return;
 
     const { nodes: liveNodes, links: liveLinks } = g.graphData();
-
-    if (entities.length === prevCounts.current.entities && edges.length === prevCounts.current.edges) {
-      for (const e of entities) {
-        const live = liveNodes.find((n: any) => n.id === e.id);
-        if (live) {
-          live.label = e.label;
-          live.kind = e.kind;
-          live.metadata = e.metadata;
-        }
-      }
-      for (const edge of edges) {
-        const live = liveLinks.find((l: any) => {
-          const sId = typeof l.source === 'object' ? l.source.id : l.source;
-          const tId = typeof l.target === 'object' ? l.target.id : l.target;
-          return sId === edge.from && tId === edge.to;
-        });
-        if (live) live.label = edge.label;
-      }
-      g.nodeLabel(g.nodeLabel()).linkLabel(g.linkLabel());
-      return;
-    }
-    prevCounts.current = { entities: entities.length, edges: edges.length };
-
     const liveById = new Map<string, any>(liveNodes.map((n: any) => [n.id, n]));
     const liveLinksMap = new Map<string, any>(liveLinks.map((l: any) => {
       const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
@@ -605,9 +598,7 @@ export const GraphPanel = memo(function GraphPanel() {
     }));
 
     const nextNodes: any[] = [];
-    // Note: We no longer filter out tag nodes so they can be part of their own hubs.
-
-    for (const entity of entities) {
+    for (const entity of filteredData.nodes) {
       const strippedId = entity.id.replace('entity:', '');
       const live = liveById.get(strippedId);
       const saved = nodePositions[strippedId];
@@ -631,9 +622,10 @@ export const GraphPanel = memo(function GraphPanel() {
 
     const nextNodesMap = new Map<string, any>(nextNodes.map(n => [n.id, n]));
     const nextLinks: any[] = [];
-    for (const e of edges) {
+    for (const e of filteredData.edges) {
       const sourceNodeId = e.from.replace('entity:', '');
       const targetNodeId = e.to.replace('entity:', '');
+      
       if (!nextNodesMap.has(sourceNodeId) || !nextNodesMap.has(targetNodeId)) continue;
       if (sourceNodeId === targetNodeId) continue;
 
@@ -648,7 +640,8 @@ export const GraphPanel = memo(function GraphPanel() {
     }
 
     g.graphData({ nodes: nextNodes, links: nextLinks });
-  }, [entities, edges, nodePositions, showRegions]);
+  }, [filteredData, nodePositions, showRegions]);
+
 
   useEffect(() => {
     graphRef.current?.nodeColor(graphRef.current?.nodeColor());
@@ -667,8 +660,51 @@ export const GraphPanel = memo(function GraphPanel() {
 
   return (
     <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="panel-stats" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="event-badge">{entities.length} nodes · {edges.length} edges</span>
+      <div className="panel-stats" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span className="event-badge">
+            {filterKinds.length > 0 ? `${filteredData.nodes.length}/${entities.length}` : entities.length} nodes · {filterKinds.length > 0 ? `${filteredData.edges.length}/${edges.length}` : edges.length} edges
+          </span>
+          
+          {/* Kind Filter Chips */}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase', marginRight: 4 }}>Filter:</span>
+            {Object.keys(KIND_COLORS).map(kind => {
+              const active = filterKinds.includes(kind);
+              return (
+                <button
+                  key={kind}
+                  onClick={() => toggleFilterKind(kind)}
+                  style={{
+                    background: active ? KIND_COLORS[kind] : 'transparent',
+                    border: `1px solid ${active ? KIND_COLORS[kind] : 'var(--border)'}`,
+                    color: active ? '#000' : 'var(--text-secondary)',
+                    fontSize: 10,
+                    padding: '2px 8px',
+                    borderRadius: 12,
+                    cursor: 'pointer',
+                    fontWeight: active ? 700 : 400,
+                    transition: 'all 0.15s ease',
+                    opacity: active ? 1 : 0.6,
+                  }}
+                  onMouseEnter={e => !active && (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={e => !active && (e.currentTarget.style.opacity = '0.6')}
+                >
+                  {kind}
+                </button>
+              );
+            })}
+            {filterKinds.length > 0 && (
+              <button 
+                onClick={() => setFilterKinds([])}
+                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10, padding: '2px 4px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
         <div style={{ display: 'flex', gap: 8 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
