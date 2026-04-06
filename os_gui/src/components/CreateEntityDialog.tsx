@@ -10,12 +10,14 @@ export const CreateEntityDialog = memo(function CreateEntityDialog({ onClose }: 
   const [label, setLabel] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
   const createEntity = useOsStore(s => s.createEntity);
   const selectEntity = useOsStore(s => s.selectEntity);
 
   const handleCreate = useCallback(async () => {
     const trimmed = label.trim();
     if (!trimmed) { setError('Label is required.'); return; }
+    
     setLoading(true);
     setError('');
     try {
@@ -71,6 +73,8 @@ export const CreateEntityDialog = memo(function CreateEntityDialog({ onClose }: 
             <option value="digital">Digital</option>
             <option value="abstract">Abstract</option>
             <option value="agent">Agent</option>
+            <option value="blob">Blob</option>
+            <option value="temporal">Temporal</option>
           </select>
         </label>
 

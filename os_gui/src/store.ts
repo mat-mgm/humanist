@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { Entity, SpatialTrait, BlobTrait } from './models';
+import { Entity, SpatialTrait, BlobTrait, TemporalTrait } from './models';
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -31,6 +31,7 @@ interface OsStore {
   entities: Entity[];
   spatialTraits: SpatialTrait[];
   blobTraits: BlobTrait[];
+  temporalTraits: TemporalTrait[];
   edges: GraphEdge[];
   selectedEntityId: string | null;
   selectedIds: string[];
@@ -49,7 +50,9 @@ interface OsStore {
   fetchEntities: () => Promise<void>;
   fetchSpatialTraits: () => Promise<void>;
   fetchBlobTraits: () => Promise<void>;
+  fetchTemporalTraits: () => Promise<void>;
   fetchEdges: () => Promise<void>;
+  saveTemporalTrait: (trait: Omit<TemporalTrait, "id">) => Promise<void>;
   selectEntity: (id: string | null) => void;
   setSelectedIds: (ids: string[]) => void;
   toggleSelection: (id: string) => void;
@@ -76,6 +79,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   entities: [],
   spatialTraits: [],
   blobTraits: [],
+  temporalTraits: [],
   edges: [],
   selectedEntityId: null,
   selectedIds: [],
@@ -130,6 +134,33 @@ export const useOsStore = create<OsStore>((set, get) => ({
     }
   },
 
+  fetchTemporalTraits: async () => {
+    try {
+      const traits = await invoke<TemporalTrait[]>('get_temporal_traits');
+      set({ temporalTraits: traits });
+    } catch (e) {
+      console.error('fetchTemporalTraits error:', e);
+    }
+  },
+
+  saveTemporalTrait: async (trait) => {
+    try {
+      // Tauri v2: parameter names must be camelCase on the JS side
+      // (Tauri auto-converts eventAt → event_at for the Rust handler)
+      await invoke('save_temporal_trait', {
+        owner:      trait.owner,
+        eventAt:    trait.event_at    ?? null,
+        startsAt:   trait.starts_at  ?? null,
+        endsAt:     trait.ends_at    ?? null,
+        recurrence: trait.recurrence ?? null,
+      });
+      await get().fetchTemporalTraits();
+    } catch (e) {
+      console.error('saveTemporalTrait error:', e);
+      throw e;
+    }
+  },
+
   fetchEdges: async () => {
     try {
       const edges = await invoke<GraphEdge[]>('get_edges');
@@ -144,6 +175,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
     if (id) {
       get().queryContext(id);
       get().fetchEntityEdges(id);
+      get().fetchTemporalTraits();
     }
   },
 
@@ -153,6 +185,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
     if (primary) {
       get().queryContext(primary);
       get().fetchEntityEdges(primary);
+      get().fetchTemporalTraits();
     }
   },
 
@@ -272,6 +305,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       store.fetchEntities();
       store.fetchSpatialTraits();
       store.fetchBlobTraits();
+      store.fetchTemporalTraits();
     });
 
     const unlistenGraph = await listen<GraphUpdateEvent>('graph-updated', () => {

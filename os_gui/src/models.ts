@@ -1,4 +1,4 @@
-export type EntityKind = "physical" | "digital" | "abstract" | "agent" | "blob";
+export type EntityKind = "physical" | "digital" | "abstract" | "agent" | "blob" | "temporal";
 
 export interface Entity {
   id: string;
@@ -26,6 +26,20 @@ export interface BlobTrait {
   hash: string;
   size: number;
   localUrl?: string;
+}
+
+/** Temporal trait — three event shapes:
+ *  1. Point event:     event_at set, starts_at/ends_at null.
+ *  2. Span event:      starts_at + ends_at set, event_at null.
+ *  3. Recurring event: any of the above + recurrence (iCal RRULE string).
+ */
+export interface TemporalTrait {
+  id: string;
+  owner: string;
+  event_at: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  recurrence: string | null;
 }
 
 export interface AnalyticsTrait {

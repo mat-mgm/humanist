@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::models::SpatialTrait;
+use crate::models::{SpatialTrait, TemporalTrait};
 
 #[async_trait]
 pub trait StateObserver {
@@ -26,6 +26,10 @@ pub trait GraphDatabase {
     // Phase 4: Blob traits
     async fn save_blob_trait(&self, trait_: crate::models::BlobTrait) -> Result<(), String>;
     async fn get_blob_traits(&self) -> Result<Vec<crate::models::BlobTrait>, String>;
+
+    // Phase 35: Temporal traits
+    async fn save_temporal_trait(&self, trait_: TemporalTrait) -> Result<(), String>;
+    async fn get_temporal_traits(&self) -> Result<Vec<TemporalTrait>, String>;
 
     // Phase 4: Context queries — fetch all entities reachable from a context entity's edges
     async fn query_context(&self, context_id: &str) -> Result<Vec<crate::models::Entity>, String>;

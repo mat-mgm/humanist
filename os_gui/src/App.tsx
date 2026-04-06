@@ -7,6 +7,7 @@ import { GraphPanel } from './components/GraphPanel';
 const GlobePanel = lazy(() => import('./components/GlobePanel').then(m => ({ default: m.GlobePanel })));
 import { ViewportPanel } from './components/ViewportPanel';
 import { TerminalPanel } from './components/TerminalPanel';
+import { TimelinePanel } from './components/TimelinePanel';
 import { IngestDialog } from './components/IngestDialog';
 import { CreateEntityDialog } from './components/CreateEntityDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -30,6 +31,7 @@ const ALL_PANES: PaneConfig[] = [
   { id: 'viewport', label: 'Properties / Preview', icon: '📐', content: <ErrorBoundary label="Properties"><ViewportPanel /></ErrorBoundary> },
   { id: 'terminal', label: 'Terminal', icon: '⬛', content: <ErrorBoundary label="Terminal"><TerminalPanel /></ErrorBoundary> },
   { id: 'globe', label: 'Globe', icon: '🌍', content: <ErrorBoundary label="Globe"><Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>}><GlobePanel /></Suspense></ErrorBoundary> },
+  { id: 'timeline', label: 'Timeline', icon: '🕒', content: <ErrorBoundary label="Timeline"><TimelinePanel /></ErrorBoundary> },
 ];
 
 export const KEYBINDS = {
@@ -45,6 +47,7 @@ export const KEYBINDS = {
   toggleViewport: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'v',
   toggleTerminal: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 't',
   toggleGlobe: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'm',
+  toggleTimeline: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'l',
   ingestData: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'i',
   createEntity: (e: KeyboardEvent) => e.altKey && e.key.toLowerCase() === 'n',
   multiSelectModifier: (e: any) => e.shiftKey || e.ctrlKey,
@@ -64,7 +67,7 @@ export default function App() {
   // UI State: Layout & Panes
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('master');
   const gap = 8;
-  const [visiblePaneIds, setVisiblePaneIds] = useState<string[]>(['graph', 'viewport', 'terminal', 'globe']);
+  const [visiblePaneIds, setVisiblePaneIds] = useState<string[]>(['graph', 'viewport', 'terminal', 'globe', 'timeline']);
   const [focusedId, setFocusedId] = useState<string | null>('graph');
 
   // Derived state
@@ -84,6 +87,7 @@ export default function App() {
     fetchSpatialTraits();
     fetchEdges();
     useOsStore.getState().fetchBlobTraits();
+    useOsStore.getState().fetchTemporalTraits();
     let cleanup: (() => void) | undefined;
     startListening().then((fn) => { cleanup = fn; });
     return () => { if (cleanup) cleanup(); };
@@ -143,6 +147,7 @@ export default function App() {
     if (KEYBINDS.toggleViewport(e)) { e.preventDefault(); toggle('viewport'); }
     if (KEYBINDS.toggleTerminal(e)) { e.preventDefault(); toggle('terminal'); }
     if (KEYBINDS.toggleGlobe(e)) { e.preventDefault(); toggle('globe'); }
+    if (KEYBINDS.toggleTimeline(e)) { e.preventDefault(); toggle('timeline'); }
   }, [focusedId, visiblePaneIds]);
 
   useEffect(() => {

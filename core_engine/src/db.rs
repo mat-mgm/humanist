@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use std::sync::Arc;
 use std::path::PathBuf;
 
-use crate::models::{Entity, SpatialTrait};
+use crate::models::{Entity, SpatialTrait, TemporalTrait};
 use crate::ports::GraphDatabase;
 
 #[derive(Clone)]
@@ -24,7 +24,7 @@ impl SurrealDbAdapter {
         
         let schema_ql = r#"
             DEFINE TABLE entity SCHEMAFULL;
-            DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob'];
+            DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
             DEFINE FIELD label ON entity TYPE string;
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
@@ -48,6 +48,13 @@ impl SurrealDbAdapter {
             DEFINE FIELD in ON edge TYPE record<entity>;
             DEFINE FIELD out ON edge TYPE record<entity>;
             DEFINE FIELD label ON edge TYPE string;
+
+            DEFINE TABLE IF NOT EXISTS temporal_trait SCHEMAFULL;
+            DEFINE FIELD owner ON temporal_trait TYPE string;
+            DEFINE FIELD event_at ON temporal_trait TYPE option<string>;
+            DEFINE FIELD starts_at ON temporal_trait TYPE option<string>;
+            DEFINE FIELD ends_at ON temporal_trait TYPE option<string>;
+            DEFINE FIELD recurrence ON temporal_trait TYPE option<string>;
         "#;
         
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
@@ -127,6 +134,31 @@ impl GraphDatabase for SurrealDbAdapter {
             .await.map_err(|e| e.to_string())?;
             
         let traits: Vec<crate::models::BlobTrait> = response.take(0).map_err(|e| e.to_string())?;
+        Ok(traits)
+    }
+
+    async fn save_temporal_trait(&self, trait_: TemporalTrait) -> Result<(), String> {
+        let id_cleaned = trait_.id.replace("temporal_trait:", "");
+        let qs = format!("UPSERT temporal_trait:{} CONTENT $trait_;", id_cleaned);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+            // Strip null fields: SurrealDB option<string> expects NONE (absent field),
+            // not JSON null. Absent fields in CONTENT are stored as NONE automatically.
+            obj.retain(|_, v| !v.is_null());
+        }
+        self.db.query(qs)
+            .bind(("trait_", value))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn get_temporal_traits(&self) -> Result<Vec<TemporalTrait>, String> {
+        let mut response = self.db.query(
+            "SELECT *, type::string(id) AS id, type::string(owner) AS owner FROM temporal_trait;"
+        ).await.map_err(|e| e.to_string())?;
+        let traits: Vec<TemporalTrait> = response.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
     }
 

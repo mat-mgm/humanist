@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, useCallback, useRef } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
+import { TemporalTrait } from '../models';
 import { ThreeViewer } from './ThreeViewer';
 import { RelateDialog } from './RelateDialog';
 import { CreateEntityDialog } from './CreateEntityDialog';
@@ -12,6 +13,7 @@ const selectEntities = (s: ReturnType<typeof useOsStore.getState>) => s.entities
 const selectSelectEntity = (s: ReturnType<typeof useOsStore.getState>) => s.selectEntity;
 const selectContextEntities = (s: ReturnType<typeof useOsStore.getState>) => s.contextEntities;
 const selectBlobTraits = (s: ReturnType<typeof useOsStore.getState>) => s.blobTraits;
+const selectTemporalTraits = (s: ReturnType<typeof useOsStore.getState>) => s.temporalTraits;
 const selectEdges = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityEdges;
 
 // ── Tag chip ──────────────────────────────────────────────────────────────────
@@ -147,8 +149,9 @@ const EntityInspector = memo(function EntityInspector() {
   const selectedId = useOsStore(selectSelectedId);
   const entities = useOsStore(selectEntities);
   const edges = useOsStore(selectEdges);
+  const temporalTraits = useOsStore(selectTemporalTraits);
   const selectEntity = useOsStore(selectSelectEntity);
-  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge } = useOsStore();
+  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait } = useOsStore();
 
   const selected = useMemo(
     () => entities.find(e => e.id === selectedId) ?? null,
@@ -158,6 +161,15 @@ const EntityInspector = memo(function EntityInspector() {
   // Derive tag edges (outgoing tagged_as) and other edges
   const tagEdges = useMemo(() => edges.filter(e => e.label === 'tagged_as' && `entity:${e.from}` === selectedId), [edges, selectedId]);
   const otherEdges = useMemo(() => edges.filter(e => e.label !== 'tagged_as'), [edges]);
+
+  const temporalTrait = useMemo(() => {
+    if (!selectedId) return undefined;
+    return temporalTraits.find(t =>
+      t.owner === selectedId ||
+      t.owner === selectedId.replace('entity:', '') ||
+      `entity:${t.owner}` === selectedId
+    );
+  }, [temporalTraits, selectedId]);
 
   // Find the label for a short id
   const labelFor = useCallback((shortId: string) => {
@@ -225,6 +237,32 @@ const EntityInspector = memo(function EntityInspector() {
 
   // Relate dialog
   const [showRelate, setShowRelate] = useState(false);
+
+  // Temporal Editing
+  const [editTemporal, setEditTemporal] = useState<Omit<TemporalTrait, "id"> | null>(null);
+  const [tempError, setTempError] = useState('');
+
+  const startEditTemporal = useCallback(() => {
+    if (!selected) return;
+    setEditTemporal({
+      owner: selected.id,
+      event_at: temporalTrait?.event_at ?? null,
+      starts_at: temporalTrait?.starts_at ?? null,
+      ends_at: temporalTrait?.ends_at ?? null,
+      recurrence: temporalTrait?.recurrence ?? null,
+    });
+    setTempError('');
+  }, [selected, temporalTrait]);
+
+  const saveTemp = useCallback(async () => {
+    if (!editTemporal) return;
+    try {
+      await saveTemporalTrait(editTemporal);
+      setEditTemporal(null);
+    } catch (e: any) {
+      setTempError(String(e));
+    }
+  }, [editTemporal, saveTemporalTrait]);
 
   if (!selected) {
     return (
@@ -351,6 +389,79 @@ const EntityInspector = memo(function EntityInspector() {
             <button onClick={addMetaRow} style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', color: '#fff', fontSize: 11 }}>+</button>
           </div>
           {metaError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '2px 0 0' }}>{metaError}</p>}
+        </div>
+      )}
+
+      {/* ── Temporal ────────────────────────────────────────────────────── */}
+      <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Temporal</span>
+        {editTemporal == null
+          ? <button onClick={startEditTemporal} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>✏ {temporalTrait ? 'Edit' : 'Add'}</button>
+          : <span style={{ display: 'flex', gap: 6 }}>
+            <button onClick={saveTemp} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Save</button>
+            <button onClick={() => { setEditTemporal(null); setTempError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
+          </span>
+        }
+      </div>
+
+      {editTemporal == null ? (
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {!temporalTrait ? (
+             <span>No temporal data</span>
+          ) : (
+            <>
+              {temporalTrait.event_at && <div className="prop-row"><span className="prop-key">At</span><span className="prop-val mono">{temporalTrait.event_at}</span></div>}
+              {temporalTrait.starts_at && <div className="prop-row"><span className="prop-key">Start</span><span className="prop-val mono">{temporalTrait.starts_at}</span></div>}
+              {temporalTrait.ends_at && <div className="prop-row"><span className="prop-key">End</span><span className="prop-val mono">{temporalTrait.ends_at}</span></div>}
+              {temporalTrait.recurrence && <div className="prop-row"><span className="prop-key">Recurrence</span><span className="prop-val mono">{temporalTrait.recurrence}</span></div>}
+            </>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+          <label style={{ display: 'block' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>EVENT AT</span>
+            <input 
+              type="text" 
+              value={editTemporal.event_at ?? ''} 
+              placeholder="e.g. 1789-07-14 or -3300-01-01"
+              onChange={e => setEditTemporal(prev => ({ ...prev!, event_at: e.target.value || null }))}
+              style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+            />
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>STARTS AT</span>
+              <input 
+                type="text" 
+                value={editTemporal.starts_at ?? ''} 
+                placeholder="Start date"
+                onChange={e => setEditTemporal(prev => ({ ...prev!, starts_at: e.target.value || null }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>ENDS AT</span>
+              <input 
+                type="text" 
+                value={editTemporal.ends_at ?? ''} 
+                placeholder="End date"
+                onChange={e => setEditTemporal(prev => ({ ...prev!, ends_at: e.target.value || null }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+          </div>
+          <label style={{ display: 'block' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>RECURRENCE (RRULE)</span>
+            <input 
+              type="text" 
+              value={editTemporal.recurrence ?? ''} 
+              onChange={e => setEditTemporal(prev => ({ ...prev!, recurrence: e.target.value || null }))}
+              placeholder="e.g. FREQ=YEARLY"
+              style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+            />
+          </label>
+          {tempError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '2px 0 0' }}>{tempError}</p>}
         </div>
       )}
 

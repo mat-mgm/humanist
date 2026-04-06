@@ -9,6 +9,7 @@ pub enum EntityKind {
     Abstract,
     Agent,
     Blob,
+    Temporal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +41,26 @@ pub struct BlobTrait {
     pub mime: String,
     pub hash: String,
     pub size: i64,
+}
+
+/// Represents a temporal event attached to an entity.
+/// Three shapes are supported:
+///   1. Point event:     event_at is set, starts_at/ends_at are None.
+///   2. Span event:      starts_at + ends_at are set, event_at is None.
+///   3. Recurring event: any of the above + recurrence holds an iCal RRULE string
+///                        (e.g. "FREQ=WEEKLY;COUNT=10").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalTrait {
+    pub id: String,
+    pub owner: String,
+    /// ISO 8601 instant for a momentaneous event.
+    pub event_at: Option<String>,
+    /// ISO 8601 start of a span event.
+    pub starts_at: Option<String>,
+    /// ISO 8601 end of a span event.
+    pub ends_at: Option<String>,
+    /// iCal RRULE recurrence rule (e.g. "FREQ=DAILY;COUNT=30").
+    pub recurrence: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

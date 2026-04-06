@@ -1,6 +1,6 @@
 use core_engine::{
     db::SurrealDbAdapter,
-    models::{Entity, EntityKind, SpatialTrait},
+    models::{Entity, EntityKind, SpatialTrait, TemporalTrait},
     ports::{GraphDatabase, StateObserver, BlobStorageProvider},
     bus::EventBus,
     blob::LocalBlobAdapter,
@@ -212,11 +212,12 @@ async fn create_entity(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
     let kind_enum = match kind.as_str() {
-        "physical" => EntityKind::Physical,
-        "digital"  => EntityKind::Digital,
-        "abstract" => EntityKind::Abstract,
-        "agent"    => EntityKind::Agent,
-        "blob"     => EntityKind::Blob,
+        "physical"  => EntityKind::Physical,
+        "digital"   => EntityKind::Digital,
+        "abstract"  => EntityKind::Abstract,
+        "agent"     => EntityKind::Agent,
+        "blob"      => EntityKind::Blob,
+        "temporal"  => EntityKind::Temporal,
         _ => return Err(format!("Unknown entity kind: {}", kind)),
     };
     let ulid = Ulid::new().to_string();
@@ -347,6 +348,44 @@ async fn get_entity_edges(
     Ok(filtered)
 }
 
+#[tauri::command]
+async fn save_temporal_trait(
+    owner: String,
+    event_at: Option<String>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    recurrence: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    // Check if a trait for this owner already exists
+    let existing = st.db.get_temporal_traits().await?;
+    let found = existing.into_iter().find(|t| t.owner == owner);
+
+    let id = found.map(|t| t.id).unwrap_or_else(|| {
+        let ulid = ulid::Ulid::new().to_string();
+        format!("temporal_trait:{}", ulid)
+    });
+
+    let trait_ = TemporalTrait {
+        id,
+        owner,
+        event_at,
+        starts_at,
+        ends_at,
+        recurrence,
+    };
+    st.db.save_temporal_trait(trait_).await
+}
+
+#[tauri::command]
+async fn get_temporal_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<TemporalTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_temporal_traits().await
+}
+
 // ── App Entry ─────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -434,6 +473,8 @@ pub fn run() {
             untag_entity,
             remove_edge,
             get_entity_edges,
+            save_temporal_trait,
+            get_temporal_traits,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

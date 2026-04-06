@@ -275,7 +275,8 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 "digital" => EntityKind::Digital,
                 "abstract" => EntityKind::Abstract,
                 "agent" => EntityKind::Agent,
-                _ => return Err("Invalid kind. Use physical, digital, abstract, or agent.".into()),
+                "temporal" => EntityKind::Temporal,
+                _ => return Err("Invalid kind. Use physical, digital, abstract, agent, or temporal.".into()),
             };
             let ulid = Ulid::new().to_string();
             let id = format!("entity:{}", ulid);

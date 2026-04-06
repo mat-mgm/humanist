@@ -39,11 +39,8 @@ State rules:
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
   - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries.
-* Layout Matrix: 
-  - Left Pane: Knowledge Graph (`force-graph`) and Entity Registry.
-  - Right Pane: 3D Globe (`cesium`) and Properties/Preview panel.
-  - Floating Terminal Overlay (`xterm.js`).
-* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`). Context entities emit semantic edges.
+* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). Context entities emit semantic edges.
+* **Temporal Causal Context Tracking**: Entities of the `temporal` kind can be associated with a `Temporal Trait` (supporting points, spans, and recurring events). The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where Selecting a node in any view highlights its temporal position.
 * **Unified Semantic Relationships (Graph Edges & Tags)**: 
   - To achieve a true "Git for Data" mental model, all relationships (1:1 and Many:1) are merged into a single generic **Edge** mechanism. 
   - **Relational Tagging**: Tags are no longer static string arrays inside an entity's record. Instead, they are independent `Abstract` entities. 
@@ -337,6 +334,42 @@ Implement a specialized graph filter that isolates specific entity kinds (physic
 - [✓] Selecting one or more kinds (e.g., "Physical" + "Digital") shows only those nodes and edges between them.
 - [✓] Selecting "All" (or clearing the filter) restores the full graph.
 - [✓] The graph count badge reflects the strict filtered state (nodes and inner edges only).
+
+### Phase 35: Temporal Kind & Timeline Panel
+**Description**
+Extend the data model with a `temporal` entity kind and a `TemporalTrait` supporting point events, span events, and recurring events. Build a `TimelinePanel` GUI component with a zoomable, scrollable timeline and a calendar tab. Selecting a temporal entity on the graph highlights it on the timeline (causal context tracking).
+
+**Tasks**
+- [✓] Add `Temporal` variant to `EntityKind` enum in `core_engine/src/models.rs`.
+- [✓] Define `TemporalTrait` struct in `models.rs` (fields: `event_at`, `starts_at`, `ends_at`, `recurrence`).
+- [✓] Add `save_temporal_trait` and `get_temporal_traits` to `GraphDatabase` port trait.
+- [✓] Implement `temporal_trait` SurrealDB table schema and port methods in `db.rs`.
+- [✓] Update entity kind schema assertion in `db.rs` to include `'temporal'`.
+- [✓] Add `save_temporal_trait` and `get_temporal_traits` Tauri IPC commands in `src-tauri/src/lib.rs`.
+- [✓] Add `"temporal"` to `EntityKind` and `TemporalTrait` interface in `models.ts`.
+- [✓] Add `temporalTraits` state and `fetchTemporalTraits` action to `store.ts`.
+- [✓] Add `temporal` color to `KIND_COLORS` in `GraphPanel.tsx`.
+- [✓] Update `CreateEntityDialog.tsx` to include the `temporal` kind (coherent simple creation).
+- [✓] Implement `TimelinePanel.tsx` with:
+    - [✓] **Row-Packing Engine**: Implemented non-overlapping track-based row assignment for spans, points, and recurring events.
+    - [✓] **Zoom-Adaptive Recurrence**: Dense recurring events (> 16px spacing) render as striped bands; sparse instances render as individual pins.
+    - [✓] **Today Anchor**: Added a labeled vertical "Today" line that stays accurate across all zoom levels.
+    - [✓] **Navigation Controls**: Added a "Reset" view button and an advanced year selector (±1/10/100/1000y jumps + direct input).
+    - [✓] **Calendar Engine**: Fully functional month grid with event dots and day-level inspection.
+- [✓] Standardize Tab Selector UI: Unified Timeline/Calendar tabs with ViewportPanel aesthetics.
+- [✓] Fix Data Persistence: Resolved Tauri v2 camelCase serialization and SurrealDB `null` vs `NONE` schema violations for temporal fields.
+
+**Checks**
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] Creating a `temporal` entity via CLI succeeds without schema errors.
+- [✓] Creating a `temporal` entity via the GUI "New Entity" dialog correctly attaches the temporal trait.
+- [✓] Inspector shows temporal trait data when selecting a temporal node.
+- [✓] Timeline label overlap fixed: labels auto-cull based on minimum pixel spacing.
+- [✓] Point, span, and recurring events render accurately on the scrollable timeline.
+- [✓] Selecting a temporal entity on the graph highlights it on the timeline.
+- [✓] Calendar tab displays months and events with deep-time navigation support.
+- [✓] Kind filter chips in `GraphPanel` include the `temporal` kind.
 
 ### Phase 34: Graph Traversal & Visualization
 **Description**

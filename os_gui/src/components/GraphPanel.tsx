@@ -29,6 +29,7 @@ const KIND_COLORS: Record<string, string> = {
   abstract: '#f5d060',
   agent: '#d680ff',
   blob: '#ff9f43',
+  temporal: '#ff7eb3',
 };
 
 const selectEntities = (s: any) => s.entities;
@@ -110,7 +111,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const onNodeClick = useCallback((node: any, event: MouseEvent) => {
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
-    
+
     // Toggle multi-select
     if (KEYBINDS.multiSelectModifier(event)) {
       toggleSelection(fullId);
@@ -488,7 +489,7 @@ export const GraphPanel = memo(function GraphPanel() {
   useEffect(() => {
     const handleWindowMouseMove = (e: MouseEvent) => {
       if (!isDraggingSelection.current || !graphRef.current || !containerRef.current) return;
-      
+
       const containerRect = containerRef.current.getBoundingClientRect();
       const relX = e.clientX - containerRect.left;
       const relY = e.clientY - containerRect.top;
@@ -497,7 +498,7 @@ export const GraphPanel = memo(function GraphPanel() {
       if (selectionBoxRef.current) {
         selectionBoxRef.current = { ...selectionBoxRef.current, end: { x, y } };
       }
-      
+
       // Update the screen-space overlay div
       const start = selectionStartScreenRef.current;
       if (start) {
@@ -515,7 +516,7 @@ export const GraphPanel = memo(function GraphPanel() {
         isDraggingSelection.current = false;
         return;
       }
-      
+
       // Use screen pixels for threshold (5px min width/height)
       const containerRect = containerRef.current.getBoundingClientRect();
       const screenStart = selectionStartScreenRef.current;
@@ -570,10 +571,10 @@ export const GraphPanel = memo(function GraphPanel() {
   // Synchronous filtering for UI stats and data preparation
   const filteredData = useMemo(() => {
     const isFiltered = filterKinds.length > 0;
-    const kindNodes = isFiltered 
+    const kindNodes = isFiltered
       ? entities.filter((e: any) => filterKinds.includes(e.kind))
       : entities;
-    
+
     const nodeIds = new Set(kindNodes.map((e: any) => e.id.replace('entity:', '')));
     const kindEdges = edges.filter((e: any) => {
       const sourceId = e.from.replace('entity:', '');
@@ -625,7 +626,8 @@ export const GraphPanel = memo(function GraphPanel() {
     for (const e of filteredData.edges) {
       const sourceNodeId = e.from.replace('entity:', '');
       const targetNodeId = e.to.replace('entity:', '');
-      
+
+      // Strict Inner Subgraph: only add edges if BOTH source and target nodes are in the current node list
       if (!nextNodesMap.has(sourceNodeId) || !nextNodesMap.has(targetNodeId)) continue;
       if (sourceNodeId === targetNodeId) continue;
 
@@ -665,7 +667,7 @@ export const GraphPanel = memo(function GraphPanel() {
           <span className="event-badge">
             {filterKinds.length > 0 ? `${filteredData.nodes.length}/${entities.length}` : entities.length} nodes · {filterKinds.length > 0 ? `${filteredData.edges.length}/${edges.length}` : edges.length} edges
           </span>
-          
+
           {/* Kind Filter Chips */}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
             <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase', marginRight: 4 }}>Filter:</span>
@@ -695,7 +697,7 @@ export const GraphPanel = memo(function GraphPanel() {
               );
             })}
             {filterKinds.length > 0 && (
-              <button 
+              <button
                 onClick={() => setFilterKinds([])}
                 style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10, padding: '2px 4px', cursor: 'pointer', textDecoration: 'underline' }}
               >
@@ -752,8 +754,8 @@ export const GraphPanel = memo(function GraphPanel() {
       </div>
 
       {ctxMenu && (
-        <div 
-          style={{ position: 'fixed', zIndex: 500, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', minWidth: 160, padding: '4px 0' }} 
+        <div
+          style={{ position: 'fixed', zIndex: 500, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', minWidth: 160, padding: '4px 0' }}
           onMouseLeave={() => setCtxMenu(null)}
           onContextMenu={e => e.preventDefault()}
         >
@@ -761,7 +763,7 @@ export const GraphPanel = memo(function GraphPanel() {
             // Bulk Actions
             <>
               <div style={{ padding: '4px 14px', fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>SELECTION ({selectedIds.length})</div>
-              <div 
+              <div
                 onClick={() => { setQuickTagNode({ id: 'selection', label: `${selectedIds.length} entities` }); setCtxMenu(null); }}
                 style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: 'var(--text-primary)' }}
                 onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
@@ -769,7 +771,7 @@ export const GraphPanel = memo(function GraphPanel() {
               >
                 Tag Selection…
               </div>
-              <div 
+              <div
                 onClick={() => { if (confirm(`Delete ${selectedIds.length} entities?`)) deleteEntities(selectedIds); setCtxMenu(null); }}
                 style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: '#ff6b6b' }}
                 onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
@@ -800,25 +802,25 @@ export const GraphPanel = memo(function GraphPanel() {
             <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-primary)' }}>Add tag to <strong>{quickTagNode.label}</strong></p>
             <div style={{ display: 'flex', gap: 8 }}>
               <input autoFocus type="text" value={quickTagInput} onChange={e => setQuickTagInput(e.target.value)} onKeyDown={async ev => {
-                if (ev.key === 'Enter') { 
+                if (ev.key === 'Enter') {
                   if (quickTagNode.id === 'selection') {
                     await tagEntities(selectedIds, quickTagInput.trim());
                   } else {
                     await tagEntity(quickTagNode.id, quickTagInput.trim());
                   }
-                  setQuickTagNode(null); setQuickTagInput(''); 
+                  setQuickTagNode(null); setQuickTagInput('');
                 }
                 if (ev.key === 'Escape') setQuickTagNode(null);
               }} placeholder="Tag name…" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text-primary)', fontSize: 13, outline: 'none' }} />
-              <button 
-                onClick={async () => { 
+              <button
+                onClick={async () => {
                   if (quickTagNode.id === 'selection') {
                     await tagEntities(selectedIds, quickTagInput.trim());
                   } else {
                     await tagEntity(quickTagNode.id, quickTagInput.trim());
                   }
-                  setQuickTagNode(null); setQuickTagInput(''); 
-                }} 
+                  setQuickTagNode(null); setQuickTagInput('');
+                }}
                 style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '6px 14px', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
               >
                 Tag
