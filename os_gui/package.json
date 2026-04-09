@@ -22,6 +22,7 @@
     "leaflet": "^1.9.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-rnd": "^10.5.3",
     "three": "^0.183.2",
     "vite-plugin-static-copy": "^4.0.0",
     "zustand": "^5.0.12"

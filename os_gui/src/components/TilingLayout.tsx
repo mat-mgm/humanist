@@ -15,11 +15,12 @@ interface TilingLayoutProps {
   focusedId: string | null;
   onFocus: (id: string) => void;
   gap?: number;
+  onDetach?: (id: string) => void;
 }
 
 const MIN_PCT = 15;
 
-export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: TilingLayoutProps) {
+export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8, onDetach }: TilingLayoutProps) {
   const [mSplit, setMSplit] = useState(55); // Master split %
   const [sSplit, setSSplit] = useState(50); // Stack split %
   const containerRef = useRef<HTMLDivElement>(null);
@@ -63,6 +64,7 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
           config={pane} 
           isFocused={true} 
           onClick={() => onFocus(pane.id)} 
+          onDetach={onDetach}
         />
       </div>
     );
@@ -76,13 +78,13 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
         {/* TOP ROW */}
         <div style={{ display: 'flex', height: `${panes.length > 2 ? mSplit : 100}%`, gap, flexShrink: 0 }}>
           <div style={{ width: `${topRow.length > 1 ? sSplit : 100}%`, display: 'flex' }}>
-             {topRow[0] && <Pane config={topRow[0]} isFocused={topRow[0].id === focusedId} onClick={() => onFocus(topRow[0].id)} />}
+             {topRow[0] && <Pane config={topRow[0]} isFocused={topRow[0].id === focusedId} onClick={() => onFocus(topRow[0].id)} onDetach={onDetach} />}
           </div>
           {topRow.length > 1 && (
             <>
               <div className="tiling-handle tiling-handle--col" style={{ margin: `0 -${gap / 2}px`, background: 'transparent' }} onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); startDrag('stack'); }} />
               <div style={{ width: `${100 - sSplit}%`, display: 'flex' }}>
-                 {topRow[1] && <Pane config={topRow[1]} isFocused={topRow[1].id === focusedId} onClick={() => onFocus(topRow[1].id)} />}
+                 {topRow[1] && <Pane config={topRow[1]} isFocused={topRow[1].id === focusedId} onClick={() => onFocus(topRow[1].id)} onDetach={onDetach} />}
               </div>
             </>
           )}
@@ -95,13 +97,13 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
             {/* BOTTOM ROW */}
             <div style={{ display: 'flex', height: `${100 - mSplit}%`, gap, flexShrink: 0 }}>
               <div style={{ width: `${bottomRow.length > 1 ? sSplit : 100}%`, display: 'flex' }}>
-                 {bottomRow[0] && <Pane config={bottomRow[0]} isFocused={bottomRow[0].id === focusedId} onClick={() => onFocus(bottomRow[0].id)} />}
+                 {bottomRow[0] && <Pane config={bottomRow[0]} isFocused={bottomRow[0].id === focusedId} onClick={() => onFocus(bottomRow[0].id)} onDetach={onDetach} />}
               </div>
               {bottomRow.length > 1 && (
                 <>
                   <div className="tiling-handle tiling-handle--col" style={{ margin: `0 -${gap / 2}px`, background: 'transparent' }} onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); startDrag('stack'); }} />
                   <div style={{ width: `${100 - sSplit}%`, display: 'flex' }}>
-                     {bottomRow[1] && <Pane config={bottomRow[1]} isFocused={bottomRow[1].id === focusedId} onClick={() => onFocus(bottomRow[1].id)} />}
+                     {bottomRow[1] && <Pane config={bottomRow[1]} isFocused={bottomRow[1].id === focusedId} onClick={() => onFocus(bottomRow[1].id)} onDetach={onDetach} />}
                   </div>
                 </>
               )}
@@ -128,7 +130,7 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
     >
       {/* MASTER AREA */}
       <div style={{ [mode === 'master' ? 'width' : 'height']: `${panes.length > 1 ? mSplit : 100}%`, display: 'flex', flexShrink: 0 }}>
-        <Pane config={master} isFocused={master.id === focusedId} onClick={() => onFocus(master.id)} />
+        <Pane config={master} isFocused={master.id === focusedId} onClick={() => onFocus(master.id)} onDetach={onDetach} />
       </div>
 
       {panes.length > 1 && (
@@ -143,7 +145,7 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
           {/* STACK AREA */}
           <div style={{ [mode === 'master' ? 'width' : 'height']: `${100 - mSplit}%`, display: 'flex', flexDirection: mode === 'master' ? 'column' : 'row', gap, flexShrink: 0 }}>
             <div style={{ [mode === 'master' ? 'height' : 'width']: panes.length > 2 ? `${sSplit}%` : '100%', display: 'flex' }}>
-              <Pane config={stack1} isFocused={stack1.id === focusedId} onClick={() => onFocus(stack1.id)} />
+              <Pane config={stack1} isFocused={stack1.id === focusedId} onClick={() => onFocus(stack1.id)} onDetach={onDetach} />
             </div>
 
             {panes.length > 2 && stack2 && (
@@ -156,7 +158,7 @@ export function TilingLayout({ panes, mode, focusedId, onFocus, gap = 8 }: Tilin
                 />
                 
                 <div style={{ [mode === 'master' ? 'height' : 'width']: `${100 - sSplit}%`, display: 'flex' }}>
-                  <Pane config={stack2} isFocused={stack2.id === focusedId} onClick={() => onFocus(stack2.id)} />
+                  <Pane config={stack2} isFocused={stack2.id === focusedId} onClick={() => onFocus(stack2.id)} onDetach={onDetach} />
                 </div>
               </>
             )}
@@ -173,9 +175,10 @@ interface PaneProps {
   config: PaneConfig;
   isFocused: boolean;
   onClick: () => void;
+  onDetach?: (id: string) => void;
 }
 
-function Pane({ config, isFocused, onClick }: PaneProps) {
+function Pane({ config, isFocused, onClick, onDetach }: PaneProps) {
   return (
     <div 
       className={`tiling-pane ${isFocused ? 'tiling-pane--focused' : ''}`} 
@@ -186,6 +189,21 @@ function Pane({ config, isFocused, onClick }: PaneProps) {
       <div className="pane-header">
         <span className="pane-icon">{config.icon}</span>
         <span className="pane-title">{config.label}</span>
+        {onDetach && (
+          <div style={{ marginLeft: 'auto', display: 'flex' }}>
+            <span 
+              className="pane-detach-btn" 
+              style={{ cursor: 'pointer', padding: '0 4px', fontSize: '11px', color: 'var(--text-hint)' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDetach(config.id);
+              }}
+              title="Detach as Floating Panel"
+            >
+              ↗️
+            </span>
+          </div>
+        )}
       </div>
       <div className="pane-body">
         {config.content}

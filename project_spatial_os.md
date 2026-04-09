@@ -24,6 +24,22 @@ State rules:
 * Success criteria: Stable graph editing/viewing resisting layout transitions, functional 3D globe with satellite imagery, flawless DWM-like window management within the app, reliable CAS and Prolog backend integration.
 * Constraints / priorities: Must run locally and efficiently. High performance 3D globe using Cesium, preventing massive bottlenecks by using pre-signed URLs for blobs.
 
+## Developer Agent Persona
+You are a pragmatic systems fullstack engineer who strictly adheres to the suckless coding philosophy and modular design principles. You prioritize minimalism, raw performance, and mathematical correctness, building software as a composition of small, independent, and interchangeable parts rather than monolithic structures.
+
+* Suckless Philosophy: Write code that is simple, clear, and does exactly what is required without unnecessary bloat, trendy abstractions, or complex dependencies.
+* Modular Design: Construct independent components with strictly defined inputs and outputs that can be easily tested, swapped, or repurposed.
+* Composability: Design systems that function like well-oiled pipelines, where small, reliable tools work together to solve complex problems cleanly.
+* Separation of Concerns: Keep interface layers completely decoupled from core logic, ensuring changes in one domain do not bleed into another.
+* Zero-Warning Standard: Treat compiler warnings as errors, write robust and safe code, and prioritize long-term stability over rapid, messy feature delivery.
+
+### System-specific criteria
+* Strict Hexagonal Discipline: Completely separate the core domain logic from external interfaces, keeping the SurrealDB storage and Tauri IPC gateways isolated from the core engine.
+* Trait-Driven Ontology: Utilize composable traits for data mutation and polymorphism rather than sparse tables or rigid object inheritance.
+* Symmetrical Interfaces: Maintain exact feature parity between the headless Clap CLI and the Tauri-based React GUI environments.
+* Local-First Efficiency: Rely on local embedded data stores, pre-signed URLs for blobs, and avoid external network bottlenecks for rendering and state tracking.
+* Verification Driven Workflow: Commit strictly to the defined roadmap phases, passing all defined checks and waiting for explicit user confirmation before proceeding.
+
 ## Development Guidelines
 * Environment: Use Nix flakes (`nix develop`) to setup the dependencies. Enter the nix shell once and perform all development inside it to prevent re-accessing every time.
 * Version Control: Use `git` to track changes. Commit every time a new phase or feature is implemented and verified to work as expected.
@@ -335,7 +351,7 @@ Implement a specialized graph filter that isolates specific entity kinds (physic
 - [✓] Selecting "All" (or clearing the filter) restores the full graph.
 - [✓] The graph count badge reflects the strict filtered state (nodes and inner edges only).
 
-### Phase 35: Temporal Kind & Timeline Panel
+### Phase 34: Temporal Kind & Timeline Panel
 **Description**
 Extend the data model with a `temporal` entity kind and a `TemporalTrait` supporting point events, span events, and recurring events. Build a `TimelinePanel` GUI component with a zoomable, scrollable timeline and a calendar tab. Selecting a temporal entity on the graph highlights it on the timeline (causal context tracking).
 
@@ -371,7 +387,7 @@ Extend the data model with a `temporal` entity kind and a `TemporalTrait` suppor
 - [✓] Calendar tab displays months and events with deep-time navigation support.
 - [✓] Kind filter chips in `GraphPanel` include the `temporal` kind.
 
-### Phase 34: Graph Traversal & Visualization
+### Phase 35: Graph Traversal & Visualization
 **Description**
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 
@@ -385,3 +401,20 @@ Enhance the graph visualization to support interactive traversal and display of 
 - [ ] Users can find paths between any two nodes in the graph.
 - [ ] Different edge types are visually distinguishable.
 - [ ] Graph filtering works as expected.
+
+### Phase 36: Dynamic UI Layout & Panel Management (Suckless Extension)
+**Description**
+Extend the custom DWM React layout engine to support a dynamic "Stage & Widgets" system. Instead of integrating monolithic docking libraries, keep the core tiling mathematics and extend state management to allow independent floating, draggable panels and a rofi-like command palette via pure React portals.
+
+**Tasks**
+- [✓] **Decouple Pane State**: Refactor `App.tsx` state to split panels into two explicitly managed arrays: `tiledPanes` (managed by `TilingLayout`) and `floatingPanes` (managed by a higher z-index overlay plane).
+- [✓] **Panel Detachment Mechanism**: Add an icon-based "Detach" toggle to the base `Pane` component, moving its ID from the tiling container to the floating container.
+- [✓] **Floating Plane Manager**: Implement a minimal draggable window wrapper (using lightweight `react-rnd`) for components in the `floatingPanes` array, handling z-index focus tracking.
+- [✓] **Command Palette Terminal (`rofi` style)**: Extract the `TerminalPanel` into a globally accessible, compact floating modal triggered by `Alt+T`. Terminal also remains available as a standard tiling panel.
+- [✓] **Top Bar Refactoring & Theme Selector**: Consolidated the "Panels" toggle and replaced the long theme list with a dropdown selector.
+
+**Checks**
+- [✓] Base Master/Stack layouts remain fully functional.
+- [✓] Specific panels can detach to the floating plane and be dragged/resized independently of the DWM blocks.
+- [✓] The global terminal popup triggers instantly via `Alt+T` and Esc/exit/q close it correctly.
+- [✓] The top bar is drastically decluttered, matching Suckless minimalism.

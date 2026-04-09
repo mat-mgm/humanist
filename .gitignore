@@ -47,3 +47,6 @@ result-*
 *.njsproj
 *.sln
 *.sw?
+
+# Benchmarks
+benchmarks/

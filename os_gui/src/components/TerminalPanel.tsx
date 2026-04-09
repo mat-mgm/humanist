@@ -3,7 +3,11 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
-export const TerminalPanel = memo(function TerminalPanel() {
+interface TerminalPanelProps {
+  onClose?: () => void;
+}
+
+export const TerminalPanel = memo(function TerminalPanel({ onClose }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
 
@@ -61,19 +65,22 @@ export const TerminalPanel = memo(function TerminalPanel() {
 
     // Explicit Ctrl+Shift+C / Ctrl+Shift+V handling
     term.attachCustomKeyEventHandler((e) => {
-      // We only want to handle keydown events, not keyup, to avoid double-firing
       if (e.type !== 'keydown') return true;
+
+      // Esc closes the command palette (if onClose is wired)
+      if (e.key === 'Escape') {
+        if (onClose) onClose();
+        return false;
+      }
 
       const isModifier = e.ctrlKey || e.metaKey;
       if (isModifier && e.shiftKey) {
         const key = e.key.toLowerCase();
         
         if (key === 'c' && term.hasSelection()) {
-          // navigator.clipboard is often blocked in secure contexts without explicit permissions
-          // xterm structures its hidden textarea precisely so this standard synchronous copy works
           document.execCommand('copy');
           term.clearSelection();
-          return false; // Prevent xterm from processing this
+          return false;
         }
         
         if (key === 'v') {
@@ -86,10 +93,10 @@ export const TerminalPanel = memo(function TerminalPanel() {
               redrawLine();
             }).catch(err => console.error('Clipboard async read failed (permissions?):', err));
           }
-          return false; // Prevent xterm from processing this
+          return false;
         }
       }
-      return true; // Let xterm handle everything else normally (like Ctrl+C interrupt)
+      return true;
     });
 
     // History array and cursor state
@@ -128,9 +135,13 @@ export const TerminalPanel = memo(function TerminalPanel() {
           historyIdx = history.length;
 
           if (cmd === 'help') {
-            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m, \x1b[36mpl\x1b[0m, \x1b[36msql\x1b[0m, \x1b[36mexit\x1b[0m, \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
-          } else if (cmd === 'clear') {
-            term.clear();
+            term.writeln('Available commands: \x1b[36mhelp\x1b[0m, \x1b[36mclear\x1b[0m (alias: cl), \x1b[36mpl\x1b[0m, \x1b[36msql\x1b[0m, \x1b[36mexit\x1b[0m (alias: q), \x1b[36mecho\x1b[0m, \x1b[36mdate\x1b[0m, \x1b[36mwhoami\x1b[0m, \x1b[36mping\x1b[0m');
+          } else if (cmd === 'clear' || cmd === 'cl') {
+            term.reset();
+            term.write('\x1b[1;32m$\x1b[0m ');
+            commandBuffer = '';
+            cursorIdx = 0;
+            return;
           } else if (cmd === 'date') {
             term.writeln(new Date().toString());
           } else if (cmd === 'whoami') {
@@ -163,10 +174,16 @@ export const TerminalPanel = memo(function TerminalPanel() {
             commandBuffer = '';
             cursorIdx = 0;
             return;
-          } else if (cmd === 'exit' || cmd === 'quit') {
-            import('@tauri-apps/api/core').then(async ({ invoke }) => {
-              await invoke('exit_app');
-            });
+          } else if (cmd === 'exit' || cmd === 'quit' || cmd === 'q') {
+            if (onClose) {
+              onClose();
+            } else {
+              import('@tauri-apps/api/core').then(async ({ invoke }) => {
+                await invoke('exit_app');
+              });
+            }
+            commandBuffer = '';
+            cursorIdx = 0;
             return;
           } else if (cmd.startsWith('sql ')) {
             let qs = cmd.replace(/^sql /, '').trim();
@@ -278,7 +295,7 @@ export const TerminalPanel = memo(function TerminalPanel() {
   }, []);
 
   return (
-    <div className="panel terminal-panel" style={{ background: 'var(--bg-panel)' }}>
+    <div className="panel terminal-panel" style={{ background: 'transparent' }}>
       <div className="panel-body" style={{ padding: 8 }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />
       </div>
