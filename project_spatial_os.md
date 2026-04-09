@@ -420,3 +420,57 @@ Extend the custom DWM React layout engine to support a dynamic "Stage & Widgets"
 - [✓] Specific panels can detach to the floating plane and be dragged/resized independently of the DWM blocks.
 - [✓] The global terminal popup triggers instantly via `Alt+T` and Esc/exit/q close it correctly.
 - [✓] The top bar is drastically decluttered, matching Suckless minimalism.
+
+### Phase 37: Graph Selection Actions & Inspector Polish
+**Description**
+Improve keyboard productivity in the graph visualization and streamline bulk operations and tagging workflows in the properties inspector.
+
+**Tasks**
+- [✓] **Graph Keyboard Deletion**: Bind the `Delete` (Supr) key in the `GraphPanel` to safely delete the currently selected entities, accompanied by standard confirmation logic.
+- [✓] **Bulk Deletion UI**: Add a prominent "Delete Selection" button in the `ViewportPanel` Properties tab when multiple entities are actively selected.
+- [✓] **Tag Autocompletion**: Upgrade the custom tag addition field in the `EntityInspector` to utilize an autocompleting, theme-aware dropdown (like `SearchableDropdown`) to efficiently suggest existing abstract tag entities.
+
+**Checks**
+- [✓] Pressing `Delete` while nodes are selected successfully prompts and removes them.
+- [✓] The Inspector displays a functional bulk-delete button during multi-selection.
+- [✓] The tag field provides an accurate dropdown list of existing tags when typing.
+
+### Phase 38: Spatial Entity Modification
+**Description**
+Expand the properties tab to allow comprehensive editing of spatial characteristics for spatial/physical entities, mirroring the temporal traits architecture.
+
+**Tasks**
+- [ ] Implement a **Spatial Trait Editor** interface within the `ViewportPanel` Properties tab.
+- [ ] Allow users to directly input and modify geospatial data (e.g., coordinates, bounding boxes, or spatial references).
+- [ ] Handle frontend state aggregation and ensure traits persist to the backend.
+
+**Checks**
+- [ ] Spatial entities display an editable spatial/coordinate section in their properties.
+- [ ] Changes made to spatial traits successfully save to the database.
+
+### Phase 39: Enhanced Asset Rendering (PDF & Text)
+**Description**
+Refine the handling of document blob formats to improve legibility within the custom theme ecosystem and spatial integration inside the graph.
+
+**Tasks**
+- [ ] **Theme-Aware PDFs**: Implement CSS filter inversion or adjustments in the PDF viewer to ensure PDF documents adapt favorably to dark mode themes.
+- [ ] **PDF Miniatures**: Extend the Graph node rendering loop to paint miniature preview icons for PDF blobs, creating visual parity with image nodes.
+- [ ] **Text Visualization**: Add a native text rendering block/viewer tab inside the preview pane to easily visualize plain text file contents without requiring download.
+
+**Checks**
+- [ ] PDF documents change colors correctly according to dark/light theme dynamics.
+- [ ] Nodes linked to PDFs render a recognizable miniature in the graph visualization.
+- [ ] `.txt` and `.md` files render their plain contents actively in the viewport.
+
+### Phase 40: Advanced Text Edition & External Editors
+**Description**
+Provide advanced, programmer-friendly configuration capabilities by treating node properties as raw text formats and seamlessly embedding external editors like Neovim.
+
+**Tasks**
+- [ ] **Data Export Editing**: Provide a view/mechanism to edit raw node/entity properties as a structured text file (e.g., JSON or YAML format).
+- [ ] **Editor Integration**: Dynamically launch or embed target external editors (Vim/Neovim) inside the GUI (e.g., pipelined through the embedded xterm terminal or explicitly floated).
+- [ ] **Persistence Sync**: Capture the external editor's write/save signals and parse the text modifications back into the backend entity database context.
+
+**Checks**
+- [ ] Users can trigger a "Text Edit" mode that exposes properties as raw JSON/YAML.
+- [ ] Neovim (or Vim) loads functionally within the app environment and saves correctly modify the dataset.

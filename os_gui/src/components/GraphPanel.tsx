@@ -85,6 +85,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const [showRelate, setShowRelate] = useState(false);
   const [quickTagNode, setQuickTagNode] = useState<{ id: string; label: string } | null>(null);
   const [quickTagInput, setQuickTagInput] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Marquee selection state
   const selectionBoxRef = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
@@ -879,7 +880,20 @@ export const GraphPanel = memo(function GraphPanel() {
         </div>
       </div>
 
-      <div ref={containerRef} style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative' }} onClick={() => setCtxMenu(null)}>
+      <div 
+        ref={containerRef} 
+        style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative', outline: 'none' }} 
+        onClick={() => setCtxMenu(null)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedId ? [selectedId] : []);
+            if (idsToDelete.length > 0) {
+              setShowDeleteConfirm(true);
+            }
+          }
+        }}
+      >
         {/* Marquee selection overlay */}
         {selectionBoxScreen && (
           <div style={{
@@ -969,6 +983,35 @@ export const GraphPanel = memo(function GraphPanel() {
                 Tag
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}
+        >
+          <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 9, padding: '20px 24px', minWidth: 250, boxShadow: '0 6px 32px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-primary)', textAlign: 'center' }}>
+              Delete {selectedIds.length > 0 ? selectedIds.length : 1} selected entit{(selectedIds.length > 0 ? selectedIds.length : 1) > 1 ? 'ies' : 'y'}?
+            </p>
+            <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: '#ff6b6b', fontWeight: 600 }}>Sure?</span>
+              <button 
+                onClick={() => { 
+                  const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedId ? [selectedId] : []);
+                  deleteEntities(idsToDelete); 
+                  setShowDeleteConfirm(false); 
+                }} 
+                style={{ background: '#ff6b6b', border: 'none', borderRadius: 5, padding: '6px 14px', cursor: 'pointer', color: '#fff', fontSize: 13, fontWeight: 700 }}
+              >Yes</button>
+              <button onClick={() => setShowDeleteConfirm(false)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 13, fontWeight: 600 }}>No</button>
+            </span>
           </div>
         </div>
       )}

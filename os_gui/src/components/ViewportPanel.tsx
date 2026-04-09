@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useCallback, useRef } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
 import { TemporalTrait } from '../models';
+import { SearchableDropdown } from './SearchableDropdown';
 import { ThreeViewer } from './ThreeViewer';
 import { RelateDialog } from './RelateDialog';
 import { CreateEntityDialog } from './CreateEntityDialog';
@@ -42,11 +43,13 @@ const TagChip = memo(function TagChip({
 const SelectionPanel = memo(function SelectionPanel() {
   const selectedIds = useOsStore(selectSelectedIds);
   const entities = useOsStore(selectEntities);
-  const { tagEntities, addEdgeAction } = useOsStore();
+  const { tagEntities, addEdgeAction, deleteEntities } = useOsStore();
 
   const [tagInput, setTagInput] = useState('');
   const [relLabel, setRelLabel] = useState('');
   const [relError, setRelError] = useState('');
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const selectedEntities = useMemo(
     () => entities.filter(e => selectedIds.includes(e.id)),
@@ -75,6 +78,11 @@ const SelectionPanel = memo(function SelectionPanel() {
     }
   };
 
+  const doDelete = async () => {
+    await deleteEntities(selectedIds);
+    setConfirmDelete(false);
+  };
+
   if (selectedIds.length < 2) return null;
 
   return (
@@ -84,6 +92,23 @@ const SelectionPanel = memo(function SelectionPanel() {
         <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
           {selectedIds.length} entities selected
         </span>
+        <div style={{ marginLeft: 'auto' }}>
+          {!confirmDelete ? (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Delete selected entities"
+              style={{ background: 'none', border: '1px solid #ff6b6b', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#ff6b6b', fontSize: 11, fontWeight: 700 }}
+            >
+              🗑 Delete All
+            </button>
+          ) : (
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: '#ff6b6b' }}>Sure?</span>
+              <button onClick={doDelete} style={{ background: '#ff6b6b', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Yes</button>
+              <button onClick={() => setConfirmDelete(false)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>No</button>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Selected entities list */}
@@ -100,13 +125,16 @@ const SelectionPanel = memo(function SelectionPanel() {
       {/* Bulk Tag */}
       <div style={{ margin: '8px 0 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Tag All</div>
       <div style={{ display: 'flex', gap: 6 }}>
-        <input
-          type="text"
+        <SearchableDropdown
           value={tagInput}
-          onChange={ev => setTagInput(ev.target.value)}
-          onKeyDown={ev => ev.key === 'Enter' && handleBulkTag()}
+          onChange={setTagInput}
+          onSelect={(opt) => {
+            setTagInput('');
+            tagEntities(selectedIds, opt.label);
+          }}
+          options={entities.filter((e: any) => e.kind === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
           placeholder="Tag name…"
-          style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+          style={{ flex: 1 }}
         />
         <button
           onClick={handleBulkTag}
@@ -319,16 +347,20 @@ const EntityInspector = memo(function EntityInspector() {
         })}
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-        <input
-          type="text"
+        <SearchableDropdown
           value={tagInput}
-          onChange={ev => setTagInput(ev.target.value)}
-          onKeyDown={ev => ev.key === 'Enter' && addTag()}
-          placeholder="Add tag…"
-          style={{
-            flex: 1, background: 'var(--bg)', border: '1px solid var(--border)',
-            borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+          onChange={setTagInput}
+          onSelect={async (opt) => {
+            setTagInput('');
+            try {
+              await tagEntity(selected.id, opt.label);
+            } catch (e: any) {
+              setTagError(String(e));
+            }
           }}
+          options={entities.filter((e: any) => e.kind === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
+          placeholder="Add tag…"
+          style={{ flex: 1 }}
         />
         <button
           onClick={addTag}
