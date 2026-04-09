@@ -8,6 +8,8 @@ pub mod models;
 pub mod ports;
 pub mod snapshot;
 
+pub const BENCHMARK_RESULTS_DIR: &str = "docs/thesis/results";
+
 #[cfg(test)]
 mod tests {
     use super::*;

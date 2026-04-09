@@ -20,6 +20,7 @@ import {
 } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useOsStore } from '../store';
+import { syncBenchmark } from '../benchmark/SyncBenchmark';
 
 const selectSpatialTraits = (s: ReturnType<typeof useOsStore.getState>) => s.spatialTraits;
 const selectSelectedId = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
@@ -116,6 +117,16 @@ export const GlobePanel = memo(function GlobePanel() {
     }
 
     viewerRef.current = viewer;
+
+    viewer.scene.postRender.addEventListener(() => {
+      const ulid = syncBenchmark.getCurrentUlid();
+      if (ulid && syncBenchmark.isBenchmarking()) {
+        const entity = viewer.entities.getById(`entity:${ulid}`);
+        if (entity) {
+          syncBenchmark.reportRender('Cesium Globe', ulid);
+        }
+      }
+    });
 
     // --- Click handler ---
     const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);

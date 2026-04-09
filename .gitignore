@@ -4,6 +4,8 @@ test
 data
 docs
 assets
+notes
+benchmarks/test_assets/
 
 # Rust
 target

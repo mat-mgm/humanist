@@ -3,6 +3,7 @@ members = [
     "core_engine",
     "prolog_engine",
     "os_cli",
-    "os_gui/src-tauri"
+    "os_gui/src-tauri",
+    "benchmarks"
 ]
 resolver = "2"

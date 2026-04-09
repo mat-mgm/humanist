@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use ulid::Ulid;
 
+mod bench;
 mod pty_manager;
 use pty_manager::PtyHost;
 
@@ -2715,7 +2716,9 @@ pub fn run() {
             rename_blob_trait,
             pick_icon_file,
             reify_edge,
-        ])
+            bench::benchmark_create_entity,
+            bench::benchmark_report_timing,
+         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

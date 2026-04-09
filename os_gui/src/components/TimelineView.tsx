@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useOsStore } from '../store';
+import { syncBenchmark } from '../benchmark/SyncBenchmark';
 
 const RULER_H = 32;
 const ROW_H   = 34;
@@ -51,6 +52,20 @@ export function TimelineView() {
   const timelineEvents = useMemo(() =>
     temporalTraits.map(t => ({ trait: t, entity: entities.find(e => e.id === t.owner) })).filter(e => e.entity),
   [temporalTraits, entities]);
+
+  // Sync Benchmark Instrumentation
+  useEffect(() => {
+    const ulid = syncBenchmark.getCurrentUlid();
+    if (ulid && syncBenchmark.isBenchmarking()) {
+      if (temporalTraits.some(t => t.owner === `entity:${ulid}`)) {
+        // We schedule rAF during the commit phase.
+        // The first callback is after the commit, the second is after the paint.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => syncBenchmark.reportRender('Timeline', ulid));
+        });
+      }
+    }
+  }, [temporalTraits]);
 
   const selectedTemporalId = useMemo(() => {
     const sel = selectedIds[0];
