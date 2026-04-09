@@ -30,6 +30,8 @@ pub struct SpatialTrait {
     pub lng: f64,
     pub alt: f64,
     pub heading: f64,
+    pub bbox: Option<Vec<f64>>,
+    pub projection: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

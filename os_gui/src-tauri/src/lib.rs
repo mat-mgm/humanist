@@ -128,16 +128,19 @@ async fn save_spatial_trait(
     lng: f64,
     alt: f64,
     heading: f64,
+    bbox: Option<Vec<f64>>,
+    projection: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
-    let ulid = Ulid::new().to_string();
     let trait_ = SpatialTrait {
-        id: format!("spatial_trait:{}", ulid),
+        id: format!("spatial_trait:{}", owner.replace("entity:", "")),
         owner,
         lat,
         lng,
         alt,
         heading,
+        bbox,
+        projection,
     };
     let st = state.lock().await;
     st.db.save_spatial_trait(trait_).await

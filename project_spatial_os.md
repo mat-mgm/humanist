@@ -440,13 +440,13 @@ Improve keyboard productivity in the graph visualization and streamline bulk ope
 Expand the properties tab to allow comprehensive editing of spatial characteristics for spatial/physical entities, mirroring the temporal traits architecture.
 
 **Tasks**
-- [ ] Implement a **Spatial Trait Editor** interface within the `ViewportPanel` Properties tab.
-- [ ] Allow users to directly input and modify geospatial data (e.g., coordinates, bounding boxes, or spatial references).
-- [ ] Handle frontend state aggregation and ensure traits persist to the backend.
+- [✓] Implement a **Spatial Trait Editor** interface within the `ViewportPanel` Properties tab.
+- [✓] Allow users to directly input and modify geospatial data (e.g., coordinates, bounding boxes, or spatial references).
+- [✓] Handle frontend state aggregation and ensure traits persist to the backend.
 
 **Checks**
-- [ ] Spatial entities display an editable spatial/coordinate section in their properties.
-- [ ] Changes made to spatial traits successfully save to the database.
+- [✓] Spatial entities display an editable spatial/coordinate section in their properties.
+- [✓] Changes made to spatial traits successfully save to the database.
 
 ### Phase 39: Enhanced Asset Rendering (PDF & Text)
 **Description**

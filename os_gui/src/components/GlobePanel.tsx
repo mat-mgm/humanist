@@ -16,6 +16,7 @@ import {
   UrlTemplateImageryProvider,
   buildModuleUrl,
   NearFarScalar,
+  Rectangle,
 } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useOsStore } from '../store';
@@ -150,34 +151,60 @@ export const GlobePanel = memo(function GlobePanel() {
 
     viewer.entities.removeAll();
 
+    const seen = new Set<string>();
+
     for (const trait of spatialTraits) {
+      if (seen.has(trait.owner)) continue;
+      seen.add(trait.owner);
+
       const isSelected = trait.owner === selectedId;
       const entity = entities.find(e => e.id === trait.owner);
       const label = entity?.label ?? trait.owner;
 
-      viewer.entities.add({
-        id: trait.owner,
-        name: label,
-        position: Cartesian3.fromDegrees(trait.lng, trait.lat, (trait.alt ?? 0) + 100),
-        point: {
-          pixelSize: isSelected ? 16 : 10,
-          color: isSelected ? Color.WHITE : Color.fromCssColorString('#5b8af0'),
-          outlineColor: Color.fromCssColorString('#0a0a0d'),
-          outlineWidth: 2,
-          scaleByDistance: new NearFarScalar(1e3, 1.5, 1e7, 0.5),
-        },
-        label: {
-          text: label,
-          font: '13px "JetBrains Mono", monospace',
-          fillColor: Color.WHITE,
-          outlineColor: Color.BLACK,
-          outlineWidth: 3,
-          style: 2, // FILL_AND_OUTLINE
-          pixelOffset: new Cartesian2(0, -22),
-          scaleByDistance: new NearFarScalar(1e3, 1.0, 5e6, 0.3),
-          show: true,
-        },
-      });
+      const commonLabel = {
+        text: label,
+        font: '13px "JetBrains Mono", monospace',
+        fillColor: Color.WHITE,
+        outlineColor: Color.BLACK,
+        outlineWidth: 3,
+        style: 2, // FILL_AND_OUTLINE
+        pixelOffset: new Cartesian2(0, -22),
+        scaleByDistance: new NearFarScalar(1e3, 1.0, 5e6, 0.3),
+        show: true,
+      };
+
+      if (trait.bbox && trait.bbox.length === 4) {
+        const [w, s, e, n] = trait.bbox;
+        viewer.entities.add({
+          id: trait.owner,
+          name: label,
+          rectangle: {
+            coordinates: Rectangle.fromDegrees(w, s, e, n),
+            material: isSelected
+              ? Color.WHITE.withAlpha(0.3)
+              : Color.fromCssColorString('#5b8af0').withAlpha(0.3),
+            outline: true,
+            outlineColor: isSelected ? Color.WHITE : Color.fromCssColorString('#0a0a0d'),
+          },
+          position: Cartesian3.fromDegrees((w + e) / 2, (s + n) / 2, trait.alt ?? 0),
+          label: commonLabel,
+        });
+      } else {
+        viewer.entities.add({
+          id: trait.owner,
+          name: label,
+          position: Cartesian3.fromDegrees(trait.lng, trait.lat, (trait.alt ?? 0) + 100),
+          point: {
+            pixelSize: isSelected ? 16 : 10,
+            color: isSelected ? Color.WHITE : Color.fromCssColorString('#5b8af0'),
+            outlineColor: Color.fromCssColorString('#0a0a0d'),
+            outlineWidth: 2,
+            scaleByDistance: new NearFarScalar(1e3, 1.5, 1e7, 0.5),
+          },
+          label: commonLabel,
+        });
+      }
+
     }
 
     // Fly to selected entity

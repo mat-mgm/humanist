@@ -15,6 +15,8 @@ export interface SpatialTrait {
   lng: number;
   alt: number;
   heading: number;
+  bbox: number[] | null;
+  projection: string;
 }
 
 export interface BlobTrait {

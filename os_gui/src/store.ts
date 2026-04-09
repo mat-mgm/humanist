@@ -56,6 +56,7 @@ interface OsStore {
   fetchTemporalTraits: () => Promise<void>;
   fetchEdges: () => Promise<void>;
   saveTemporalTrait: (trait: Omit<TemporalTrait, "id">) => Promise<void>;
+  saveSpatialTrait: (trait: Omit<SpatialTrait, "id">) => Promise<void>;
   selectEntity: (id: string | null) => void;
   setSelectedIds: (ids: string[]) => void;
   toggleSelection: (id: string) => void;
@@ -166,6 +167,24 @@ export const useOsStore = create<OsStore>((set, get) => ({
       await get().fetchTemporalTraits();
     } catch (e) {
       console.error('saveTemporalTrait error:', e);
+      throw e;
+    }
+  },
+
+  saveSpatialTrait: async (trait) => {
+    try {
+      await invoke('save_spatial_trait', {
+        owner: trait.owner,
+        lat: trait.lat,
+        lng: trait.lng,
+        alt: trait.alt,
+        heading: trait.heading,
+        bbox: trait.bbox,
+        projection: trait.projection,
+      });
+      await get().fetchSpatialTraits();
+    } catch (e) {
+      console.error('saveSpatialTrait error:', e);
       throw e;
     }
   },

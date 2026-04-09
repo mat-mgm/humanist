@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, useCallback, useRef } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
-import { TemporalTrait } from '../models';
+import { SpatialTrait, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
 import { ThreeViewer } from './ThreeViewer';
 import { RelateDialog } from './RelateDialog';
@@ -14,6 +14,7 @@ const selectEntities = (s: ReturnType<typeof useOsStore.getState>) => s.entities
 const selectSelectEntity = (s: ReturnType<typeof useOsStore.getState>) => s.selectEntity;
 const selectContextEntities = (s: ReturnType<typeof useOsStore.getState>) => s.contextEntities;
 const selectBlobTraits = (s: ReturnType<typeof useOsStore.getState>) => s.blobTraits;
+const selectSpatialTraits = (s: ReturnType<typeof useOsStore.getState>) => s.spatialTraits;
 const selectTemporalTraits = (s: ReturnType<typeof useOsStore.getState>) => s.temporalTraits;
 const selectEdges = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityEdges;
 
@@ -177,9 +178,10 @@ const EntityInspector = memo(function EntityInspector() {
   const selectedId = useOsStore(selectSelectedId);
   const entities = useOsStore(selectEntities);
   const edges = useOsStore(selectEdges);
+  const spatialTraits = useOsStore(selectSpatialTraits);
   const temporalTraits = useOsStore(selectTemporalTraits);
   const selectEntity = useOsStore(selectSelectEntity);
-  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait } = useOsStore();
+  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait, saveSpatialTrait } = useOsStore();
 
   const selected = useMemo(
     () => entities.find(e => e.id === selectedId) ?? null,
@@ -198,6 +200,15 @@ const EntityInspector = memo(function EntityInspector() {
       `entity:${t.owner}` === selectedId
     );
   }, [temporalTraits, selectedId]);
+
+  const spatialTrait = useMemo(() => {
+    if (!selectedId) return undefined;
+    return spatialTraits.find(t =>
+      t.owner === selectedId ||
+      t.owner === selectedId.replace('entity:', '') ||
+      `entity:${t.owner}` === selectedId
+    );
+  }, [spatialTraits, selectedId]);
 
   // Find the label for a short id
   const labelFor = useCallback((shortId: string) => {
@@ -291,6 +302,34 @@ const EntityInspector = memo(function EntityInspector() {
       setTempError(String(e));
     }
   }, [editTemporal, saveTemporalTrait]);
+
+  // Spatial Editing
+  const [editSpatial, setEditSpatial] = useState<Omit<SpatialTrait, "id"> | null>(null);
+  const [spatialError, setSpatialError] = useState('');
+
+  const startEditSpatial = useCallback(() => {
+    if (!selected) return;
+    setEditSpatial({
+      owner: selected.id,
+      lat: spatialTrait?.lat ?? 0,
+      lng: spatialTrait?.lng ?? 0,
+      alt: spatialTrait?.alt ?? 0,
+      heading: spatialTrait?.heading ?? 0,
+      bbox: spatialTrait?.bbox ?? null,
+      projection: spatialTrait?.projection ?? 'EPSG:4326',
+    });
+    setSpatialError('');
+  }, [selected, spatialTrait]);
+
+  const saveSpatial = useCallback(async () => {
+    if (!editSpatial) return;
+    try {
+      await saveSpatialTrait(editSpatial);
+      setEditSpatial(null);
+    } catch (e: any) {
+      setSpatialError(String(e));
+    }
+  }, [editSpatial, saveSpatialTrait]);
 
   if (!selected) {
     return (
@@ -494,6 +533,113 @@ const EntityInspector = memo(function EntityInspector() {
             />
           </label>
           {tempError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '2px 0 0' }}>{tempError}</p>}
+        </div>
+      )}
+
+      {/* ── Spatial ────────────────────────────────────────────────────── */}
+      <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Spatial</span>
+        {editSpatial == null
+          ? <button onClick={startEditSpatial} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>✏ {spatialTrait ? 'Edit' : 'Add'}</button>
+          : <span style={{ display: 'flex', gap: 6 }}>
+            <button onClick={saveSpatial} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Save</button>
+            <button onClick={() => { setEditSpatial(null); setSpatialError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
+          </span>
+        }
+      </div>
+
+      {editSpatial == null ? (
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {!spatialTrait ? (
+             <span>No spatial data</span>
+          ) : (
+            <>
+              <div className="prop-row"><span className="prop-key">Lat</span><span className="prop-val mono">{spatialTrait.lat}</span></div>
+              <div className="prop-row"><span className="prop-key">Lng</span><span className="prop-val mono">{spatialTrait.lng}</span></div>
+              <div className="prop-row"><span className="prop-key">Alt</span><span className="prop-val mono">{spatialTrait.alt}</span></div>
+              <div className="prop-row"><span className="prop-key">Heading</span><span className="prop-val mono">{spatialTrait.heading}°</span></div>
+              {spatialTrait.bbox && (
+                <div className="prop-row"><span className="prop-key">BBox</span><span className="prop-val mono">[{spatialTrait.bbox.join(', ')}]</span></div>
+              )}
+              {spatialTrait.projection && (
+                <div className="prop-row"><span className="prop-key">Proj</span><span className="prop-val mono">{spatialTrait.projection}</span></div>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>LATITUDE</span>
+              <input 
+                type="number" step="any"
+                value={editSpatial.lat} 
+                onChange={e => setEditSpatial(prev => ({ ...prev!, lat: parseFloat(e.target.value) || 0 }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>LONGITUDE</span>
+              <input 
+                type="number" step="any"
+                value={editSpatial.lng} 
+                onChange={e => setEditSpatial(prev => ({ ...prev!, lng: parseFloat(e.target.value) || 0 }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>ALTITUDE</span>
+              <input 
+                type="number" step="any"
+                value={editSpatial.alt} 
+                onChange={e => setEditSpatial(prev => ({ ...prev!, alt: parseFloat(e.target.value) || 0 }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>HEADING</span>
+              <input 
+                type="number" step="any"
+                value={editSpatial.heading} 
+                onChange={e => setEditSpatial(prev => ({ ...prev!, heading: parseFloat(e.target.value) || 0 }))}
+                style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+              />
+            </label>
+          </div>
+          <label style={{ display: 'block' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>BOUNDING BOX [W, S, E, N] (Optional)</span>
+            <input 
+              type="text" 
+              value={editSpatial.bbox ? editSpatial.bbox.join(', ') : ''} 
+              onChange={e => {
+                const str = e.target.value.trim();
+                if (!str) {
+                  setEditSpatial(prev => ({ ...prev!, bbox: null }));
+                  return;
+                }
+                const parts = str.split(',').map(s => parseFloat(s.trim()));
+                if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+                  setEditSpatial(prev => ({ ...prev!, bbox: parts }));
+                } else {
+                  // Keep whatever is there to not break typing, but it won't be a valid bbox until format matches
+                }
+              }}
+              placeholder="e.g. -122.5, 37.7, -122.4, 37.8"
+              style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+            />
+          </label>
+          <label style={{ display: 'block' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>PROJECTION</span>
+            <input 
+              type="text" 
+              value={editSpatial.projection} 
+              onChange={e => setEditSpatial(prev => ({ ...prev!, projection: e.target.value }))}
+              placeholder="e.g. EPSG:4326"
+              style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+            />
+          </label>
+          {spatialError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '2px 0 0' }}>{spatialError}</p>}
         </div>
       )}
 

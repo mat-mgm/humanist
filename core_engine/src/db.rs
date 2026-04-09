@@ -35,6 +35,8 @@ impl SurrealDbAdapter {
             DEFINE FIELD lng ON spatial_trait TYPE float;
             DEFINE FIELD alt ON spatial_trait TYPE float;
             DEFINE FIELD heading ON spatial_trait TYPE float;
+            DEFINE FIELD bbox ON spatial_trait TYPE option<array<float>>;
+            DEFINE FIELD projection ON spatial_trait TYPE string;
 
             DEFINE TABLE blob_trait SCHEMAFULL;
             DEFINE FIELD owner ON blob_trait TYPE string;
@@ -97,7 +99,8 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn save_spatial_trait(&self, trait_: SpatialTrait) -> Result<(), String> {
-        let qs = format!("CREATE {} CONTENT $trait_;", trait_.id);
+        let id_cleaned = trait_.id.replace("spatial_trait:", "");
+        let qs = format!("UPSERT spatial_trait:{} CONTENT $trait_;", id_cleaned);
         let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
