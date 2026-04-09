@@ -139,3 +139,60 @@ export function getStableColor(str: string): string {
   const h = Math.abs(hash % 360);
   return `hsl(${h}, 70%, 65%)`;
 }
+
+/**
+ * BFS shortest-path finder.
+ * Edges are treated as undirected for traversal.
+ * Returns the ordered list of entity IDs (with "entity:" prefix) on the path,
+ * or null if no path exists.
+ */
+export function findShortestPath(
+  fromId: string,
+  toId: string,
+  edges: { from: string; to: string; label: string }[]
+): string[] | null {
+  if (fromId === toId) return [fromId];
+
+  // Build adjacency list (bidirectional)
+  const adj = new Map<string, Set<string>>();
+  for (const e of edges) {
+    if (!adj.has(e.from)) adj.set(e.from, new Set());
+    if (!adj.has(e.to)) adj.set(e.to, new Set());
+    adj.get(e.from)!.add(e.to);
+    adj.get(e.to)!.add(e.from);
+  }
+
+  // BFS
+  const visited = new Set<string>([fromId]);
+  const queue: string[][] = [[fromId]];
+
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    const node = path[path.length - 1];
+    for (const neighbor of (adj.get(node) ?? [])) {
+      if (neighbor === toId) return [...path, neighbor];
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push([...path, neighbor]);
+      }
+    }
+  }
+
+  return null; // No path found
+}
+
+/**
+ * Given a path (ordered list of node IDs), returns the set of canonical
+ * bidirectional edge keys ("a|b" and "b|a") for consecutive pairs.
+ * IDs should already be normalized (same format as force-graph node IDs).
+ */
+export function pathEdgeKeys(path: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i];
+    const b = path[i + 1];
+    keys.add(`${a}|${b}`);
+    keys.add(`${b}|${a}`);
+  }
+  return keys;
+}

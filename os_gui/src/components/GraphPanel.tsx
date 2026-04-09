@@ -5,7 +5,8 @@ import ForceGraph2D from 'force-graph';
 import { useOsStore } from '../store';
 import { RelateDialog } from './RelateDialog';
 import { KEYBINDS } from '../App';
-import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
+import { getConvexHull, drawRoundedHullPath, getStableColor, findShortestPath, pathEdgeKeys } from '../utils/graphUtils';
+import { SearchableDropdown } from './SearchableDropdown';
 
 interface GNode {
   id: string;
@@ -54,6 +55,7 @@ const REGION_STYLE = {
   labelFont: 'bold 6px "JetBrains Mono", sans-serif',
 };
 
+
 export const GraphPanel = memo(function GraphPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -67,11 +69,16 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds } = useOsStore();
+  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds, filterEdgeLabels, toggleFilterEdgeLabel, highlightedPath, highlightedEdgeKeys, setHighlightedPath, clearHighlightedPath } = useOsStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
   const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
+
+  // Path finder state
+  const [pathFrom, setPathFrom] = useState('');
+  const [pathTo, setPathTo] = useState('');
+  const [pathError, setPathError] = useState<string | null>(null);
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string } | null>(null);
@@ -94,12 +101,22 @@ export const GraphPanel = memo(function GraphPanel() {
   const blobTraitsRef = useRef(blobTraits);
   const toggledImageNodesRef = useRef(toggledImageNodes);
   const selectedIdsRef = useRef(selectedIds);
+  const highlightedPathRef = useRef<string[]>([]);
+  const highlightedEdgeKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
   useEffect(() => { showRegionsRef.current = showRegions; }, [showRegions]);
   useEffect(() => { blobTraitsRef.current = blobTraits; }, [blobTraits]);
+  useEffect(() => {
+    highlightedPathRef.current = highlightedPath;
+    highlightedEdgeKeysRef.current = highlightedEdgeKeys;
+    if (readyRef.current && graphRef.current) {
+      graphRef.current.nodeColor(graphRef.current.nodeColor());
+      graphRef.current.linkColor(graphRef.current.linkColor());
+    }
+  }, [highlightedPath, highlightedEdgeKeys]);
   useEffect(() => {
     toggledImageNodesRef.current = toggledImageNodes;
     if (readyRef.current && graphRef.current) {
@@ -148,13 +165,24 @@ export const GraphPanel = memo(function GraphPanel() {
       .graphData({ nodes: [], links: [] })
       .backgroundColor('rgba(0,0,0,0)')
       .linkColor((link: any) => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        const edgeKey = `${sourceId}|${targetId}`;
+        if (highlightedEdgeKeysRef.current.size > 0 && highlightedEdgeKeysRef.current.has(edgeKey)) {
+          return getComputedStyle(document.documentElement).getPropertyValue('--graph-path').trim() || '#f5a623';
+        }
         const sq = searchQueryRef.current.toLowerCase();
         const sm = !sq || (link.source?.label && link.source.label.toLowerCase().includes(sq));
         const tm = !sq || (link.target?.label && link.target.label.toLowerCase().includes(sq));
         const baseColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#a0a0a0';
         return (sq && !sm && !tm) ? 'rgba(100, 100, 100, 0.15)' : baseColor;
       })
-      .linkWidth(1.5)
+      .linkWidth((link: any) => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        const edgeKey = `${sourceId}|${targetId}`;
+        return highlightedEdgeKeysRef.current.has(edgeKey) ? 4 : 1.5;
+      })
       .linkDirectionalArrowLength(5)
       .linkDirectionalArrowRelPos(1)
       .onNodeClick(onNodeClick)
@@ -172,6 +200,8 @@ export const GraphPanel = memo(function GraphPanel() {
         const isMatch = sq ? n.label?.toLowerCase().includes(sq) : true;
         const isSelectionMaster = `entity:${n.id}` === selectedIdRef.current;
         const isSelected = selectedIdsRef.current.includes(`entity:${n.id}`);
+
+        const isOnPath = highlightedPathRef.current.length > 0 && highlightedPathRef.current.includes(`entity:${n.id}`);
 
         ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
         const radius = 6;
@@ -223,6 +253,17 @@ export const GraphPanel = memo(function GraphPanel() {
           ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI, false);
           ctx.fillStyle = KIND_COLORS[n.kind] ?? '#8b91a8';
           ctx.fill();
+
+          // Path glow ring
+          if (isOnPath) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, radius + 4, 0, 2 * Math.PI, false);
+            ctx.lineWidth = 2 / globalScale;
+            ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--graph-path').trim() || '#f5a623';
+            ctx.globalAlpha = 0.85;
+            ctx.stroke();
+            ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
+          }
         }
 
         if (isSelected) {
@@ -579,11 +620,13 @@ export const GraphPanel = memo(function GraphPanel() {
     const kindEdges = edges.filter((e: any) => {
       const sourceId = e.from.replace('entity:', '');
       const targetId = e.to.replace('entity:', '');
-      return nodeIds.has(sourceId) && nodeIds.has(targetId);
+      if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) return false;
+      if (filterEdgeLabels.length > 0 && filterEdgeLabels.includes(e.label)) return false;
+      return true;
     });
 
     return { nodes: kindNodes, edges: kindEdges };
-  }, [entities, edges, filterKinds]);
+  }, [entities, edges, filterKinds, filterEdgeLabels]);
 
   // Sync data to force-graph instance
   useEffect(() => {
@@ -660,18 +703,55 @@ export const GraphPanel = memo(function GraphPanel() {
     return () => ro.disconnect();
   }, []);
 
+  // Derive unique edge labels for the label filter
+  const allEdgeLabels = useMemo(() => {
+    const labels = new Set<string>();
+    edges.forEach((e: any) => e.label && labels.add(e.label));
+    return Array.from(labels).sort();
+  }, [edges]);
+
   return (
-    <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="panel-stats" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="event-badge">
-            {filterKinds.length > 0 ? `${filteredData.nodes.length}/${entities.length}` : entities.length} nodes · {filterKinds.length > 0 ? `${filteredData.edges.length}/${edges.length}` : edges.length} edges
+    <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
+      {/* TOOLBAR: Row 1 - Stats, Reset, Kinds */}
+      <div className="panel-stats">
+        <div className="panel-row" style={{ flexWrap: 'wrap' }}>
+          <span className="event-badge" style={{ marginRight: 4 }}>
+            {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.nodes.length}/${entities.length} nodes` : `${entities.length} nodes`}
           </span>
 
-          {/* Kind Filter Chips */}
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase', marginRight: 4 }}>Filter:</span>
-            {Object.keys(KIND_COLORS).map(kind => {
+          <input
+            type="text"
+            placeholder="Search nodes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ 
+              background: 'var(--bg-primary)', 
+              border: '1px solid var(--border)', 
+              color: 'var(--text-primary)', 
+              padding: '2px 8px', 
+              borderRadius: 4, 
+              outline: 'none', 
+              fontSize: 11, 
+              width: 120,
+              height: 22
+            }}
+          />
+
+          <button
+            onClick={() => {
+              if (graphRef.current) {
+                graphRef.current.zoom(1, 400);
+                setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
+              }
+            }}
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, height: 22 }}
+          >
+            Reset
+          </button>
+
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 10, marginLeft: 4 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Kinds:</span>
+            {['physical', 'digital', 'abstract', 'agent', 'blob'].map(kind => {
               const active = filterKinds.includes(kind);
               return (
                 <button
@@ -682,15 +762,12 @@ export const GraphPanel = memo(function GraphPanel() {
                     border: `1px solid ${active ? KIND_COLORS[kind] : 'var(--border)'}`,
                     color: active ? '#000' : 'var(--text-secondary)',
                     fontSize: 10,
-                    padding: '2px 8px',
-                    borderRadius: 12,
+                    padding: '1px 7px',
+                    borderRadius: 10,
                     cursor: 'pointer',
-                    fontWeight: active ? 700 : 400,
-                    transition: 'all 0.15s ease',
                     opacity: active ? 1 : 0.6,
+                    transition: 'all 0.15s ease',
                   }}
-                  onMouseEnter={e => !active && (e.currentTarget.style.opacity = '1')}
-                  onMouseLeave={e => !active && (e.currentTarget.style.opacity = '0.6')}
                 >
                   {kind}
                 </button>
@@ -705,37 +782,103 @@ export const GraphPanel = memo(function GraphPanel() {
               </button>
             )}
           </div>
+          
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
+              Grid
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showRegions} onChange={() => toggleRegions()} />
+              Regions
+            </label>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
-            Grid
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={showRegions} onChange={() => toggleRegions()} />
-            Regions
-          </label>
+        {/* Row 2: Edge Filters */}
+        {allEdgeLabels.length > 0 && (
+          <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Edges:</span>
+            {allEdgeLabels.map(label => {
+              const hidden = filterEdgeLabels.includes(label);
+              return (
+                <button
+                  key={label}
+                  onClick={() => toggleFilterEdgeLabel(label)}
+                  style={{
+                    background: hidden ? 'var(--bg-primary)' : 'transparent',
+                    border: `1px solid ${hidden ? 'var(--accent)' : 'var(--border)'}`,
+                    color: hidden ? 'var(--accent)' : 'var(--text-hint)',
+                    fontSize: 10,
+                    padding: '1px 8px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    textDecoration: hidden ? 'line-through' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Row 3: Path Finder */}
+        <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase' }}>Find Path:</span>
+          
+          <SearchableDropdown
+            placeholder="From entity..."
+            value={pathFrom}
+            onChange={setPathFrom}
+            options={entities.map((e: any) => ({ id: e.id, label: e.label }))}
+            style={{ width: 140 }}
+          />
+
+          <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>→</span>
+
+          <SearchableDropdown
+            placeholder="To entity..."
+            value={pathTo}
+            onChange={setPathTo}
+            options={entities.map((e: any) => ({ id: e.id, label: e.label }))}
+            style={{ width: 140 }}
+          />
+
           <button
             onClick={() => {
-              if (graphRef.current) {
-                graphRef.current.zoom(1, 400);
-                setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
-              }
+              setPathError(null);
+              const fromEntity = entities.find((e: any) => e.label === pathFrom || e.id === pathFrom || e.id === `entity:${pathFrom}`);
+              const toEntity = entities.find((e: any) => e.label === pathTo || e.id === pathTo || e.id === `entity:${pathTo}`);
+              if (!fromEntity || !toEntity) { setPathError('Entity not found'); return; }
+              const fromShort = fromEntity.id.replace('entity:', '');
+              const toShort = toEntity.id.replace('entity:', '');
+              const shortEdges = edges.map((e: any) => ({ from: e.from.replace('entity:', ''), to: e.to.replace('entity:', ''), label: e.label }));
+              const pathShort = findShortestPath(fromShort, toShort, shortEdges);
+              if (!pathShort) { setPathError('No path found'); return; }
+              const pathPrefixed = pathShort.map(id => `entity:${id}`);
+              const eKeys = pathEdgeKeys(pathShort);
+              setHighlightedPath(pathPrefixed, eKeys);
             }}
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+            style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '2px 10px', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600, height: 22 }}
           >
-            Reset View
+            Find Path
           </button>
-          <input
-            type="text"
-            placeholder="Search..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, outline: 'none', fontSize: 12, width: 150 }}
-          />
+          
+          {highlightedPath.length > 0 && (
+            <button
+              onClick={() => { clearHighlightedPath(); setPathError(null); }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', color: 'var(--text-hint)', cursor: 'pointer', fontSize: 11, height: 22 }}
+            >
+              Clear Path
+            </button>
+          )}
+
+          {pathError && <span style={{ fontSize: 11, color: 'var(--error)' }}>{pathError}</span>}
         </div>
       </div>
+
       <div ref={containerRef} style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative' }} onClick={() => setCtxMenu(null)}>
         {/* Marquee selection overlay */}
         {selectionBoxScreen && (

@@ -44,6 +44,9 @@ interface OsStore {
   nodePositions: Record<string, { x: number, y: number }>;
   showRegions: boolean;
   filterKinds: string[];
+  filterEdgeLabels: string[];    // Edge labels to HIDE (empty = show all)
+  highlightedPath: string[];     // Node IDs on active BFS path
+  highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
 
   // Actions — read
   updateNodePosition: (id: string, x: number, y: number) => void;
@@ -73,6 +76,9 @@ interface OsStore {
   toggleRegions: () => void;
   toggleFilterKind: (kind: string) => void;
   setFilterKinds: (kinds: string[]) => void;
+  toggleFilterEdgeLabel: (label: string) => void;
+  setHighlightedPath: (path: string[], edgeKeys: Set<string>) => void;
+  clearHighlightedPath: () => void;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -90,6 +96,9 @@ export const useOsStore = create<OsStore>((set, get) => ({
   nodePositions: {},
   showRegions: true,
   filterKinds: [],
+  filterEdgeLabels: [],
+  highlightedPath: [],
+  highlightedEdgeKeys: new Set<string>(),
 
   updateNodePosition: (id, x, y) => {
     set(state => ({
@@ -296,6 +305,24 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   setFilterKinds: (kinds) => {
     set({ filterKinds: kinds });
+  },
+
+  toggleFilterEdgeLabel: (label) => {
+    set(state => {
+      const { filterEdgeLabels } = state;
+      const next = filterEdgeLabels.includes(label)
+        ? filterEdgeLabels.filter(l => l !== label)
+        : [...filterEdgeLabels, label];
+      return { filterEdgeLabels: next };
+    });
+  },
+
+  setHighlightedPath: (path, edgeKeys) => {
+    set({ highlightedPath: path, highlightedEdgeKeys: edgeKeys });
+  },
+
+  clearHighlightedPath: () => {
+    set({ highlightedPath: [], highlightedEdgeKeys: new Set() });
   },
 
   startListening: async () => {

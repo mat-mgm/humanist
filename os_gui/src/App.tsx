@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import './App.css';
 
+import { SearchableDropdown } from './components/SearchableDropdown';
 import { useOsStore } from './store';
 import { GraphPanel } from './components/GraphPanel';
 const GlobePanel = lazy(() => import('./components/GlobePanel').then(m => ({ default: m.GlobePanel })));
@@ -65,7 +66,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   // Theme & Window
-  const [theme, setTheme] = useState<Theme>('dracula');
+  const [theme, setTheme] = useState<Theme>('github-light');
+  const [themeSearch, setThemeSearch] = useState('GitHub Light');
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   // UI State: Layout & Panes
@@ -81,12 +83,12 @@ export default function App() {
     () => ALL_PANES.filter(p => tiledPaneIds.includes(p.id)),
     [tiledPaneIds]
   );
-  
+
   const floatingPanes = useMemo(
     () => ALL_PANES.filter(p => floatingPaneIds.includes(p.id)),
     [floatingPaneIds]
   );
-  
+
   const visiblePaneIds = useMemo(() => [...tiledPaneIds, ...floatingPaneIds], [tiledPaneIds, floatingPaneIds]);
 
   // Apply theme to <html data-theme="...">
@@ -185,15 +187,15 @@ export default function App() {
 
   return (
     <div className="app-root" id="app-root" onClick={() => setMenuOpen(null)}>
-      
+
       {/* Floating Plane */}
       {floatingPanes.map(p => (
-        <DraggablePane 
-          key={`float-${p.id}`} 
-          config={p} 
-          isFocused={p.id === focusedId} 
-          onClick={() => setFocusedId(p.id)} 
-          onAttach={handleAttach} 
+        <DraggablePane
+          key={`float-${p.id}`}
+          config={p}
+          isFocused={p.id === focusedId}
+          onClick={() => setFocusedId(p.id)}
+          onAttach={handleAttach}
         />
       ))}
 
@@ -240,13 +242,17 @@ export default function App() {
 
                 <div style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8 }} onClick={e => e.stopPropagation()}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hint)', flexShrink: 0 }}>Theme:</span>
-                  <select 
-                    value={theme}
-                    onChange={(e) => setTheme(e.target.value as Theme)}
-                    style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 6px', fontSize: 11, flex: 1, cursor: 'pointer', outline: 'none' }}
-                  >
-                    {THEMES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-                  </select>
+                  <SearchableDropdown
+                    value={themeSearch}
+                    onChange={setThemeSearch}
+                    onSelect={(opt) => {
+                      setTheme(opt.id as Theme);
+                      setThemeSearch(opt.label);
+                    }}
+                    options={THEMES.map(t => ({ id: t.id, label: t.label }))}
+                    placeholder="Search themes..."
+                    style={{ flex: 1 }}
+                  />
                 </div>
 
                 <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
@@ -269,8 +275,8 @@ export default function App() {
 
                 <div style={{ padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-hint)' }}>Panels</div>
                 <div className="menu-action" onClick={(e) => { e.stopPropagation(); setCommandPaletteVisible(v => !v); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
-                   <span>⬛ Command Palette</span>
-                   <span style={{ color: 'var(--accent)' }}>{commandPaletteVisible ? '✓' : 'Alt+T'}</span>
+                  <span>⬛ Command Palette</span>
+                  <span style={{ color: 'var(--accent)' }}>{commandPaletteVisible ? '✓' : 'Alt+T'}</span>
                 </div>
                 {ALL_PANES.map(p => (
                   <div key={p.id} className="menu-action" onClick={(e) => { e.stopPropagation(); togglePane(p.id); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>

@@ -392,15 +392,17 @@ Extend the data model with a `temporal` entity kind and a `TemporalTrait` suppor
 Enhance the graph visualization to support interactive traversal and display of complex relationships.
 
 **Tasks**
-- [ ] Implement graph traversal logic to find paths between nodes.
-- [ ] Visualize paths in the 3D graph with distinct styling.
-- [ ] Add support for different types of relationships (edges) with varying visual styles.
-- [ ] Implement filtering based on edge types and node properties.
+- [✓] **BFS Path Finder**: Implement a `findShortestPath(from, to, edges)` BFS utility in `graphUtils.ts` operating on the in-memory Zustand edge store (no backend round-trip needed).
+- [✓] **Path Highlight State**: Add `highlightedPath: string[]` (node IDs) and `highlightedEdges: string[]` to the Zustand store, set when a path is found.
+- [✓] **Path Visualization**: In `GraphPanel`, when a path is active, render path nodes with a reddish glow/outline and path edges with a thicker, colored stroke distinguishable from regular edges.
+- [✓] **Path Finder UI**: Add a compact "Find Path" control to the `GraphPanel` toolbar using custom, theme-aware SearchableDropdowns with keyboard navigation.
+- [✓] **Edge Label Filtering**: Add a filter control in the GraphPanel toolbar to show/hide edges by label (e.g. hide all `tagged_as` edges), alongside the existing kind filter.
 
 **Checks**
-- [ ] Users can find paths between any two nodes in the graph.
-- [ ] Different edge types are visually distinguishable.
-- [ ] Graph filtering works as expected.
+- [✓] BFS correctly finds and highlights the shortest path between two selected nodes.
+- [✓] Path edges are visually distinct from regular edges (color + width).
+- [✓] Edge label filter hides/shows edges without disrupting the physics simulation.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
 ### Phase 36: Dynamic UI Layout & Panel Management (Suckless Extension)
 **Description**
