@@ -1,9 +1,10 @@
-import { memo, useMemo, useState, useCallback, useRef } from 'react';
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
 import { SpatialTrait, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
 import { ThreeViewer } from './ThreeViewer';
+import { PdfViewer } from './PdfViewer';
 import { RelateDialog } from './RelateDialog';
 import { CreateEntityDialog } from './CreateEntityDialog';
 
@@ -790,7 +791,21 @@ export const ViewportPanel = memo(function ViewportPanel() {
   const isImage = blobTrait && blobTrait.mime.startsWith('image/');
   const isPdf = blobTrait && blobTrait.mime === 'application/pdf';
   const isCad = blobTrait && (blobTrait.mime === 'model/gltf-binary' || blobTrait.mime === 'model/gltf+json');
+  const isText = blobTrait && (blobTrait.mime.startsWith('text/') || blobTrait.mime === 'application/json');
   const imageSrc = blobTrait?.localUrl ? convertFileSrc(blobTrait.localUrl) : null;
+
+  const [textContent, setTextContent] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeTab === 'preview' && isText && imageSrc) {
+      fetch(imageSrc)
+        .then(res => res.text())
+        .then(txt => setTextContent(txt))
+        .catch(err => setTextContent(`Failed to load text: ${err}`));
+    } else {
+      setTextContent(null);
+    }
+  }, [activeTab, isText, imageSrc]);
 
   const tabStyle = (tab: string) => ({
     background: 'none', border: 'none', padding: '10px 4px',
@@ -827,11 +842,15 @@ export const ViewportPanel = memo(function ViewportPanel() {
               <img src={imageSrc} alt={selected.label} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }} />
             </div>
           ) : isPdf && imageSrc ? (
-            <object data={imageSrc} type="application/pdf" width="100%" height="100%" style={{ borderRadius: 4, background: '#fff' }}>
-              <div className="panel-placeholder"><p>PDF viewer not natively supported.</p></div>
-            </object>
+            <PdfViewer url={imageSrc} />
           ) : isCad && imageSrc ? (
             <ThreeViewer url={imageSrc} />
+          ) : isText && textContent !== null ? (
+            <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg-primary)', borderRadius: 4 }}>
+              <pre style={{ margin: 0, fontSize: 13, fontFamily: 'var(--font-mono)', lineHeight: 1.5, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                {textContent}
+              </pre>
+            </div>
           ) : (
             <div className="panel-placeholder">
               <div className="placeholder-icon">📦</div>

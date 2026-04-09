@@ -26,6 +26,20 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+/* ── PDF Theme Awareness ── */
+/* Default to dark mode inversion with screen blending to perfectly match theme bg. */
+.theme-aware-pdf {
+  filter: invert(1) hue-rotate(180deg);
+  mix-blend-mode: screen;
+}
+
+[data-theme="catppuccin-latte"] .theme-aware-pdf,
+[data-theme="solarized-light"] .theme-aware-pdf,
+[data-theme="github-light"] .theme-aware-pdf {
+  filter: none;
+  mix-blend-mode: multiply;
+}
+
 /* ── Catppuccin Latte (light) ── */
 [data-theme="catppuccin-latte"] {
   color-scheme: light;

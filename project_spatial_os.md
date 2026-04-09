@@ -443,24 +443,26 @@ Expand the properties tab to allow comprehensive editing of spatial characterist
 - [✓] Implement a **Spatial Trait Editor** interface within the `ViewportPanel` Properties tab.
 - [✓] Allow users to directly input and modify geospatial data (e.g., coordinates, bounding boxes, or spatial references).
 - [✓] Handle frontend state aggregation and ensure traits persist to the backend.
+- [✓] Add support for bounding boxes and projections (WGS84 (EPSG:4326)).
 
 **Checks**
 - [✓] Spatial entities display an editable spatial/coordinate section in their properties.
 - [✓] Changes made to spatial traits successfully save to the database.
+- [✓] Projections are correctly displayed in the globe view.
 
 ### Phase 39: Enhanced Asset Rendering (PDF & Text)
 **Description**
 Refine the handling of document blob formats to improve legibility within the custom theme ecosystem and spatial integration inside the graph.
 
 **Tasks**
-- [ ] **Theme-Aware PDFs**: Implement CSS filter inversion or adjustments in the PDF viewer to ensure PDF documents adapt favorably to dark mode themes.
-- [ ] **PDF Miniatures**: Extend the Graph node rendering loop to paint miniature preview icons for PDF blobs, creating visual parity with image nodes.
-- [ ] **Text Visualization**: Add a native text rendering block/viewer tab inside the preview pane to easily visualize plain text file contents without requiring download.
+- [✓] **Theme-Aware PDFs**: Implement CSS filter inversion or adjustments in the PDF viewer to ensure PDF documents adapt favorably to dark mode themes.
+- [✓] **PDF Miniatures**: Extend the Graph node rendering loop to paint miniature preview icons for PDF blobs, creating visual parity with image nodes.
+- [✓] **Text Visualization**: Add a native text rendering block/viewer tab inside the preview pane to easily visualize plain text file contents without requiring download.
 
 **Checks**
-- [ ] PDF documents change colors correctly according to dark/light theme dynamics.
-- [ ] Nodes linked to PDFs render a recognizable miniature in the graph visualization.
-- [ ] `.txt` and `.md` files render their plain contents actively in the viewport.
+- [✓] PDF documents change colors correctly according to dark/light theme dynamics.
+- [✓] Nodes linked to PDFs render a recognizable miniature in the graph visualization.
+- [✓] `.txt` and `.md` files render their plain contents actively in the viewport.
 
 ### Phase 40: Advanced Text Edition & External Editors
 **Description**

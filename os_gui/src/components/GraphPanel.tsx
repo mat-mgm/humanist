@@ -2,6 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 // @ts-ignore
 import ForceGraph2D from 'force-graph';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+
 import { useOsStore } from '../store';
 import { RelateDialog } from './RelateDialog';
 import { KEYBINDS } from '../App';
@@ -18,7 +22,8 @@ interface GNode {
   vy?: number;
   fx?: number;
   fy?: number;
-  img?: HTMLImageElement;
+  img?: HTMLImageElement | HTMLCanvasElement;
+  isPdfLoading?: boolean;
   __imgW?: number;
   __imgH?: number;
   metadata?: any;
@@ -213,6 +218,7 @@ export const GraphPanel = memo(function GraphPanel() {
         const blobTrait = bTraits.find((b: any) => b.owner === fullId || b.owner === n.id);
         const sourcePath = blobTrait?.localUrl;
         const isImage = blobTrait && blobTrait.mime.startsWith('image/');
+        const isPdf = blobTrait && blobTrait.mime === 'application/pdf';
         const isToggled = toggledImageNodesRef.current.has(fullId);
 
         if (isImage && sourcePath && isToggled) {
@@ -225,11 +231,74 @@ export const GraphPanel = memo(function GraphPanel() {
               }
             };
           }
+        } else if (isPdf && sourcePath && isToggled) {
+          if (!n.img && !n.isPdfLoading) {
+            n.isPdfLoading = true;
+            pdfjsLib.getDocument(convertFileSrc(sourcePath)).promise.then(pdf => {
+              return pdf.getPage(1);
+            }).then(page => {
+              const viewport = page.getViewport({ scale: 0.5 });
+              const offCanvas = document.createElement('canvas');
+              offCanvas.width = viewport.width;
+              offCanvas.height = viewport.height;
+              const offCtx = offCanvas.getContext('2d');
+              if (!offCtx) return;
+              
+              // We want standard white PDF background since we'll draw it on the graph
+              offCtx.fillStyle = '#ffffff';
+              offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
 
-          if (n.img.complete && n.img.naturalWidth > 0) {
+              return page.render({ canvasContext: offCtx, viewport: viewport } as any).promise.then(() => {
+                // Pixel-level Theme Color Injection
+                const temp = document.createElement('div');
+                document.body.appendChild(temp);
+                
+                const getRgb = (varName: string) => {
+                  temp.style.color = `var(${varName})`;
+                  const colorString = getComputedStyle(temp).color;
+                  const match = colorString.match(/\d+/g);
+                  if (match && match.length >= 3) {
+                    return [parseInt(match[0], 10), parseInt(match[1], 10), parseInt(match[2], 10)];
+                  }
+                  return [255, 255, 255];
+                };
+
+                const bgTone = getRgb('--bg-primary');
+                const textTone = getRgb('--text-primary');
+                document.body.removeChild(temp);
+
+                const imageData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+                  if (a === 0) continue; 
+                  
+                  const lightness = (r + g + b) / (3 * 255);
+                  data[i] = textTone[0] * (1 - lightness) + bgTone[0] * lightness;
+                  data[i+1] = textTone[1] * (1 - lightness) + bgTone[1] * lightness;
+                  data[i+2] = textTone[2] * (1 - lightness) + bgTone[2] * lightness;
+                }
+                offCtx.putImageData(imageData, 0, 0);
+
+                n.img = offCanvas; // Cash into image property
+                if (readyRef.current && graphRef.current) {
+                  graphRef.current.nodeColor(graphRef.current.nodeColor());
+                }
+              });
+            }).catch(err => {
+              console.error("PDF thumbnail err", err);
+            });
+          }
+        }
+
+        if ((isImage || isPdf) && isToggled) {
+          const imgWidth = n.img?.width || n.img?.naturalWidth;
+          const imgHeight = n.img?.height || n.img?.naturalHeight;
+
+          if (n.img && imgWidth > 0) {
             isImageReady = true;
-            const maxDim = 80;
-            const aspect = n.img.naturalWidth / n.img.naturalHeight;
+            const maxDim = isPdf ? 100 : 80;
+            const aspect = imgWidth / imgHeight;
             let w = maxDim;
             let h = maxDim;
             if (aspect > 1) h = maxDim / aspect;

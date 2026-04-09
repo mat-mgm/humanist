@@ -20,6 +20,7 @@
     "force-graph": "^1.51.2",
     "globe.gl": "^2.45.1",
     "leaflet": "^1.9.4",
+    "pdfjs-dist": "^5.6.205",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-rnd": "^10.5.3",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/pdfjs-dist": "^2.10.377",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
