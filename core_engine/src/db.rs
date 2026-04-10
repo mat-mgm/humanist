@@ -68,9 +68,16 @@ impl SurrealDbAdapter {
 #[async_trait]
 impl GraphDatabase for SurrealDbAdapter {
     async fn save_entity(&self, entity: Entity) -> Result<(), String> {
-        let qs = format!("UPSERT {} CONTENT $entity;", entity.id);
+        let id_clean = entity.id.replace("entity:", "");
+        let qs = format!("UPSERT entity:{} CONTENT $entity;", id_clean);
+        
+        let mut value = serde_json::to_value(&entity).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
+        
         self.db.query(qs)
-            .bind(("entity", entity))
+            .bind(("entity", value))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
         Ok(())

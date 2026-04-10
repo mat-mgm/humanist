@@ -44,11 +44,13 @@ interface OsStore {
   nodePositions: Record<string, { x: number, y: number }>;
   showRegions: boolean;
   filterKinds: string[];
-  filterEdgeLabels: string[];    // Edge labels to HIDE (empty = show all)
-  highlightedPath: string[];     // Node IDs on active BFS path
+  filterEdgeLabels: string[];       // Edge labels to HIDE (empty = show all)   
+  highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
+  activePtySession: string;
 
   // Actions — read
+  setActivePtySession: (sessionId: string) => void;
   updateNodePosition: (id: string, x: number, y: number) => void;
   fetchEntities: () => Promise<void>;
   fetchSpatialTraits: () => Promise<void>;
@@ -74,6 +76,7 @@ interface OsStore {
   untagEntity: (targetId: string, tagLabel: string) => Promise<void>;
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
+  saveBlobContent: (storage_id: string, content: string) => Promise<void>;
   toggleRegions: () => void;
   toggleFilterKind: (kind: string) => void;
   setFilterKinds: (kinds: string[]) => void;
@@ -100,6 +103,9 @@ export const useOsStore = create<OsStore>((set, get) => ({
   filterEdgeLabels: [],
   highlightedPath: [],
   highlightedEdgeKeys: new Set<string>(),
+  activePtySession: 'main',
+
+  setActivePtySession: (sessionId) => set({ activePtySession: sessionId }),
 
   updateNodePosition: (id, x, y) => {
     set(state => ({
@@ -134,7 +140,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         try {
           const url = await invoke<string>('get_presigned_url', { storageId: t.storage_id });
           return { ...t, localUrl: url };
-        } catch(e) {
+        } catch (e) {
           return t;
         }
       }));
@@ -158,10 +164,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
       // Tauri v2: parameter names must be camelCase on the JS side
       // (Tauri auto-converts eventAt → event_at for the Rust handler)
       await invoke('save_temporal_trait', {
-        owner:      trait.owner,
-        eventAt:    trait.event_at    ?? null,
-        startsAt:   trait.starts_at  ?? null,
-        endsAt:     trait.ends_at    ?? null,
+        owner: trait.owner,
+        eventAt: trait.event_at ?? null,
+        startsAt: trait.starts_at ?? null,
+        endsAt: trait.ends_at ?? null,
         recurrence: trait.recurrence ?? null,
       });
       await get().fetchTemporalTraits();
@@ -219,7 +225,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   toggleSelection: (id) => {
     const { selectedIds } = get();
-    const next = selectedIds.includes(id) 
+    const next = selectedIds.includes(id)
       ? selectedIds.filter(x => x !== id)
       : [...selectedIds, id];
     get().setSelectedIds(next);
@@ -258,10 +264,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   deleteEntity: async (id) => {
     await invoke('delete_entity', { id });
-    set(state => ({ 
+    set(state => ({
       selectedEntityId: state.selectedEntityId === id ? null : state.selectedEntityId,
       selectedIds: state.selectedIds.filter(x => x !== id),
-      selectedEntityEdges: state.selectedEntityId === id ? [] : state.selectedEntityEdges 
+      selectedEntityEdges: state.selectedEntityId === id ? [] : state.selectedEntityEdges
     }));
     await get().fetchEntities();
   },
@@ -294,6 +300,11 @@ export const useOsStore = create<OsStore>((set, get) => ({
     await invoke('untag_entity', { targetId, tagLabel });
     await get().fetchEdges();
     if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
+  },
+
+  saveBlobContent: async (storage_id, content) => {
+    await invoke('save_blob_content', { storage_id, content });
+    await get().fetchBlobTraits();
   },
 
   addEdgeAction: async (fromId, toId, label) => {

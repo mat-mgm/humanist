@@ -94,6 +94,13 @@ enum EntitySub {
     Tag { term: String, tag: String },
     /// Remove a tag from an entity
     Untag { term: String, tag: String },
+    /// Edit an entity using $EDITOR
+    Edit {
+        term: String,
+        /// Format to use (yaml, json, markdown). Defaults to yaml.
+        #[arg(short, long, default_value = "yaml")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -381,6 +388,65 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 }
             } else {
                 println!("❌ Could not find entity: {}", term);
+            }
+        }
+        EntitySub::Edit { term, format } => {
+            use std::io::Write;
+            let id = if term.starts_with("entity:") { Some(term.clone()) } else { db.resolve_label(&term).await? };
+            let id = id.ok_or_else(|| format!("Could not find entity: {}", term))?;
+            
+            // Fetch
+            let entity = db.get_entity(&id).await?;
+            let spatial = db.get_spatial_traits().await?.into_iter().find(|t| t.owner == id);
+            let blob = db.get_blob_traits().await?.into_iter().find(|t| t.owner == id);
+            let temporal = db.get_temporal_traits().await?.into_iter().find(|t| t.owner == id);
+            
+            let composite = core_engine::formats::CompositeEntity {
+                entity, spatial, blob, temporal,
+            };
+            
+            // Serialize
+            let content = match format.as_str() {
+                "json" => core_engine::formats::to_json(&composite)?,
+                "markdown" => core_engine::formats::to_markdown(&composite)?,
+                _ => core_engine::formats::to_yaml(&composite)?,
+            };
+            
+            // Temp file
+            let ext = match format.as_str() {
+                "json" => "json",
+                "markdown" => "md",
+                _ => "yaml",
+            };
+            
+            let mut temp = tempfile::Builder::new().suffix(&format!(".{}", ext)).tempfile()?;
+            temp.write_all(content.as_bytes())?;
+            let path = temp.path().to_owned();
+            
+            // Launch editor
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+            let status = std::process::Command::new(&editor)
+                .arg(&path)
+                .status()?;
+                
+            if status.success() {
+                // Read back
+                let new_content = std::fs::read_to_string(&path)?;
+                let new_composite = match format.as_str() {
+                    "json" => core_engine::formats::from_json(&new_content)?,
+                    "markdown" => core_engine::formats::from_markdown(&new_content)?,
+                    _ => core_engine::formats::from_yaml(&new_content)?,
+                };
+                
+                // Persist
+                db.save_entity(new_composite.entity).await?;
+                if let Some(s) = new_composite.spatial { db.save_spatial_trait(s).await?; }
+                if let Some(b) = new_composite.blob { db.save_blob_trait(b).await?; }
+                if let Some(t) = new_composite.temporal { db.save_temporal_trait(t).await?; }
+                
+                println!("✅ Successfully updated {}", term);
+            } else {
+                println!("⚠️ Editor exited with error. No changes saved.");
             }
         }
     }

@@ -469,10 +469,14 @@ Refine the handling of document blob formats to improve legibility within the cu
 Provide advanced, programmer-friendly configuration capabilities by treating node properties as raw text formats and seamlessly embedding external editors like Neovim.
 
 **Tasks**
-- [ ] **Data Export Editing**: Provide a view/mechanism to edit raw node/entity properties as a structured text file (e.g., JSON or YAML format).
-- [ ] **Editor Integration**: Dynamically launch or embed target external editors (Vim/Neovim) inside the GUI (e.g., pipelined through the embedded xterm terminal or explicitly floated).
-- [ ] **Persistence Sync**: Capture the external editor's write/save signals and parse the text modifications back into the backend entity database context.
+- [✓] **Data Export Editing**: Users can now trigger a "Edit in Terminal" mode that exposes entity properties as a structured text file (JSON, YAML, or Markdown).
+- [✓] **Editor Integration**: Launch the system `$EDITOR` (e.g., Neovim) directly within the embedded terminal panel, bringing it to the front automatically.
+- [✓] **Persistence Sync**: Implemented a robust "write-then-read" sync mechanism that captures editor save signals and parses modifications back into the SurrealDB context with real-time UI refreshes.
+- [✓] **Shell Resilience**: Added auto-respawn logic for the main shell session and a manual "Refresh" button to recover from frozen terminal states.
 
 **Checks**
-- [ ] Users can trigger a "Text Edit" mode that exposes properties as raw JSON/YAML.
-- [ ] Neovim (or Vim) loads functionally within the app environment and saves correctly modify the dataset.
+- [✓] Neovim correctly loads entity data in the chosen format (YAML/Markdown).
+- [✓] Terminating the editor session triggers an automatic data sync and returns the user to the system prompt.
+- [✓] Modifications in the terminal text file are reflected immediately in the Graph and Properties panels.
+- [✓] Terminal auto-focuses and elevates to the foreground when an editing session starts.
+- [✓] "Open Externally" command opens files using the native system handler (via `opener`).

@@ -59,6 +59,12 @@ impl BlobStorageProvider for S3BlobAdapter {
     async fn delete(&self, _storage_id: &str) -> Result<(), String> {
         Ok(())
     }
+
+    async fn save_content(&self, storage_id: &str, content: Vec<u8>) -> Result<(), String> {
+        let _id = storage_id;
+        let _c = content;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -99,6 +105,15 @@ impl BlobStorageProvider for LocalBlobAdapter {
         if dest.exists() {
             std::fs::remove_file(dest).map_err(|e| e.to_string())?;
         }
+        Ok(())
+    }
+
+    async fn save_content(&self, storage_id: &str, content: Vec<u8>) -> Result<(), String> {
+        let dest = self.base_dir.join(storage_id);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(dest, content).map_err(|e| e.to_string())?;
         Ok(())
     }
 }

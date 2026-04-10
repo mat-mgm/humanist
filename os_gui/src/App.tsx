@@ -66,8 +66,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   // Theme & Window
-  const [theme, setTheme] = useState<Theme>('github-light');
-  const [themeSearch, setThemeSearch] = useState('GitHub Light');
+  const [theme, setTheme] = useState<Theme>('tokyo-night');
+  const [themeSearch, setThemeSearch] = useState('Tokyo Night');
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   // UI State: Layout & Panes
@@ -184,6 +184,21 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  // Auto-focus terminal on session switch
+  const activePtySession = useOsStore(s => s.activePtySession);
+  useEffect(() => {
+    if (activePtySession !== 'main' && activePtySession !== null) {
+      setTiledPaneIds(prev => {
+        // If it's not in tiled, and not in floating, add to tiled
+        if (!prev.includes('terminal') && !floatingPaneIds.includes('terminal')) {
+          return [...prev, 'terminal'];
+        }
+        return prev;
+      });
+      setTimeout(() => setFocusedId('terminal'), 50);
+    }
+  }, [activePtySession, floatingPaneIds]);
 
   return (
     <div className="app-root" id="app-root" onClick={() => setMenuOpen(null)}>

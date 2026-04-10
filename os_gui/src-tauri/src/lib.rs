@@ -11,6 +11,9 @@ use std::{collections::HashMap, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+mod pty_manager;
+use pty_manager::PtyHost;
+
 // ── Shared App State ─────────────────────────────────────────────────────────
 
 pub struct AppState {
@@ -18,6 +21,7 @@ pub struct AppState {
     pub bus: EventBus,
     pub blob: LocalBlobAdapter,
     pub query_tx: mpsc::Sender<(String, oneshot::Sender<Result<Vec<String>, String>>)>,
+    pub pty_sessions: std::sync::Mutex<HashMap<String, PtyHost>>,
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -157,6 +161,17 @@ async fn get_presigned_url(
 }
 
 #[tauri::command]
+async fn save_blob_content(
+    storage_id: String,
+    content: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    use core_engine::ports::BlobStorageProvider;
+    st.blob.save_content(&storage_id, content.into_bytes()).await
+}
+
+#[tauri::command]
 async fn query_context(
     context_id: String,
     state: State<'_, Mutex<AppState>>,
@@ -281,7 +296,7 @@ async fn tag_entity(
     // Resolve or create the tag entity
     let tag_id = match st.db.resolve_label(&tag_label).await? {
         Some(id) => id,
-        None => {
+        _ => {
             let ulid = Ulid::new().to_string();
             let id = format!("entity:{}", ulid);
             let mut meta = HashMap::new();
@@ -389,11 +404,230 @@ async fn get_temporal_traits(
     st.db.get_temporal_traits().await
 }
 
+#[tauri::command]
+async fn spawn_terminal(
+    session_id: String,
+    command: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let mut sessions = st.pty_sessions.lock().unwrap();
+    if sessions.contains_key(&session_id) {
+        return Ok(());
+    }
+
+    let pty = PtyHost::spawn(app.clone(), session_id.clone(), command)?;
+    let on_exit = pty.on_exit.clone();
+    sessions.insert(session_id.clone(), pty);
+    
+    // Monitor exit to cleanup the map
+    let app_c = app.clone();
+    let sid_c = session_id;
+    tokio::spawn(async move {
+        on_exit.notified().await;
+        let state = app_c.state::<Mutex<AppState>>();
+        let st = state.lock().await;
+        st.pty_sessions.lock().unwrap().remove(&sid_c);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn kill_terminal(
+    session_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let mut sessions = st.pty_sessions.lock().unwrap();
+    // Dropping the PtyHost kills its child process
+    sessions.remove(&session_id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn write_to_terminal(
+    session_id: String,
+    input: Vec<u8>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let sessions = st.pty_sessions.lock().unwrap();
+    if let Some(pty) = sessions.get(&session_id) {
+        pty.write(&input)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn resize_terminal(
+    session_id: String,
+    rows: u16,
+    cols: u16,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let sessions = st.pty_sessions.lock().unwrap();
+    if let Some(pty) = sessions.get(&session_id) {
+        pty.resize(rows, cols)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn edit_entity_in_terminal(
+    entity_id: String,
+    format: String, // "yaml", "json", "markdown"
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    use std::io::Write;
+    let st = state.lock().await;
+    
+    // 1. Fetch Composite
+    let entity = st.db.get_entity(&entity_id).await?;
+    let spatial = st.db.get_spatial_traits().await?.into_iter().find(|t| t.owner == entity_id);
+    let blob = st.db.get_blob_traits().await?.into_iter().find(|t| t.owner == entity_id);
+    let temporal = st.db.get_temporal_traits().await?.into_iter().find(|t| t.owner == entity_id);
+
+    let composite = core_engine::formats::CompositeEntity {
+        entity,
+        spatial,
+        blob,
+        temporal,
+    };
+
+    // 2. Serialize
+    let content = match format.as_str() {
+        "json" => core_engine::formats::to_json(&composite)?,
+        "markdown" => core_engine::formats::to_markdown(&composite)?,
+        _ => core_engine::formats::to_yaml(&composite)?,
+    };
+
+    // 3. Temp file
+    let ext = match format.as_str() {
+        "json" => "json",
+        "markdown" => "md",
+        _ => "yaml",
+    };
+    let mut temp = tempfile::Builder::new()
+        .prefix("spatial_edit_")
+        .suffix(&format!(".{}", ext))
+        .tempfile()
+        .map_err(|e| e.to_string())?;
+    
+    // Write contents to the tempfile before keeping it
+    temp.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    let (_, temp_path) = temp.keep().map_err(|e| e.to_string())?;
+
+    // 4. Editor Command
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let cmd = format!("{} {}", editor, temp_path.to_string_lossy());
+
+    // 5. Spawn PTY for this editor
+    let session_id = format!("edit-{}", entity_id);
+    let pty = PtyHost::spawn(app.clone(), session_id.clone(), Some(cmd))?;
+    let on_exit = pty.on_exit.clone();
+    
+    // Store it so we can write to it
+    st.pty_sessions.lock().unwrap().insert(session_id.clone(), pty);
+
+    // 6. Monitor Exit and Sync
+    let entity_id_c = entity_id.clone();
+    let format_c = format.clone();
+    let app_c = app.clone();
+    let session_id_c = session_id.clone();
+    
+    tokio::spawn(async move {
+        on_exit.notified().await;
+        
+        // 7. Read back from temp file
+        match std::fs::read_to_string(&temp_path) {
+            Ok(new_content) => {
+                let result: Result<core_engine::formats::CompositeEntity, String> = match format_c.as_str() {
+                    "json" => core_engine::formats::from_json(&new_content),
+                    "markdown" => core_engine::formats::from_markdown(&new_content),
+                    _ => core_engine::formats::from_yaml(&new_content),
+                };
+
+                if let Ok(updated) = result {
+                println!("[TERM_EDIT] Syncing back {} (format: {})", entity_id_c, format_c);
+                let state = app_c.state::<Mutex<AppState>>();
+                let st = state.lock().await;
+
+                // Ensure the ID matches (don't allow identity theft via editor)
+                let mut entity_to_save = updated.entity;
+                entity_to_save.id = entity_id_c.clone();
+
+                // Update database (UPSERT)
+                match st.db.save_entity(entity_to_save).await {
+                    Ok(_) => println!("[TERM_EDIT] Successfully saved entity {}", entity_id_c),
+                    Err(e) => {
+                        eprintln!("[TERM_EDIT] Failed to save entity: {}", e);
+                        let _ = app_c.emit("term-edit-error", format!("DB save failed: {}", e));
+                    }
+                }
+                
+                if let Some(s) = updated.spatial { 
+                    let mut s = s; s.owner = entity_id_c.clone();
+                    let _ = st.db.save_spatial_trait(s).await; 
+                }
+                if let Some(b) = updated.blob { 
+                    let mut b = b; b.owner = entity_id_c.clone();
+                    let _ = st.db.save_blob_trait(b).await; 
+                }
+                if let Some(t) = updated.temporal { 
+                    let mut t = t; t.owner = entity_id_c.clone();
+                    let _ = st.db.save_temporal_trait(t).await; 
+                }
+                
+                // Trigger bus event for real-time reactivity
+                let ulid = entity_id_c.replace("entity:", "");
+                st.bus.on_event("entity.updated".to_string(), 0, ulid.clone()).await;
+                
+                // Also trigger a refresh on the frontend for everything
+                let _ = app_c.emit("entity-updated", serde_json::json!({
+                    "topic": "entity.updated",
+                    "ulid": ulid,
+                    "id": entity_id_c
+                }));
+            } else if let Err(e) = result {
+                eprintln!("[TERM_EDIT] Failed to parse {} editor content: {}", format_c, e);
+                let _ = app_c.emit("term-edit-error", format!("Parse failed: {}", e));
+            }
+        }
+        Err(e) => {
+            eprintln!("[TERM_EDIT] Failed to read temp file {}: {}", temp_path.display(), e);
+            let _ = app_c.emit("term-edit-error", format!("Read failed: {}", e));
+        }
+        }
+        
+        // Delete temp file manually now
+        let _ = std::fs::remove_file(&temp_path);
+        
+        // 8. Cleanup session
+        let state = app_c.state::<Mutex<AppState>>();
+        let st = state.lock().await;
+        st.pty_sessions.lock().unwrap().remove(&session_id_c);
+        let _ = app_c.emit(&format!("{}-exit", session_id_c), ());
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_external_path(path: String) -> Result<(), String> {
+    println!("[OPENER] Attempting to open: {}", path);
+    opener::open(&path).map_err(|e: opener::OpenError| e.to_string())
+}
+
 // ── App Entry ─────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -451,19 +685,32 @@ pub fn run() {
                     });
                 });
 
-                app_handle.manage(Mutex::new(AppState { db, bus: bus_clone, blob, query_tx }));
+                app_handle.manage(Mutex::new(AppState { 
+                    db, 
+                    bus: bus_clone, 
+                    blob, 
+                    query_tx,
+                    pty_sessions: std::sync::Mutex::new(HashMap::new()),
+                }));
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_external_path,
             ingest_entity,
             list_entities,
             get_spatial_traits,
             save_spatial_trait,
             get_blob_traits,
             get_presigned_url,
+            save_blob_content,
             query_context,
+            spawn_terminal,
+            kill_terminal,
+            write_to_terminal,
+            resize_terminal,
+            edit_entity_in_terminal,
             add_edge,
             get_edges,
             run_prolog_query,

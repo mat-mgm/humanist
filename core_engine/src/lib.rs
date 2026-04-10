@@ -4,6 +4,7 @@ pub mod db;
 pub mod blob;
 pub mod bus;
 pub mod gc;
+pub mod formats;
 
 #[cfg(test)]
 mod tests {

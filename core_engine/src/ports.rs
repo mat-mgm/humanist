@@ -11,6 +11,7 @@ pub trait BlobStorageProvider {
     async fn upload(&self, local_path: &str, storage_id: &str) -> Result<(), String>;
     async fn presign_url(&self, storage_id: &str) -> Result<String, String>;
     async fn delete(&self, storage_id: &str) -> Result<(), String>;
+    async fn save_content(&self, storage_id: &str, content: Vec<u8>) -> Result<(), String>;
 }
 
 #[async_trait]

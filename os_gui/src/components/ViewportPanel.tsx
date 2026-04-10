@@ -1,5 +1,6 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { memo, useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+
 import { useOsStore } from '../store';
 import { SpatialTrait, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
@@ -7,6 +8,7 @@ import { ThreeViewer } from './ThreeViewer';
 import { PdfViewer } from './PdfViewer';
 import { RelateDialog } from './RelateDialog';
 import { CreateEntityDialog } from './CreateEntityDialog';
+
 
 // ── Atomic selectors ──────────────────────────────────────────────────────────
 const selectSelectedId = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
@@ -175,7 +177,21 @@ const SelectionPanel = memo(function SelectionPanel() {
 });
 
 // ── Entity Inspector ──────────────────────────────────────────────────────────
-const EntityInspector = memo(function EntityInspector() {
+const EntityInspector = memo(function EntityInspector({
+  editFormat,
+  setEditFormat,
+  onEditInTerminal,
+  onOpenExternal,
+  blobTrait,
+  isSpawning
+}: {
+  editFormat: 'yaml' | 'json' | 'markdown',
+  setEditFormat: (f: any) => void,
+  onEditInTerminal: () => void,
+  onOpenExternal: () => void,
+  blobTrait: any,
+  isSpawning: boolean
+}) {
   const selectedId = useOsStore(selectSelectedId);
   const entities = useOsStore(selectEntities);
   const edges = useOsStore(selectEdges);
@@ -479,7 +495,7 @@ const EntityInspector = memo(function EntityInspector() {
       {editTemporal == null ? (
         <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {!temporalTrait ? (
-             <span>No temporal data</span>
+            <span>No temporal data</span>
           ) : (
             <>
               {temporalTrait.event_at && <div className="prop-row"><span className="prop-key">At</span><span className="prop-val mono">{temporalTrait.event_at}</span></div>}
@@ -493,9 +509,9 @@ const EntityInspector = memo(function EntityInspector() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
           <label style={{ display: 'block' }}>
             <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>EVENT AT</span>
-            <input 
-              type="text" 
-              value={editTemporal.event_at ?? ''} 
+            <input
+              type="text"
+              value={editTemporal.event_at ?? ''}
               placeholder="e.g. 1789-07-14 or -3300-01-01"
               onChange={e => setEditTemporal(prev => ({ ...prev!, event_at: e.target.value || null }))}
               style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
@@ -504,9 +520,9 @@ const EntityInspector = memo(function EntityInspector() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>STARTS AT</span>
-              <input 
-                type="text" 
-                value={editTemporal.starts_at ?? ''} 
+              <input
+                type="text"
+                value={editTemporal.starts_at ?? ''}
                 placeholder="Start date"
                 onChange={e => setEditTemporal(prev => ({ ...prev!, starts_at: e.target.value || null }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
@@ -514,9 +530,9 @@ const EntityInspector = memo(function EntityInspector() {
             </label>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>ENDS AT</span>
-              <input 
-                type="text" 
-                value={editTemporal.ends_at ?? ''} 
+              <input
+                type="text"
+                value={editTemporal.ends_at ?? ''}
                 placeholder="End date"
                 onChange={e => setEditTemporal(prev => ({ ...prev!, ends_at: e.target.value || null }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
@@ -525,9 +541,9 @@ const EntityInspector = memo(function EntityInspector() {
           </div>
           <label style={{ display: 'block' }}>
             <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>RECURRENCE (RRULE)</span>
-            <input 
-              type="text" 
-              value={editTemporal.recurrence ?? ''} 
+            <input
+              type="text"
+              value={editTemporal.recurrence ?? ''}
               onChange={e => setEditTemporal(prev => ({ ...prev!, recurrence: e.target.value || null }))}
               placeholder="e.g. FREQ=YEARLY"
               style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
@@ -552,7 +568,7 @@ const EntityInspector = memo(function EntityInspector() {
       {editSpatial == null ? (
         <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {!spatialTrait ? (
-             <span>No spatial data</span>
+            <span>No spatial data</span>
           ) : (
             <>
               <div className="prop-row"><span className="prop-key">Lat</span><span className="prop-val mono">{spatialTrait.lat}</span></div>
@@ -573,36 +589,36 @@ const EntityInspector = memo(function EntityInspector() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>LATITUDE</span>
-              <input 
+              <input
                 type="number" step="any"
-                value={editSpatial.lat} 
+                value={editSpatial.lat}
                 onChange={e => setEditSpatial(prev => ({ ...prev!, lat: parseFloat(e.target.value) || 0 }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
               />
             </label>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>LONGITUDE</span>
-              <input 
+              <input
                 type="number" step="any"
-                value={editSpatial.lng} 
+                value={editSpatial.lng}
                 onChange={e => setEditSpatial(prev => ({ ...prev!, lng: parseFloat(e.target.value) || 0 }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
               />
             </label>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>ALTITUDE</span>
-              <input 
+              <input
                 type="number" step="any"
-                value={editSpatial.alt} 
+                value={editSpatial.alt}
                 onChange={e => setEditSpatial(prev => ({ ...prev!, alt: parseFloat(e.target.value) || 0 }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
               />
             </label>
             <label style={{ display: 'block' }}>
               <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>HEADING</span>
-              <input 
+              <input
                 type="number" step="any"
-                value={editSpatial.heading} 
+                value={editSpatial.heading}
                 onChange={e => setEditSpatial(prev => ({ ...prev!, heading: parseFloat(e.target.value) || 0 }))}
                 style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
               />
@@ -610,9 +626,9 @@ const EntityInspector = memo(function EntityInspector() {
           </div>
           <label style={{ display: 'block' }}>
             <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>BOUNDING BOX [W, S, E, N] (Optional)</span>
-            <input 
-              type="text" 
-              value={editSpatial.bbox ? editSpatial.bbox.join(', ') : ''} 
+            <input
+              type="text"
+              value={editSpatial.bbox ? editSpatial.bbox.join(', ') : ''}
               onChange={e => {
                 const str = e.target.value.trim();
                 if (!str) {
@@ -632,9 +648,9 @@ const EntityInspector = memo(function EntityInspector() {
           </label>
           <label style={{ display: 'block' }}>
             <span style={{ fontSize: 10, color: 'var(--text-hint)', display: 'block', marginBottom: 2 }}>PROJECTION</span>
-            <input 
-              type="text" 
-              value={editSpatial.projection} 
+            <input
+              type="text"
+              value={editSpatial.projection}
               onChange={e => setEditSpatial(prev => ({ ...prev!, projection: e.target.value }))}
               placeholder="e.g. EPSG:4326"
               style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
@@ -693,6 +709,53 @@ const EntityInspector = memo(function EntityInspector() {
           onClose={() => setShowRelate(false)}
         />
       )}
+
+      {/* ── Advanced Terminal Editor ──────────────────────────────────── */}
+      <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Terminal Editor</span>
+          <span style={{ fontSize: 10, color: 'var(--text-hint)', opacity: 0.7 }}>Uses local $EDITOR</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select
+            value={editFormat}
+            onChange={(e) => setEditFormat(e.target.value as any)}
+            style={{
+              flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              borderRadius: 5, padding: '4px 8px', fontSize: 11, color: 'var(--text-primary)',
+              outline: 'none'
+            }}
+          >
+            <option value="yaml">YAML</option>
+            <option value="json">JSON</option>
+            <option value="markdown">Markdown</option>
+          </select>
+          <button
+            onClick={() => onEditInTerminal()}
+            disabled={isSpawning}
+            style={{
+              background: isSpawning ? 'var(--text-hint)' : 'var(--accent)', border: 'none', borderRadius: 5,
+              padding: '4px 12px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 600,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)', opacity: isSpawning ? 0.7 : 1
+            }}
+          >
+            {isSpawning ? 'Spawning...' : 'Edit in Terminal'}
+          </button>
+          
+          {blobTrait && (
+            <button
+              onClick={() => onOpenExternal()}
+              style={{
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5,
+                padding: '4px 12px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 11, fontWeight: 600,
+              }}
+              title="Open blob in default system editor"
+            >
+              Open Externally
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 });
@@ -769,6 +832,12 @@ export const ViewportPanel = memo(function ViewportPanel() {
   const [quickTagLabel, setQuickTagLabel] = useState('');
   const [quickTagInput, setQuickTagInput] = useState('');
   const [showRelateFor, setShowRelateFor] = useState<{ id: string; label: string } | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedContent, setEditedContent] = useState<string>('');
+  const [editFormat, setEditFormat] = useState<'yaml' | 'json' | 'markdown'>('yaml');
+  const saveBlobContent = useOsStore(s => s.saveBlobContent);
+  const [isSpawning, setIsSpawning] = useState(false);
 
   const selectedEntityId = useOsStore(selectSelectedId);
   const selectedIds = useOsStore(selectSelectedIds);
@@ -794,18 +863,64 @@ export const ViewportPanel = memo(function ViewportPanel() {
   const isText = blobTrait && (blobTrait.mime.startsWith('text/') || blobTrait.mime === 'application/json');
   const imageSrc = blobTrait?.localUrl ? convertFileSrc(blobTrait.localUrl) : null;
 
-  const [textContent, setTextContent] = useState<string | null>(null);
+  const onOpenExternal = async () => {
+    if (!blobTrait?.localUrl) {
+       console.warn('Open External failed: No localUrl available for blob');
+       return;
+    }
+    console.debug('Opening external path:', blobTrait.localUrl);
+    try {
+      await invoke('open_external_path', { path: blobTrait.localUrl });
+    } catch (err) {
+      console.error('Failed to open external editor:', err);
+      alert('External editor failed: ' + err);
+    }
+  };
+
+  const onEditInTerminal = async () => {
+    if (!selected || isSpawning) return;
+    setIsSpawning(true);
+    const setActivePtySession = useOsStore.getState().setActivePtySession;
+    const sessionId = `edit-${selected.id}`;
+    
+    console.debug('Launching terminal editor for session:', sessionId);
+    try {
+      setActivePtySession(sessionId);
+      await invoke('edit_entity_in_terminal', { entityId: selected.id, format: editFormat });
+    } catch (err) {
+      console.error('Failed to open terminal editor:', err);
+      alert('Terminal editor failed to start: ' + err);
+      setActivePtySession('main');
+    } finally {
+      setIsSpawning(false);
+    }
+  };
 
   useEffect(() => {
     if (activeTab === 'preview' && isText && imageSrc) {
       fetch(imageSrc)
         .then(res => res.text())
-        .then(txt => setTextContent(txt))
+        .then(txt => {
+          setTextContent(txt);
+          setEditedContent(txt);
+        })
         .catch(err => setTextContent(`Failed to load text: ${err}`));
     } else {
       setTextContent(null);
+      setIsEditing(false);
     }
   }, [activeTab, isText, imageSrc]);
+
+  const onSave = async () => {
+    if (!blobTrait) return;
+    try {
+      await saveBlobContent(blobTrait.storage_id, editedContent);
+      setTextContent(editedContent);
+      setIsEditing(false);
+    } catch (e) {
+      console.error('Failed to save blob:', e);
+    }
+  };
 
   const tabStyle = (tab: string) => ({
     background: 'none', border: 'none', padding: '10px 4px',
@@ -827,7 +942,16 @@ export const ViewportPanel = memo(function ViewportPanel() {
 
         {/* ── Properties Tab ───────────────────────────────────────────── */}
         {activeTab === 'properties' && (
-          selectedIds.length > 1 ? <SelectionPanel /> : <EntityInspector />
+          selectedIds.length > 1
+            ? <SelectionPanel />
+            : <EntityInspector 
+                editFormat={editFormat} 
+                setEditFormat={setEditFormat} 
+                onEditInTerminal={onEditInTerminal}
+                onOpenExternal={onOpenExternal}
+                blobTrait={blobTrait}
+                isSpawning={isSpawning}
+              />
         )}
 
         {/* ── Preview Tab ──────────────────────────────────────────────── */}
@@ -837,27 +961,124 @@ export const ViewportPanel = memo(function ViewportPanel() {
               <div className="placeholder-icon">👁️</div>
               <p>No preview available</p>
             </div>
-          ) : isImage && imageSrc ? (
-            <div style={{ padding: 16, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-              <img src={imageSrc} alt={selected.label} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4 }} />
-            </div>
-          ) : isPdf && imageSrc ? (
-            <PdfViewer url={imageSrc} />
-          ) : isCad && imageSrc ? (
-            <ThreeViewer url={imageSrc} />
-          ) : isText && textContent !== null ? (
-            <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg-primary)', borderRadius: 4 }}>
-              <pre style={{ margin: 0, fontSize: 13, fontFamily: 'var(--font-mono)', lineHeight: 1.5, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
-                {textContent}
-              </pre>
-            </div>
           ) : (
-            <div className="panel-placeholder">
-              <div className="placeholder-icon">📦</div>
-              <p>Unknown blob structure.</p>
-              <pre style={{ textAlign: 'left', fontSize: 10, background: '#111', padding: 8, borderRadius: 4, width: '90%', overflow: 'auto', color: '#ffb86c' }}>
-                {blobTrait ? JSON.stringify({ ...blobTrait, isImage, isPdf, isCad }, null, 2) : "No BlobTrait attached to this Entity!"}
-              </pre>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+              {/* Preview Action Bar */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingBottom: 4 }}>
+                {blobTrait && (
+                  <button
+                    onClick={onOpenExternal}
+                    style={{
+                      fontSize: 10, padding: '4px 8px', borderRadius: 4,
+                      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                      color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600
+                    }}
+                    title="Open in default system editor"
+                  >
+                    Open Externally
+                  </button>
+                )}
+                {selected && (
+                  <button
+                    onClick={onEditInTerminal}
+                    disabled={isSpawning}
+                    style={{
+                      fontSize: 10, padding: '4px 8px', borderRadius: 4,
+                      background: isSpawning ? 'var(--text-hint)' : 'var(--bg-secondary)', 
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600,
+                      opacity: isSpawning ? 0.7 : 1
+                    }}
+                    title="Open in terminal $EDITOR"
+                  >
+                    {isSpawning ? 'Spawning...' : 'Edit in Term'}
+                  </button>
+                )}
+                {isText && !isEditing && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    style={{
+                      fontSize: 10, padding: '4px 8px', borderRadius: 4,
+                      background: 'var(--accent)', border: 'none',
+                      color: '#fff', cursor: 'pointer', fontWeight: 600
+                    }}
+                  >
+                    Edit Content
+                  </button>
+                )}
+                {isText && isEditing && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {editedContent !== textContent && (
+                      <span style={{ fontSize: 9, color: 'var(--accent)', alignSelf: 'center', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Unsaved Edits
+                      </span>
+                    )}
+                    <button
+                      onClick={onSave}
+                      style={{
+                        fontSize: 10, padding: '4px 8px', borderRadius: 4,
+                        background: 'var(--accent)', border: 'none',
+                        color: '#fff', cursor: 'pointer', fontWeight: 600
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => { setIsEditing(false); setEditedContent(textContent || ''); }}
+                      style={{
+                        fontSize: 10, padding: '4px 8px', borderRadius: 4,
+                        background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                        color: 'var(--text-hint)', cursor: 'pointer', fontWeight: 600
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Main Preview Area */}
+              <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                {isImage && imageSrc ? (
+                  <div style={{ padding: 16, display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                    <img src={imageSrc} alt={selected.label} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }} />
+                  </div>
+                ) : isPdf && imageSrc ? (
+                  <PdfViewer url={imageSrc} />
+                ) : isCad && imageSrc ? (
+                  <ThreeViewer url={imageSrc} />
+                ) : isText && textContent !== null ? (
+                  isEditing ? (
+                    <textarea
+                      value={editedContent}
+                      onChange={(e) => setEditedContent(e.target.value)}
+                      spellCheck={false}
+                      style={{
+                        width: '100%', height: '100%', padding: '12px',
+                        background: 'var(--bg-primary)', color: 'var(--text-primary)',
+                        border: '1px solid var(--border)', borderRadius: 4,
+                        fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 1.5,
+                        resize: 'none', outline: 'none',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.2)'
+                      }}
+                    />
+                  ) : (
+                    <div style={{ padding: 12, minHeight: '100%', background: 'var(--bg-primary)', borderRadius: 4, border: '1px solid var(--border)' }}>
+                      <pre style={{ margin: 0, fontSize: 13, fontFamily: 'var(--font-mono)', lineHeight: 1.5, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                        {textContent}
+                      </pre>
+                    </div>
+                  )
+                ) : (
+                  <div className="panel-placeholder">
+                    <div className="placeholder-icon">📦</div>
+                    <p>Unknown blob structure.</p>
+                    <pre style={{ textAlign: 'left', fontSize: 10, background: '#111', padding: 8, borderRadius: 4, width: '90%', overflow: 'auto', color: '#ffb86c' }}>
+                      {blobTrait ? JSON.stringify({ ...blobTrait, isImage, isPdf, isCad }, null, 2) : "No BlobTrait attached to this Entity!"}
+                    </pre>
+                  </div>
+                )}
+              </div>
             </div>
           )
         )}

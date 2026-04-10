@@ -14,7 +14,6 @@ pub enum EntityKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
-    #[serde(skip_serializing)]
     pub id: String,
     pub kind: EntityKind,
     pub label: String,
