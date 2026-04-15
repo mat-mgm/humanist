@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { Entity, SpatialTrait, BlobTrait, TemporalTrait } from './models';
+import { Entity, EntitySnapshot, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -38,6 +38,10 @@ interface OsStore {
   contextEntities: Entity[];
   selectedEntityEdges: GraphEdge[];
 
+  // Phase 44: entity history
+  entityHistory: EntitySnapshot[];
+  traitHistory: TraitSnapshot[];
+
   // UI flags
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
@@ -48,6 +52,11 @@ interface OsStore {
   highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
   activePtySession: string;
+
+  // Phase 44: history actions
+  fetchEntityHistory: (entityId: string) => Promise<void>;
+  fetchTraitHistory: (entityId: string) => Promise<void>;
+  getEntityAsOf: (entityId: string, timestamp: string) => Promise<EntitySnapshot | null>;
 
   // Actions — read
   setActivePtySession: (sessionId: string) => void;
@@ -91,6 +100,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
   blobTraits: [],
   temporalTraits: [],
   edges: [],
+  entityHistory: [],
+  traitHistory: [],
   selectedEntityId: null,
   selectedIds: [],
   contextEntities: [],
@@ -353,6 +364,37 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   clearHighlightedPath: () => {
     set({ highlightedPath: [], highlightedEdgeKeys: new Set() });
+  },
+
+  // ── Phase 44: History ────────────────────────────────────────────────────
+
+  fetchEntityHistory: async (entityId) => {
+    try {
+      const snaps = await invoke<EntitySnapshot[]>('get_entity_history', { entityId });
+      set({ entityHistory: snaps });
+    } catch (e) {
+      console.error('fetchEntityHistory error:', e);
+      set({ entityHistory: [] });
+    }
+  },
+
+  fetchTraitHistory: async (entityId) => {
+    try {
+      const snaps = await invoke<TraitSnapshot[]>('get_trait_history', { entityId });
+      set({ traitHistory: snaps });
+    } catch (e) {
+      console.error('fetchTraitHistory error:', e);
+      set({ traitHistory: [] });
+    }
+  },
+
+  getEntityAsOf: async (entityId, timestamp) => {
+    try {
+      return await invoke<EntitySnapshot | null>('get_entity_as_of', { entityId, timestamp });
+    } catch (e) {
+      console.error('getEntityAsOf error:', e);
+      return null;
+    }
   },
 
   startListening: async () => {

@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use std::sync::Arc;
 use std::path::PathBuf;
 
-use crate::models::{Entity, SpatialTrait, TemporalTrait};
+use crate::models::{Entity, EntitySnapshot, SpatialTrait, TemporalTrait, TraitSnapshot};
 use crate::ports::GraphDatabase;
 
 #[derive(Clone)]
@@ -57,6 +57,12 @@ impl SurrealDbAdapter {
             DEFINE FIELD starts_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD ends_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD recurrence ON temporal_trait TYPE option<string>;
+
+            DEFINE TABLE IF NOT EXISTS entity_history SCHEMALESS;
+            DEFINE INDEX idx_entity_history_entity_id ON entity_history FIELDS entity_id;
+
+            DEFINE TABLE IF NOT EXISTS trait_history SCHEMALESS;
+            DEFINE INDEX idx_trait_history_entity_id ON trait_history FIELDS entity_id;
         "#;
         
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
@@ -77,9 +83,20 @@ impl GraphDatabase for SurrealDbAdapter {
         }
         
         self.db.query(qs)
-            .bind(("entity", value))
+            .bind(("entity", value.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
+
+        // Shadow write: append a full snapshot to entity_history.
+        let history_qs = "CREATE entity_history CONTENT $snap;";
+        let mut snap = value;
+        if let Some(obj) = snap.as_object_mut() {
+            obj.insert("entity_id".to_string(), serde_json::Value::String(entity.id.clone()));
+            obj.insert("changed_at".to_string(), serde_json::Value::String(
+                chrono::Utc::now().to_rfc3339()
+            ));
+        }
+        let _ = self.db.query(history_qs).bind(("snap", snap)).await;
         Ok(())
     }
 
@@ -113,9 +130,18 @@ impl GraphDatabase for SurrealDbAdapter {
             obj.remove("id");
         }
         self.db.query(qs)
-            .bind(("trait_", value))
+            .bind(("trait_", value.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
+
+        // Shadow write: append to unified trait_history.
+        let snap = serde_json::json!({
+            "entity_id": trait_.owner,
+            "trait_type": "spatial",
+            "data": value,
+            "changed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = self.db.query("CREATE trait_history CONTENT $snap;").bind(("snap", snap)).await;
         Ok(())
     }
 
@@ -158,9 +184,18 @@ impl GraphDatabase for SurrealDbAdapter {
             obj.retain(|_, v| !v.is_null());
         }
         self.db.query(qs)
-            .bind(("trait_", value))
+            .bind(("trait_", value.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
+
+        // Shadow write: append to unified trait_history.
+        let snap = serde_json::json!({
+            "entity_id": trait_.owner,
+            "trait_type": "temporal",
+            "data": value,
+            "changed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = self.db.query("CREATE trait_history CONTENT $snap;").bind(("snap", snap)).await;
         Ok(())
     }
 
@@ -268,6 +303,36 @@ impl GraphDatabase for SurrealDbAdapter {
             .await.map_err(|e| e.to_string())?;
         let entities: Vec<Entity> = response.take(0).map_err(|e| e.to_string())?;
         Ok(entities)
+    }
+
+    // Phase 44: Lightweight Shadow History
+
+    async fn get_entity_history(&self, entity_id: &str) -> Result<Vec<EntitySnapshot>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM entity_history WHERE entity_id = $eid ORDER BY changed_at DESC;")
+            .bind(("eid", entity_id.to_string()))
+            .await.map_err(|e| e.to_string())?;
+        let snaps: Vec<EntitySnapshot> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(snaps)
+    }
+
+    async fn get_entity_as_of(&self, entity_id: &str, timestamp: &str) -> Result<Option<EntitySnapshot>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM entity_history WHERE entity_id = $eid AND changed_at <= $ts ORDER BY changed_at DESC LIMIT 1;")
+            .bind(("eid", entity_id.to_string()))
+            .bind(("ts", timestamp.to_string()))
+            .await.map_err(|e| e.to_string())?;
+        let mut snaps: Vec<EntitySnapshot> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(snaps.pop())
+    }
+
+    async fn get_trait_history(&self, entity_id: &str) -> Result<Vec<TraitSnapshot>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM trait_history WHERE entity_id = $eid ORDER BY changed_at DESC;")
+            .bind(("eid", entity_id.to_string()))
+            .await.map_err(|e| e.to_string())?;
+        let snaps: Vec<TraitSnapshot> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(snaps)
     }
 }
 

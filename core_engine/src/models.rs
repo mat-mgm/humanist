@@ -85,3 +85,26 @@ pub struct ContextProfile {
 fn default_max_depth() -> i64 {
     2
 }
+
+/// A timestamped full-copy snapshot of an entity, written on every save.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntitySnapshot {
+    pub id: String,
+    pub entity_id: String,
+    pub kind: EntityKind,
+    pub label: String,
+    pub metadata: HashMap<String, serde_json::Value>,
+    pub deleted_at: Option<String>,
+    pub changed_at: String,
+}
+
+/// A timestamped full-copy snapshot of any trait, written on every save.
+/// The `trait_type` discriminator is `"spatial"` or `"temporal"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraitSnapshot {
+    pub id: String,
+    pub entity_id: String,
+    pub trait_type: String,
+    pub data: serde_json::Value,
+    pub changed_at: String,
+}

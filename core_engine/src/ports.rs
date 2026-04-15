@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::models::{SpatialTrait, TemporalTrait};
+use crate::models::{SpatialTrait, TemporalTrait, EntitySnapshot, TraitSnapshot};
 
 #[async_trait]
 pub trait StateObserver {
@@ -44,4 +44,9 @@ pub trait GraphDatabase {
     async fn delete_edge(&self, from_id: &str, to_id: &str, label: Option<&str>) -> Result<(), String>;
     async fn execute_raw_sql(&self, query: &str) -> Result<Vec<String>, String>;
     async fn list_entities(&self) -> Result<Vec<crate::models::Entity>, String>;
+
+    // Phase 44: Lightweight Shadow History
+    async fn get_entity_history(&self, entity_id: &str) -> Result<Vec<EntitySnapshot>, String>;
+    async fn get_entity_as_of(&self, entity_id: &str, timestamp: &str) -> Result<Option<EntitySnapshot>, String>;
+    async fn get_trait_history(&self, entity_id: &str) -> Result<Vec<TraitSnapshot>, String>;
 }

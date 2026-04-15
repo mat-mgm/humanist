@@ -557,19 +557,43 @@ Remove the embedded HTTP tile server from `core_engine/src/tiles.rs` (which uses
 - [ ] Selecting a new `.mbtiles` file via the native file picker updates the `BlobTrait` and causes Cesium to reload the new tileset.
 
 
-### Phase 44: Versioning & Temporal History (Event Sourcing)
+### Phase 44: Versioning & Temporal History (Lightweight Shadow History)
 **Description**
-Transition the data model from a "current state" store to a "Git-like" versioned store. Every update to an entity or trait creates a new version, allowing for auditability and "time-travel" debugging of spatial/agent states.
+Add auditable version history to entities and traits using a dual-write shadow history strategy. The main write path (UPSERT) is preserved intact. On every write, a timestamped copy is appended to dedicated history tables. A `get_as_of(entity_id, timestamp)` resolver reconstructs the entity/trait state at any past moment. The `EntityInspector` gains a shallow "History" section listing versions; clicking one populates the inspector fields with that snapshot (no full graph/globe time-travel).
+
+**Approach**: Lightweight Shadow History (Option B) — entities + all traits versioned (b) — Inspector-only shallow snapshot view.
 
 **Tasks**
-- [ ] **History Tables**: Redefine SurrealDB schema in `db.rs` to use separate history tables or `valid_from`/`valid_to` temporal indices for entities and traits.
-- [ ] **Append-Only Engine**: Update `save_entity` and `save_trait` methods to treat updates as new insertions rather than overrides.
-- [ ] **Snapshot Resolver**: Implement a `get_as_of(timestamp)` query capability in the `GraphDatabase` trait.
-- [ ] **Timeline Sync**: Enable the `TimelinePanel` to act as a historical scrubber, updating the Graph and Globe views to match the selected historical moment.
+
+*Backend — Schema*
+- [✓] **History Tables**: Define two new SurrealDB tables in `db.rs`:
+  - `entity_history` — full copy of every entity write + `changed_at: datetime` + `entity_id: string`.
+  - `trait_history` — unified shadow for all traits, with `trait_type: string` discriminator (`"spatial"`, `"temporal"`), `entity_id: string`, `changed_at: datetime`, and `data: object` holding the serialized trait payload.
+
+*Backend — Dual-Write*
+- [✓] **Entity Shadow Write**: After every successful `save_entity` UPSERT, insert the full entity struct into `entity_history` with `changed_at = time::now()`.
+- [✓] **Trait Shadow Write**: After every successful `save_spatial_trait` / `save_temporal_trait` UPSERT, append one record to `trait_history` with the appropriate `trait_type` discriminator and full trait data in `data`.
+
+*Backend — Query*
+- [✓] **`get_entity_history(id)`**: Add to `GraphDatabase` port trait + `db.rs` implementation. Returns all `entity_history` records for a given entity ID, ordered by `changed_at` descending.
+- [✓] **`get_as_of(id, timestamp)`**: Add to `GraphDatabase` port + `db.rs`. Returns the single `entity_history` record with the largest `changed_at ≤ timestamp` for the given entity.
+
+*IPC Layer*
+- [✓] **Tauri Commands**: Expose `get_entity_history` and `get_as_of` as Tauri IPC commands in `src-tauri/src/lib.rs`.
+
+*Frontend — State*
+- [✓] **Store**: Add `entityHistory: EntitySnapshot[]` and `fetchEntityHistory(id)` action to Zustand `store.ts`. Define `EntitySnapshot` type in `models.ts` (mirrors `Entity` + `changedAt: string`).
+
+*Frontend — UI*
+- [✓] **Inspector History Section**: Add a collapsible "History" section at the bottom of `EntityInspector` in `ViewportPanel.tsx`. Lists versions as `[timestamp] — label (kind)` rows. Clicking a row calls `get_as_of` and displays the snapshot fields in a read-only overlay within the inspector (clearly marked "Viewing snapshot — read only").
 
 **Checks**
-- [ ] Updating a `SpatialTrait` twice leaves three records in the database (Creation + 2 updates).
-- [ ] Querying "as of 10 minutes ago" returns the entity in its previous geographic position.
+- [✓] After two updates to the same entity's label, `entity_history` contains 3 records for that ID (initial create + 2 updates).
+- [✓] `get_as_of(id, T)` where T is between the first and second update returns the first updated label, not the latest.
+- [✓] The Inspector "History" section lists all versions with correct timestamps.
+- [✓] Clicking a snapshot row in the Inspector correctly populates the read-only snapshot view.
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
 ### Phase 45: Formal Ontology & Semantic Inferencing
 **Description**

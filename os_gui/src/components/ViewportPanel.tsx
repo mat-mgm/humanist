@@ -2,7 +2,7 @@ import { memo, useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
 import { useOsStore } from '../store';
-import { SpatialTrait, TemporalTrait } from '../models';
+import { EntitySnapshot, SpatialTrait, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
 import { ThreeViewer } from './ThreeViewer';
 import { PdfViewer } from './PdfViewer';
@@ -198,7 +198,8 @@ const EntityInspector = memo(function EntityInspector({
   const spatialTraits = useOsStore(selectSpatialTraits);
   const temporalTraits = useOsStore(selectTemporalTraits);
   const selectEntity = useOsStore(selectSelectEntity);
-  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait, saveSpatialTrait } = useOsStore();
+  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait, saveSpatialTrait, fetchEntityHistory, getEntityAsOf } = useOsStore();
+  const entityHistory = useOsStore(s => s.entityHistory);
 
   const selected = useMemo(
     () => entities.find(e => e.id === selectedId) ?? null,
@@ -347,6 +348,30 @@ const EntityInspector = memo(function EntityInspector({
       setSpatialError(String(e));
     }
   }, [editSpatial, saveSpatialTrait]);
+
+  // History section state
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState<EntitySnapshot | null>(null);
+
+  const openHistory = useCallback(async () => {
+    if (!selected) return;
+    await fetchEntityHistory(selected.id);
+    setHistoryOpen(true);
+  }, [selected, fetchEntityHistory]);
+
+  const loadSnapshot = useCallback(async (changedAt: string) => {
+    if (!selected) return;
+    const snap = await getEntityAsOf(selected.id, changedAt);
+    setSnapshot(snap);
+  }, [selected, getEntityAsOf]);
+
+  const clearSnapshot = useCallback(() => setSnapshot(null), []);
+
+  // Clear history state when selected entity changes
+  useEffect(() => {
+    setHistoryOpen(false);
+    setSnapshot(null);
+  }, [selectedId]);
 
   if (!selected) {
     return (
@@ -709,6 +734,102 @@ const EntityInspector = memo(function EntityInspector({
           onClose={() => setShowRelate(false)}
         />
       )}
+
+      {/* ── History ───────────────────────────────────────────────────── */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+          onClick={historyOpen ? () => setHistoryOpen(false) : openHistory}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>History</span>
+          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{historyOpen ? '▲' : '▼'}</span>
+        </div>
+
+        {historyOpen && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {entityHistory.length === 0
+              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No history records</span>
+              : entityHistory.map((snap) => (
+                <div
+                  key={snap.id}
+                  onClick={() => loadSnapshot(snap.changed_at)}
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    background: snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent',
+                    border: '1px solid transparent',
+                    color: 'var(--text-primary)',
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'baseline',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent')}
+                >
+                  <span style={{ color: 'var(--text-hint)', fontFamily: 'monospace', flexShrink: 0 }}>
+                    {new Date(snap.changed_at).toLocaleString()}
+                  </span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {snap.label}
+                  </span>
+                  <span className={`kind-badge kind-${snap.kind}`}>{snap.kind}</span>
+                </div>
+              ))
+            }
+
+            {snapshot && (
+              <div style={{
+                marginTop: 8,
+                padding: 10,
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                background: 'var(--bg-secondary)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                    Viewing snapshot — read only
+                  </span>
+                  <button
+                    onClick={clearSnapshot}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 12, padding: 0 }}
+                  >✕</button>
+                </div>
+                <div style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-hint)' }}>Label: </span>
+                  <span style={{ color: 'var(--text-primary)' }}>{snapshot.label}</span>
+                </div>
+                <div style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-hint)' }}>Kind: </span>
+                  <span className={`kind-badge kind-${snapshot.kind}`}>{snapshot.kind}</span>
+                </div>
+                <div style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-hint)' }}>Recorded: </span>
+                  <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                    {new Date(snapshot.changed_at).toLocaleString()}
+                  </span>
+                </div>
+                {Object.keys(snapshot.metadata ?? {}).length > 0 && (
+                  <div style={{ fontSize: 11 }}>
+                    <span style={{ color: 'var(--text-hint)', display: 'block', marginBottom: 4 }}>Metadata:</span>
+                    <pre style={{
+                      margin: 0, padding: '6px 8px', borderRadius: 4,
+                      background: 'var(--bg)', color: 'var(--text-primary)',
+                      fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    }}>
+                      {JSON.stringify(snapshot.metadata, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ── Advanced Terminal Editor ──────────────────────────────────── */}
       <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>

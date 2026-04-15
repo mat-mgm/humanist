@@ -58,3 +58,23 @@ export interface ContextProfile {
   allowed_edges: string[];
   max_depth: number;
 }
+
+/** Phase 44: timestamped full-copy snapshot of an entity (entity_history table). */
+export interface EntitySnapshot {
+  id: string;
+  entity_id: string;
+  kind: EntityKind;
+  label: string;
+  metadata: Record<string, any>;
+  deleted_at: string | null;
+  changed_at: string;
+}
+
+/** Phase 44: timestamped snapshot of any trait (trait_history table). */
+export interface TraitSnapshot {
+  id: string;
+  entity_id: string;
+  trait_type: string;
+  data: Record<string, any>;
+  changed_at: string;
+}

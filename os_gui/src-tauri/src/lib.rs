@@ -1,6 +1,6 @@
 use core_engine::{
     db::SurrealDbAdapter,
-    models::{Entity, EntityKind, SpatialTrait, TemporalTrait},
+    models::{Entity, EntityKind, EntitySnapshot, SpatialTrait, TemporalTrait, TraitSnapshot},
     ports::{GraphDatabase, StateObserver, BlobStorageProvider},
     bus::EventBus,
     blob::LocalBlobAdapter,
@@ -616,6 +616,36 @@ async fn edit_entity_in_terminal(
     Ok(())
 }
 
+// ── Phase 44: History commands ────────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_entity_history(
+    entity_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<EntitySnapshot>, String> {
+    let st = state.lock().await;
+    st.db.get_entity_history(&entity_id).await
+}
+
+#[tauri::command]
+async fn get_entity_as_of(
+    entity_id: String,
+    timestamp: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Option<EntitySnapshot>, String> {
+    let st = state.lock().await;
+    st.db.get_entity_as_of(&entity_id, &timestamp).await
+}
+
+#[tauri::command]
+async fn get_trait_history(
+    entity_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<TraitSnapshot>, String> {
+    let st = state.lock().await;
+    st.db.get_trait_history(&entity_id).await
+}
+
 #[tauri::command]
 async fn open_external_path(path: String) -> Result<(), String> {
     println!("[OPENER] Attempting to open: {}", path);
@@ -725,6 +755,9 @@ pub fn run() {
             get_entity_edges,
             save_temporal_trait,
             get_temporal_traits,
+            get_entity_history,
+            get_entity_as_of,
+            get_trait_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
