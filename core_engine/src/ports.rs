@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::models::{SpatialTrait, TemporalTrait, EntitySnapshot, TraitSnapshot};
+use crate::models::{EdgeRecord, RelationshipType, SpatialTrait, TemporalTrait, EntitySnapshot, TraitSnapshot};
 
 #[async_trait]
 pub trait StateObserver {
@@ -37,7 +37,8 @@ pub trait GraphDatabase {
     
     // Phase 4: Graph edges
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String>;
-    async fn get_edges(&self) -> Result<Vec<(String, String, String)>, String>;
+    async fn add_edge_with_payload(&self, from_id: &str, to_id: &str, label: &str, strength: Option<f64>, latency: Option<i64>, metadata: Option<serde_json::Value>) -> Result<(), String>;
+    async fn get_edges(&self) -> Result<Vec<EdgeRecord>, String>;
     // Phase 6: Management & Resolution
     async fn resolve_label(&self, label: &str) -> Result<Option<String>, String>;
     async fn resolve_path(&self, path: &str) -> Result<Option<String>, String>;
@@ -49,4 +50,10 @@ pub trait GraphDatabase {
     async fn get_entity_history(&self, entity_id: &str) -> Result<Vec<EntitySnapshot>, String>;
     async fn get_entity_as_of(&self, entity_id: &str, timestamp: &str) -> Result<Option<EntitySnapshot>, String>;
     async fn get_trait_history(&self, entity_id: &str) -> Result<Vec<TraitSnapshot>, String>;
+
+    // Phase 45: Relationship types & trait inheritance
+    async fn save_relationship_type(&self, rel_type: RelationshipType) -> Result<(), String>;
+    async fn list_relationship_types(&self) -> Result<Vec<RelationshipType>, String>;
+    async fn delete_relationship_type(&self, label: &str) -> Result<(), String>;
+    async fn get_effective_spatial_trait(&self, entity_id: &str) -> Result<Option<SpatialTrait>, String>;
 }

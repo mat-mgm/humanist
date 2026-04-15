@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { Entity, EntitySnapshot, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
+import { EdgeRecord, Entity, EntitySnapshot, RelationshipType, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -18,11 +18,7 @@ interface GraphUpdateEvent {
   label: string;
 }
 
-export interface GraphEdge {
-  from: string;
-  to: string;
-  label: string;
-}
+export type GraphEdge = EdgeRecord;
 
 // ── Store definition ─────────────────────────────────────────────────────────
 
@@ -42,6 +38,9 @@ interface OsStore {
   entityHistory: EntitySnapshot[];
   traitHistory: TraitSnapshot[];
 
+  // Phase 45: relationship types
+  relationshipTypes: RelationshipType[];
+
   // UI flags
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
@@ -57,6 +56,12 @@ interface OsStore {
   fetchEntityHistory: (entityId: string) => Promise<void>;
   fetchTraitHistory: (entityId: string) => Promise<void>;
   getEntityAsOf: (entityId: string, timestamp: string) => Promise<EntitySnapshot | null>;
+
+  // Phase 45: relationship type actions
+  fetchRelationshipTypes: () => Promise<void>;
+  saveRelationshipType: (rel: Omit<RelationshipType, 'id'> & { id?: string }) => Promise<void>;
+  deleteRelationshipType: (label: string) => Promise<void>;
+  getEffectiveSpatialTrait: (entityId: string) => Promise<SpatialTrait | null>;
 
   // Actions — read
   setActivePtySession: (sessionId: string) => void;
@@ -102,6 +107,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   edges: [],
   entityHistory: [],
   traitHistory: [],
+  relationshipTypes: [],
   selectedEntityId: null,
   selectedIds: [],
   contextEntities: [],
@@ -364,6 +370,42 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   clearHighlightedPath: () => {
     set({ highlightedPath: [], highlightedEdgeKeys: new Set() });
+  },
+
+  // ── Phase 45: Relationship types ─────────────────────────────────────────
+
+  fetchRelationshipTypes: async () => {
+    try {
+      const types = await invoke<RelationshipType[]>('list_relationship_types');
+      set({ relationshipTypes: types });
+    } catch (e) {
+      console.error('fetchRelationshipTypes error:', e);
+    }
+  },
+
+  saveRelationshipType: async (rel) => {
+    await invoke('save_relationship_type', {
+      id: rel.id ?? null,
+      label: rel.label,
+      transitive: rel.transitive,
+      symmetric: rel.symmetric,
+      inheritsTraits: rel.inherits_traits,
+    });
+    await get().fetchRelationshipTypes();
+  },
+
+  deleteRelationshipType: async (label) => {
+    await invoke('delete_relationship_type', { label });
+    await get().fetchRelationshipTypes();
+  },
+
+  getEffectiveSpatialTrait: async (entityId) => {
+    try {
+      return await invoke<SpatialTrait | null>('get_effective_spatial_trait', { entityId });
+    } catch (e) {
+      console.error('getEffectiveSpatialTrait error:', e);
+      return null;
+    }
   },
 
   // ── Phase 44: History ────────────────────────────────────────────────────

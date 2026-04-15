@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use std::sync::Arc;
 use std::path::PathBuf;
 
-use crate::models::{Entity, EntitySnapshot, SpatialTrait, TemporalTrait, TraitSnapshot};
+use crate::models::{EdgeRecord, Entity, EntitySnapshot, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot};
 use crate::ports::GraphDatabase;
 
 #[derive(Clone)]
@@ -29,14 +29,26 @@ impl SurrealDbAdapter {
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
 
-            DEFINE TABLE spatial_trait SCHEMAFULL;
-            DEFINE FIELD owner ON spatial_trait TYPE string;
-            DEFINE FIELD lat ON spatial_trait TYPE float;
-            DEFINE FIELD lng ON spatial_trait TYPE float;
-            DEFINE FIELD alt ON spatial_trait TYPE float;
-            DEFINE FIELD heading ON spatial_trait TYPE float;
-            DEFINE FIELD bbox ON spatial_trait TYPE option<array<float>>;
-            DEFINE FIELD projection ON spatial_trait TYPE string;
+            DEFINE TABLE edge SCHEMAFULL TYPE RELATION IN entity OUT entity;
+            DEFINE FIELD in ON edge TYPE record<entity>;
+            DEFINE FIELD out ON edge TYPE record<entity>;
+            DEFINE FIELD label ON edge TYPE string;
+            DEFINE FIELD IF NOT EXISTS strength ON edge TYPE option<float>;
+            DEFINE FIELD IF NOT EXISTS latency ON edge TYPE option<int>;
+            DEFINE FIELD IF NOT EXISTS metadata ON edge FLEXIBLE TYPE option<object>;
+
+            DEFINE TABLE IF NOT EXISTS relationship_type SCHEMAFULL;
+            DEFINE FIELD label ON relationship_type TYPE string;
+            DEFINE FIELD transitive ON relationship_type TYPE bool DEFAULT false;
+            DEFINE FIELD symmetric ON relationship_type TYPE bool DEFAULT false;
+            DEFINE FIELD inherits_traits ON relationship_type TYPE bool DEFAULT false;
+            DEFINE INDEX IF NOT EXISTS idx_relationship_type_label ON relationship_type FIELDS label UNIQUE;
+
+            DEFINE TABLE IF NOT EXISTS entity_history SCHEMALESS;
+            DEFINE INDEX idx_entity_history_entity_id ON entity_history FIELDS entity_id;
+
+            DEFINE TABLE IF NOT EXISTS trait_history SCHEMALESS;
+            DEFINE INDEX idx_trait_history_entity_id ON trait_history FIELDS entity_id;
 
             DEFINE TABLE blob_trait SCHEMAFULL;
             DEFINE FIELD owner ON blob_trait TYPE string;
@@ -46,23 +58,21 @@ impl SurrealDbAdapter {
             DEFINE FIELD hash ON blob_trait TYPE string;
             DEFINE FIELD size ON blob_trait TYPE int;
 
-            DEFINE TABLE edge SCHEMAFULL TYPE RELATION IN entity OUT entity;
-            DEFINE FIELD in ON edge TYPE record<entity>;
-            DEFINE FIELD out ON edge TYPE record<entity>;
-            DEFINE FIELD label ON edge TYPE string;
-
-            DEFINE TABLE IF NOT EXISTS temporal_trait SCHEMAFULL;
+            DEFINE TABLE spatial_trait SCHEMAFULL;
+            DEFINE FIELD owner ON spatial_trait TYPE string;
+            DEFINE FIELD lat ON spatial_trait TYPE float;
+            DEFINE FIELD lng ON spatial_trait TYPE float;
+            DEFINE FIELD alt ON spatial_trait TYPE float;
+            DEFINE FIELD heading ON spatial_trait TYPE float;
+            DEFINE FIELD bbox ON spatial_trait TYPE option<array<float>>;
+            DEFINE FIELD projection ON spatial_trait TYPE string;
+            
+            DEFINE TABLE temporal_trait SCHEMAFULL;
             DEFINE FIELD owner ON temporal_trait TYPE string;
             DEFINE FIELD event_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD starts_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD ends_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD recurrence ON temporal_trait TYPE option<string>;
-
-            DEFINE TABLE IF NOT EXISTS entity_history SCHEMALESS;
-            DEFINE INDEX idx_entity_history_entity_id ON entity_history FIELDS entity_id;
-
-            DEFINE TABLE IF NOT EXISTS trait_history SCHEMALESS;
-            DEFINE INDEX idx_trait_history_entity_id ON trait_history FIELDS entity_id;
         "#;
         
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
@@ -237,19 +247,65 @@ impl GraphDatabase for SurrealDbAdapter {
         Ok(())
     }
 
-    async fn get_edges(&self) -> Result<Vec<(String, String, String)>, String> {
-        // In SurrealDB relations, vertices are `in` and `out`. We serialize them manually into strings to prevent JSON enum crashes.
-        let mut resp = self.db.query("SELECT type::string(in) AS in, type::string(out) AS out, label FROM edge;")
-            .await.map_err(|e| e.to_string())?;
+    async fn add_edge_with_payload(
+        &self, from_id: &str, to_id: &str, label: &str,
+        strength: Option<f64>, latency: Option<i64>, metadata: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        let qs = format!(
+            "RELATE {}->edge->{} SET label = $label, strength = $strength, latency = $latency, metadata = $metadata;",
+            from_id, to_id
+        );
+        self.db.query(qs)
+            .bind(("label", label.to_string()))
+            .bind(("strength", strength))
+            .bind(("latency", latency))
+            .bind(("metadata", metadata.unwrap_or(serde_json::Value::Object(Default::default()))))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn get_edges(&self) -> Result<Vec<EdgeRecord>, String> {
+        let mut resp = self.db.query(
+            "SELECT type::string(in) AS in, type::string(out) AS out, label, strength, latency, metadata FROM edge;"
+        ).await.map_err(|e| e.to_string())?;
         let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
-        
-        let edges = rows.iter().filter_map(|r| {
-            // Relation endpoints are typically record strings
+
+        let mut edges: Vec<EdgeRecord> = rows.iter().filter_map(|r| {
             let from = r.get("in")?.as_str()?.replace("entity:", "");
             let to = r.get("out")?.as_str()?.replace("entity:", "");
-            let lbl = r.get("label")?.as_str()?.to_string();
-            Some((from, to, lbl))
+            let label = r.get("label")?.as_str()?.to_string();
+            let strength = r.get("strength").and_then(|v| v.as_f64());
+            let latency = r.get("latency").and_then(|v| v.as_i64());
+            let metadata = r.get("metadata").cloned();
+            Some(EdgeRecord { from, to, label, strength, latency, metadata })
         }).collect();
+
+        // Expand symmetric relationship types at read time — no duplicate storage.
+        let rel_types = self.list_relationship_types().await.unwrap_or_default();
+        let symmetric_labels: std::collections::HashSet<&str> = rel_types.iter()
+            .filter(|rt| rt.symmetric)
+            .map(|rt| rt.label.as_str())
+            .collect();
+
+        if !symmetric_labels.is_empty() {
+            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges.iter()
+                .map(|e| (e.from.as_str(), e.to.as_str(), e.label.as_str()))
+                .collect();
+            let mut synthetic: Vec<EdgeRecord> = edges.iter()
+                .filter(|e| symmetric_labels.contains(e.label.as_str()))
+                .filter(|e| !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str())))
+                .map(|e| EdgeRecord {
+                    from: e.to.clone(),
+                    to: e.from.clone(),
+                    label: e.label.clone(),
+                    strength: e.strength,
+                    latency: e.latency,
+                    metadata: e.metadata.clone(),
+                })
+                .collect();
+            edges.append(&mut synthetic);
+        }
         Ok(edges)
     }
 
@@ -333,6 +389,94 @@ impl GraphDatabase for SurrealDbAdapter {
             .await.map_err(|e| e.to_string())?;
         let snaps: Vec<TraitSnapshot> = resp.take(0).map_err(|e| e.to_string())?;
         Ok(snaps)
+    }
+
+    // Phase 45: Relationship types
+
+    async fn save_relationship_type(&self, rel_type: RelationshipType) -> Result<(), String> {
+        let id_clean = rel_type.id.replace("relationship_type:", "");
+        let qs = format!("UPSERT relationship_type:{} CONTENT $data;", id_clean);
+        let mut value = serde_json::to_value(&rel_type).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
+        self.db.query(qs)
+            .bind(("data", value))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn list_relationship_types(&self) -> Result<Vec<RelationshipType>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM relationship_type ORDER BY label ASC;")
+            .await.map_err(|e| e.to_string())?;
+        let types: Vec<RelationshipType> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(types)
+    }
+
+    async fn delete_relationship_type(&self, label: &str) -> Result<(), String> {
+        self.db
+            .query("DELETE relationship_type WHERE label = $label;")
+            .bind(("label", label.to_string()))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Walk outgoing edges whose relationship_type has `inherits_traits = true`,
+    /// up to MAX_DEPTH hops, returning the first ancestor SpatialTrait found.
+    async fn get_effective_spatial_trait(&self, entity_id: &str) -> Result<Option<SpatialTrait>, String> {
+        const MAX_DEPTH: usize = 5;
+
+        // Collect all inheriting labels once.
+        let rel_types = self.list_relationship_types().await?;
+        let inheriting_labels: std::collections::HashSet<String> = rel_types
+            .into_iter()
+            .filter(|rt| rt.inherits_traits)
+            .map(|rt| rt.label)
+            .collect();
+
+        if inheriting_labels.is_empty() {
+            return Ok(None);
+        }
+
+        let spatial_traits = self.get_spatial_traits().await?;
+        let edges = self.get_edges().await?;
+
+        // BFS up the graph
+        let mut visited = std::collections::HashSet::new();
+        let mut frontier = vec![entity_id.to_string()];
+
+        for _ in 0..MAX_DEPTH {
+            let mut next = Vec::new();
+            for current_id in &frontier {
+                let short = current_id.replace("entity:", "");
+                for edge in &edges {
+                    if (edge.from == short || format!("entity:{}", edge.from) == *current_id)
+                        && inheriting_labels.contains(&edge.label)
+                    {
+                        let parent = format!("entity:{}", edge.to);
+                        if visited.contains(&parent) { continue; }
+                        visited.insert(parent.clone());
+
+                        // Check if parent has a SpatialTrait
+                        let found = spatial_traits.iter().find(|t| {
+                            t.owner == parent
+                                || t.owner == edge.to
+                                || format!("entity:{}", t.owner) == parent
+                        });
+                        if let Some(t) = found {
+                            return Ok(Some(t.clone()));
+                        }
+                        next.push(parent);
+                    }
+                }
+            }
+            if next.is_empty() { break; }
+            frontier = next;
+        }
+        Ok(None)
     }
 }
 

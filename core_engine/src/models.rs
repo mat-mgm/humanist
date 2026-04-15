@@ -86,6 +86,30 @@ fn default_max_depth() -> i64 {
     2
 }
 
+/// Defines the semantic properties of a relationship label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipType {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub transitive: bool,
+    #[serde(default)]
+    pub symmetric: bool,
+    #[serde(default)]
+    pub inherits_traits: bool,
+}
+
+/// A full edge record including optional payload fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeRecord {
+    pub from: String,
+    pub to: String,
+    pub label: String,
+    pub strength: Option<f64>,
+    pub latency: Option<i64>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// A timestamped full-copy snapshot of an entity, written on every save.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitySnapshot {

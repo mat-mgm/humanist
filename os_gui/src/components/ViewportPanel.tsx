@@ -176,6 +176,86 @@ const SelectionPanel = memo(function SelectionPanel() {
   );
 });
 
+// ── Ontology Panel ────────────────────────────────────────────────────────────
+const OntologyPanel = memo(function OntologyPanel() {
+  const { fetchRelationshipTypes, saveRelationshipType, deleteRelationshipType } = useOsStore();
+  const relationshipTypes = useOsStore(s => s.relationshipTypes);
+
+  useEffect(() => { fetchRelationshipTypes(); }, [fetchRelationshipTypes]);
+
+  const [newLabel, setNewLabel] = useState('');
+  const [newTransitive, setNewTransitive] = useState(false);
+  const [newSymmetric, setNewSymmetric] = useState(false);
+  const [newInherits, setNewInherits] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = useCallback(async () => {
+    const lbl = newLabel.trim();
+    if (!lbl) { setError('Label is required'); return; }
+    setError('');
+    try {
+      await saveRelationshipType({ label: lbl, transitive: newTransitive, symmetric: newSymmetric, inherits_traits: newInherits });
+      setNewLabel(''); setNewTransitive(false); setNewSymmetric(false); setNewInherits(false);
+    } catch (e: any) { setError(String(e)); }
+  }, [newLabel, newTransitive, newSymmetric, newInherits, saveRelationshipType]);
+
+  const fieldStyle: React.CSSProperties = {
+    background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4,
+    padding: '5px 8px', color: 'var(--text-primary)', fontSize: 11, outline: 'none', width: '100%',
+  };
+  const checkRow = (label: string, val: boolean, set: (v: boolean) => void) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', color: 'var(--text-primary)' }}>
+      <input type="checkbox" checked={val} onChange={e => set(e.target.checked)} />
+      {label}
+    </label>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header */}
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-header)' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Relationship Types</span>
+      </div>
+
+      {/* Type list */}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {relationshipTypes.length === 0
+          ? <div style={{ padding: 16, fontSize: 11, color: 'var(--text-hint)' }}>No types defined yet.</div>
+          : relationshipTypes.map(rt => (
+            <div key={rt.id} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{rt.label}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>
+                {[rt.transitive && 'transitive', rt.symmetric && 'symmetric', rt.inherits_traits && 'inherits'].filter(Boolean).join(' · ') || 'no flags'}
+              </span>
+              <button
+                onClick={() => deleteRelationshipType(rt.label)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12, padding: '0 4px' }}
+                title="Delete"
+              >✕</button>
+            </div>
+          ))
+        }
+      </div>
+
+      {/* Create form */}
+      <div style={{ padding: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>New Type</span>
+        <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="e.g. is_hosted_on" style={fieldStyle}
+          onKeyDown={e => e.key === 'Enter' && submit()} />
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {checkRow('Transitive', newTransitive, setNewTransitive)}
+          {checkRow('Symmetric', newSymmetric, setNewSymmetric)}
+          {checkRow('Inherits traits', newInherits, setNewInherits)}
+        </div>
+        {error && <span style={{ fontSize: 11, color: '#ff6b6b' }}>{error}</span>}
+        <button onClick={submit} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+          + Add
+        </button>
+      </div>
+    </div>
+  );
+});
+
 // ── Entity Inspector ──────────────────────────────────────────────────────────
 const EntityInspector = memo(function EntityInspector({
   editFormat,
@@ -295,6 +375,10 @@ const EntityInspector = memo(function EntityInspector({
   // Relate dialog
   const [showRelate, setShowRelate] = useState(false);
 
+  // Edge inspector
+  const [selectedEdgeIdx, setSelectedEdgeIdx] = useState<number | null>(null);
+  useEffect(() => { setSelectedEdgeIdx(null); }, [selectedId]);
+
   // Temporal Editing
   const [editTemporal, setEditTemporal] = useState<Omit<TemporalTrait, "id"> | null>(null);
   const [tempError, setTempError] = useState('');
@@ -348,6 +432,15 @@ const EntityInspector = memo(function EntityInspector({
       setSpatialError(String(e));
     }
   }, [editSpatial, saveSpatialTrait]);
+
+  // Inherited spatial trait (resolved when entity has no own SpatialTrait)
+  const { getEffectiveSpatialTrait } = useOsStore();
+  const [inheritedSpatial, setInheritedSpatial] = useState<SpatialTrait | null>(null);
+
+  useEffect(() => {
+    if (!selectedId || spatialTrait) { setInheritedSpatial(null); return; }
+    getEffectiveSpatialTrait(selectedId).then(t => setInheritedSpatial(t ?? null));
+  }, [selectedId, spatialTrait, getEffectiveSpatialTrait]);
 
   // History section state
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -593,7 +686,17 @@ const EntityInspector = memo(function EntityInspector({
       {editSpatial == null ? (
         <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {!spatialTrait ? (
-            <span>No spatial data</span>
+            inheritedSpatial ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 10, color: 'var(--accent)', fontStyle: 'italic', marginBottom: 4 }}>Inherited from ancestor</span>
+                <div className="prop-row"><span className="prop-key">Lat</span><span className="prop-val mono">{inheritedSpatial.lat}</span></div>
+                <div className="prop-row"><span className="prop-key">Lng</span><span className="prop-val mono">{inheritedSpatial.lng}</span></div>
+                <div className="prop-row"><span className="prop-key">Alt</span><span className="prop-val mono">{inheritedSpatial.alt}</span></div>
+                <div className="prop-row"><span className="prop-key">Heading</span><span className="prop-val mono">{inheritedSpatial.heading}°</span></div>
+              </div>
+            ) : (
+              <span>No spatial data</span>
+            )
           ) : (
             <>
               <div className="prop-row"><span className="prop-key">Lat</span><span className="prop-val mono">{spatialTrait.lat}</span></div>
@@ -702,26 +805,49 @@ const EntityInspector = memo(function EntityInspector({
           const isOut = `entity:${edge.from}` === selectedId || edge.from === shortId;
           const peerId = isOut ? edge.to : edge.from;
           const peerLabel = labelFor(peerId);
+          const isEdgeSelected = selectedEdgeIdx === i;
+          const hasPayload = edge.strength != null || edge.latency != null || (edge.metadata && Object.keys(edge.metadata).length > 0);
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-              <span style={{ color: isOut ? 'var(--accent)' : 'var(--text-hint)', fontWeight: 700, fontSize: 10 }}>{isOut ? '→' : '←'}</span>
-              <span style={{ color: 'var(--text-hint)', fontStyle: 'italic', fontSize: 11 }}>{edge.label}</span>
-              <span
-                style={{ flex: 1, cursor: 'pointer', color: 'var(--text-primary)' }}
-                onClick={() => selectEntity(`entity:${peerId}`)}
-                title="Select entity"
+            <div key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, cursor: 'pointer' }}
+                onClick={() => setSelectedEdgeIdx(isEdgeSelected ? null : i)}
               >
-                {peerLabel}
-              </span>
-              <button
-                onClick={() => removeEdge(
-                  isOut ? selected.id : `entity:${peerId}`,
-                  isOut ? `entity:${peerId}` : selected.id,
-                  edge.label,
-                )}
-                title="Remove edge"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12 }}
-              >✕</button>
+                <span style={{ color: isOut ? 'var(--accent)' : 'var(--text-hint)', fontWeight: 700, fontSize: 10 }}>{isOut ? '→' : '←'}</span>
+                <span style={{ color: 'var(--text-hint)', fontStyle: 'italic', fontSize: 11 }}>{edge.label}</span>
+                <span
+                  style={{ flex: 1, color: 'var(--text-primary)' }}
+                  onClick={e => { e.stopPropagation(); selectEntity(`entity:${peerId}`); }}
+                  title="Select entity"
+                >
+                  {peerLabel}
+                </span>
+                {hasPayload && <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>●</span>}
+                <button
+                  onClick={e => { e.stopPropagation(); removeEdge(
+                    isOut ? selected.id : `entity:${peerId}`,
+                    isOut ? `entity:${peerId}` : selected.id,
+                    edge.label,
+                  ); }}
+                  title="Remove edge"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12 }}
+                >✕</button>
+              </div>
+              {isEdgeSelected && (
+                <div style={{ padding: '6px 0 8px 16px', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ color: 'var(--text-hint)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Edge payload</div>
+                  <div className="prop-row"><span className="prop-key">Strength</span><span className="prop-val mono">{edge.strength ?? '—'}</span></div>
+                  <div className="prop-row"><span className="prop-key">Latency</span><span className="prop-val mono">{edge.latency != null ? `${edge.latency} ms` : '—'}</span></div>
+                  {edge.metadata && Object.keys(edge.metadata).length > 0 && (
+                    <div>
+                      <span style={{ color: 'var(--text-hint)', fontSize: 10 }}>Metadata:</span>
+                      <pre style={{ margin: '2px 0 0', padding: '4px 6px', borderRadius: 4, background: 'var(--bg)', fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
+                        {JSON.stringify(edge.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })
@@ -946,7 +1072,7 @@ const EntityRow = memo(function EntityRow({
 
 // ── ViewportPanel ─────────────────────────────────────────────────────────────
 export const ViewportPanel = memo(function ViewportPanel() {
-  const [activeTab, setActiveTab] = useState<'properties' | 'preview' | 'registry'>('properties');
+  const [activeTab, setActiveTab] = useState<'properties' | 'preview' | 'registry' | 'ontology'>('properties');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [quickTagId, setQuickTagId] = useState<string | null>(null);
@@ -1057,9 +1183,10 @@ export const ViewportPanel = memo(function ViewportPanel() {
         <button style={tabStyle('properties')} onClick={() => setActiveTab('properties')}>Properties</button>
         <button style={tabStyle('preview')} onClick={() => setActiveTab('preview')}>Preview</button>
         <button style={tabStyle('registry')} onClick={() => setActiveTab('registry')}>Registry</button>
+        <button style={tabStyle('ontology')} onClick={() => setActiveTab('ontology')}>Ontology</button>
       </div>
 
-      <div className="panel-body" style={{ padding: activeTab === 'registry' ? 0 : 12, overflow: 'auto' }}>
+      <div className="panel-body" style={{ padding: activeTab === 'registry' || activeTab === 'ontology' ? 0 : 12, overflow: 'auto' }}>
 
         {/* ── Properties Tab ───────────────────────────────────────────── */}
         {activeTab === 'properties' && (
@@ -1259,6 +1386,10 @@ export const ViewportPanel = memo(function ViewportPanel() {
             )}
           </div>
         )}
+
+        {/* ── Ontology Tab ─────────────────────────────────────────────── */}
+        {activeTab === 'ontology' && <OntologyPanel />}
+
       </div>
 
       {/* ── Global Dialogs ──────────────────────────────────────────────── */}

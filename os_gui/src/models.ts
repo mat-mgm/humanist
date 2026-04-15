@@ -59,6 +59,25 @@ export interface ContextProfile {
   max_depth: number;
 }
 
+/** Phase 45: semantic definition of a relationship label. */
+export interface RelationshipType {
+  id: string;
+  label: string;
+  transitive: boolean;
+  symmetric: boolean;
+  inherits_traits: boolean;
+}
+
+/** Phase 45: full edge record with optional payload fields. */
+export interface EdgeRecord {
+  from: string;
+  to: string;
+  label: string;
+  strength: number | null;
+  latency: number | null;
+  metadata: Record<string, any> | null;
+}
+
 /** Phase 44: timestamped full-copy snapshot of an entity (entity_history table). */
 export interface EntitySnapshot {
   id: string;

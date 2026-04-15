@@ -26,9 +26,9 @@ impl StateSynchronizerTask {
         }
 
         let edges = db.get_edges().await?;
-        for (from, to, label) in edges {
-            let label_safe = label.replace('\'', "\\'");
-            let fact = format!("edge('{}', '{}', '{}').", from, to, label_safe);
+        for edge in edges {
+            let label_safe = edge.label.replace('\'', "\\'");
+            let fact = format!("edge('{}', '{}', '{}').", edge.from, edge.to, label_safe);
             let _ = machine.ingest(&fact);
         }
         

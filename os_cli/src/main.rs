@@ -320,8 +320,8 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 let edges = db.get_edges().await?;
                 let raw_t_id = t_id.replace("entity:", "");
                 edges.into_iter()
-                    .filter(|(_, to, lbl)| lbl == "tagged_as" && *to == raw_t_id)
-                    .map(|(from, _, _)| format!("entity:{}", from))
+                    .filter(|e| e.label == "tagged_as" && e.to == raw_t_id)
+                    .map(|e| format!("entity:{}", e.from))
                     .collect()
             } else {
                 std::collections::HashSet::new()

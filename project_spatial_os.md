@@ -595,34 +595,45 @@ Add auditable version history to entities and traits using a dual-write shadow h
 - [✓] `cargo check --workspace` passes with zero warnings.
 - [✓] `npm run build` passes with zero TypeScript errors.
 
-### Phase 45: Formal Ontology & Semantic Inferencing
+### Phase 45: Semantic Edges — Ontology, Payloads & Trait Inheritance
 **Description**
-Upgrade relationship labels from simple strings to first-class semantic types. Implement rules for transitivity and inheritance so the system can "understand" that if a Document is *inside* a Folder, and the Folder *moves*, the Document moves too.
+Elevate edges from dumb labeled arrows into first-class semantic objects. Each edge label is backed by a `relationship_type` definition (carrying properties like `transitive`, `symmetric`, `inherits_traits`) stored in SurrealDB for runtime extensibility. Individual edge instances gain a typed payload (`strength`, `latency`, `metadata`). A Rust resolver uses the `inherits_traits` flag to walk parent edges and resolve inherited `SpatialTrait` values for entities that have none of their own.
 
 **Tasks**
-- [ ] **Edge Schema**: Define a `RelationshipOntology` registry where labels (like `is_part_of`) are assigned properties (Transitive, Symmetric, etc.).
-- [ ] **Trait Inheritance Engine**: Implement a resolver that allows child entities to functionally "inherit" traits (like `SpatialTrait`) from their parents across semantic edges.
-- [ ] **Inference Service**: Link the `core_engine` to the `prolog_engine` for recursive relationship discovery (e.g., "Find all ancestors").
+
+*Backend — Schema*
+- [✓] **`relationship_type` table**: Define in `db.rs` with fields `label: string`, `transitive: bool`, `symmetric: bool`, `inherits_traits: bool`. Add a unique index on `label`.
+- [✓] **`edge` payload fields**: Extend the existing `edge` table with `strength: option<float>`, `latency: option<int>`, `metadata: object FLEXIBLE`.
+
+*Backend — Models & Port*
+- [✓] **`RelationshipType` model**: Add to `models.rs`.
+- [✓] **`EdgeRecord` model**: Replace the current `(String, String, String)` tuple with a proper struct (`from`, `to`, `label`, `strength`, `latency`, `metadata`) in `models.rs`.
+- [✓] **Port methods**: Add to `GraphDatabase` — `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_edges` updated to return `Vec<EdgeRecord>`.
+- [✓] **Trait inheritance resolver**: Add `get_effective_spatial_trait(entity_id: &str) -> Result<Option<SpatialTrait>, String>` to `GraphDatabase`. Walks outgoing edges whose `relationship_type` has `inherits_traits = true`, up to 5 hops, returning the first ancestor `SpatialTrait` found.
+- [✓] **Symmetric edge expansion**: `get_edges` expands symmetric relationship types at read time — a single stored edge with a symmetric label emits both directions without duplicate records.
+
+*IPC Layer*
+- [✓] **Tauri commands**: `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_effective_spatial_trait`. Update `add_edge` / `get_edges` to pass edge payload fields.
+
+*Frontend — State & Models*
+- [✓] **Models**: Add `RelationshipType` and `EdgeRecord` interfaces to `models.ts`. Update `GraphEdge` in `store.ts` to use `EdgeRecord`.
+- [✓] **Store**: Add `relationshipTypes: RelationshipType[]`, `fetchRelationshipTypes`, `saveRelationshipType`, `deleteRelationshipType` actions.
+
+*Frontend — UI*
+- [✓] **Relationship Type Manager**: Dedicated "Ontology" tab in `ViewportPanel` listing defined types, with a form to create new ones (label + toggles for `transitive`, `symmetric`, `inherits_traits`).
+- [✓] **Edge Inspector**: In `ViewportPanel`, clicking a relationship row expands an inline payload section showing `strength`, `latency`, `metadata`.
+- [✓] **Inherited trait display**: In the Inspector, if an entity has no `SpatialTrait`, `get_effective_spatial_trait` is called and coordinates are shown marked "Inherited from ancestor".
 
 **Checks**
-- [ ] A "File" node with no `SpatialTrait` accurately reports the coordinates of its "Server" parent node via the `is_hosted_on` edge.
-- [ ] Proximity searches correctly identify inherited positions of sub-entities.
+- [✓] A `relationship_type` record for `is_hosted_on` with `inherits_traits = true` persists in SurrealDB and appears in the type manager.
+- [✓] A "File" entity with no `SpatialTrait` returns its "Server" parent's coordinates via `get_effective_spatial_trait` when connected by an `is_hosted_on` edge.
+- [✓] Creating an edge with `strength = 0.9` persists correctly; `SELECT * FROM edge WHERE strength > 0.5` returns it via the SQL terminal.
+- [✓] The Edge Inspector shows `strength`, `latency`, and `metadata` for a selected edge.
+- [✓] A symmetric type (e.g. `is_connected_to`) causes A→B to appear as both directions in the graph; `SELECT * FROM edge` shows only one stored record.
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
-### Phase 46: Edge Traits (Smart Arrows)
-**Description**
-Implement "Smart Arrows" by utilizing SurrealDB's first-class relationship properties. Move data like "Connection Strength" or "Network Latency" from entity metadata directly onto the relationship edge.
-
-**Tasks**
-- [ ] **Schema Expansion**: Update `DEFINE TABLE edge` in `db.rs` to be `SCHEMAFULL` with typed fields (e.g., `strength: float`, `latency: int`, `metadata: object`).
-- [ ] **Edge Model**: Define `EdgeProperties` in `models.rs` and update the `RELATE` syntax to use `SET content = $data`.
-- [ ] **Unified Traversal**: Upgrade `GraphDatabase::get_edges` to return the full property record instead of just a string label.
-- [ ] **GUI Edge Inspector**: Enable the `ViewportPanel` to inspect and edit an edge's properties when a connection is selected in the Graph view.
-
-**Checks**
-- [ ] Creating an edge with `strength = 0.9` persists accurately in SurrealDB.
-- [ ] The `sql` terminal command effectively filters edges based on properties (e.g., `SELECT * FROM edge WHERE latency < 5ms`).
-
-### Phase 47: Semantic Metadata Enforcement
+### Phase 46: Semantic Metadata Enforcement (was 47)
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 
@@ -635,7 +646,7 @@ Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. T
 - [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
 - [ ] The Inspector highlights missing but required fields in red.
 
-### Phase 48: Universal Content Trait & Unified Logic Integration
+### Phase 47: Universal Content Trait & Unified Logic Integration (was 48)
 **Description**
 Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into the unified `BlobTrait`. Instead of specialized traits, the system utilizes the `mime` field as the semantic discriminator. The `LogicTrait` is eliminated; logic rules are now stored as content-addressed blobs within the CAS.
 
@@ -650,7 +661,7 @@ Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into
 - [ ] The `PreviewPanel` correctly switches between a 3D view (for `.gltf`) and a Text Editor (for `.md` or `.pl`) using only the `BlobTrait` data.
 - [ ] `cargo check --workspace` passes without any reference to the deprecated `LogicTrait`.
 
-### Phase 49: Multilingual Ontology (`LabelTrait`)
+### Phase 48: Multilingual Ontology (`LabelTrait`) (was 49)
 **Description**
 Implement a first-class multilingual naming system. Entities will support a canonical language representation while providing translated labels for any globally defined locale via the dedicated `LabelTrait`.
 

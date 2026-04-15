@@ -1,6 +1,6 @@
 use core_engine::{
     db::SurrealDbAdapter,
-    models::{Entity, EntityKind, EntitySnapshot, SpatialTrait, TemporalTrait, TraitSnapshot},
+    models::{EdgeRecord, Entity, EntityKind, EntitySnapshot, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot},
     ports::{GraphDatabase, StateObserver, BlobStorageProvider},
     bus::EventBus,
     blob::LocalBlobAdapter,
@@ -196,10 +196,27 @@ async fn add_edge(
 }
 
 #[tauri::command]
-async fn get_edges(state: State<'_, Mutex<AppState>>) -> Result<Vec<serde_json::Value>, String> {
+async fn add_edge_with_payload(
+    from_id: String,
+    to_id: String,
+    label: String,
+    strength: Option<f64>,
+    latency: Option<i64>,
+    metadata: Option<serde_json::Value>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
     let st = state.lock().await;
-    let edges = st.db.get_edges().await?;
-    Ok(edges.into_iter().map(|(f, t, l)| serde_json::json!({"from": f, "to": t, "label": l})).collect())
+    st.db.add_edge_with_payload(&from_id, &to_id, &label, strength, latency, metadata).await?;
+    app.emit("graph-updated", serde_json::json!({"from": from_id, "to": to_id, "label": label}))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_edges(state: State<'_, Mutex<AppState>>) -> Result<Vec<EdgeRecord>, String> {
+    let st = state.lock().await;
+    st.db.get_edges().await
 }
 
 #[tauri::command]
@@ -354,16 +371,11 @@ async fn remove_edge(
 async fn get_entity_edges(
     entity_id: String,
     state: State<'_, Mutex<AppState>>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<EdgeRecord>, String> {
     let st = state.lock().await;
     let all_edges = st.db.get_edges().await?;
-    // Strip the "entity:" prefix the same way get_edges returns short ids
     let short_id = entity_id.replace("entity:", "");
-    let filtered: Vec<serde_json::Value> = all_edges.into_iter()
-        .filter(|(f, t, _)| f == &short_id || t == &short_id)
-        .map(|(f, t, l)| serde_json::json!({"from": f, "to": t, "label": l}))
-        .collect();
-    Ok(filtered)
+    Ok(all_edges.into_iter().filter(|e| e.from == short_id || e.to == short_id).collect())
 }
 
 #[tauri::command]
@@ -616,6 +628,48 @@ async fn edit_entity_in_terminal(
     Ok(())
 }
 
+// ── Phase 45: Relationship types & trait inheritance ─────────────────────────
+
+#[tauri::command]
+async fn save_relationship_type(
+    id: Option<String>,
+    label: String,
+    transitive: bool,
+    symmetric: bool,
+    inherits_traits: bool,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let record_id = id.unwrap_or_else(|| format!("relationship_type:{}", ulid::Ulid::new()));
+    st.db.save_relationship_type(RelationshipType { id: record_id, label, transitive, symmetric, inherits_traits }).await
+}
+
+#[tauri::command]
+async fn list_relationship_types(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RelationshipType>, String> {
+    let st = state.lock().await;
+    st.db.list_relationship_types().await
+}
+
+#[tauri::command]
+async fn delete_relationship_type(
+    label: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db.delete_relationship_type(&label).await
+}
+
+#[tauri::command]
+async fn get_effective_spatial_trait(
+    entity_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Option<SpatialTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_effective_spatial_trait(&entity_id).await
+}
+
 // ── Phase 44: History commands ────────────────────────────────────────────────
 
 #[tauri::command]
@@ -758,6 +812,11 @@ pub fn run() {
             get_entity_history,
             get_entity_as_of,
             get_trait_history,
+            add_edge_with_payload,
+            save_relationship_type,
+            list_relationship_types,
+            delete_relationship_type,
+            get_effective_spatial_trait,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
