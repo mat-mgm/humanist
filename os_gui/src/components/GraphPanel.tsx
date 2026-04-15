@@ -782,13 +782,9 @@ export const GraphPanel = memo(function GraphPanel() {
 
   return (
     <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
-      {/* TOOLBAR: Row 1 - Stats, Reset, Kinds */}
+      {/* TOOLBAR: Row 1 - Search, Reset, Toggles */}
       <div className="panel-stats">
         <div className="panel-row" style={{ flexWrap: 'wrap' }}>
-          <span className="event-badge" style={{ marginRight: 4 }}>
-            {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.nodes.length}/${entities.length} nodes` : `${entities.length} nodes`}
-          </span>
-
           <input
             type="text"
             placeholder="Search nodes..."
@@ -819,85 +815,8 @@ export const GraphPanel = memo(function GraphPanel() {
             Reset
           </button>
 
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 10, marginLeft: 4 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Kinds:</span>
-            {['physical', 'digital', 'abstract', 'agent', 'blob'].map(kind => {
-              const active = filterKinds.includes(kind);
-              return (
-                <button
-                  key={kind}
-                  onClick={() => toggleFilterKind(kind)}
-                  style={{
-                    background: active ? KIND_COLORS[kind] : 'transparent',
-                    border: `1px solid ${active ? KIND_COLORS[kind] : 'var(--border)'}`,
-                    color: active ? '#000' : 'var(--text-secondary)',
-                    fontSize: 10,
-                    padding: '1px 7px',
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    opacity: active ? 1 : 0.6,
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {kind}
-                </button>
-              );
-            })}
-            {filterKinds.length > 0 && (
-              <button
-                onClick={() => setFilterKinds([])}
-                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10, padding: '2px 4px', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          
-          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
-              Grid
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showRegions} onChange={() => toggleRegions()} />
-              Regions
-            </label>
-          </div>
-        </div>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase', marginLeft: 8 }}>Find Path:</span>
 
-        {/* Row 2: Edge Filters */}
-        {allEdgeLabels.length > 0 && (
-          <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Edges:</span>
-            {allEdgeLabels.map(label => {
-              const hidden = filterEdgeLabels.includes(label);
-              return (
-                <button
-                  key={label}
-                  onClick={() => toggleFilterEdgeLabel(label)}
-                  style={{
-                    background: hidden ? 'var(--bg-primary)' : 'transparent',
-                    border: `1px solid ${hidden ? 'var(--accent)' : 'var(--border)'}`,
-                    color: hidden ? 'var(--accent)' : 'var(--text-hint)',
-                    fontSize: 10,
-                    padding: '1px 8px',
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    textDecoration: hidden ? 'line-through' : 'none',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Row 3: Path Finder */}
-        <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase' }}>Find Path:</span>
-          
           <SearchableDropdown
             placeholder="From entity..."
             value={pathFrom}
@@ -933,20 +852,104 @@ export const GraphPanel = memo(function GraphPanel() {
             }}
             style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '2px 10px', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600, height: 22 }}
           >
-            Find Path
+            Find
           </button>
-          
+
           {highlightedPath.length > 0 && (
             <button
               onClick={() => { clearHighlightedPath(); setPathError(null); }}
               style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', color: 'var(--text-hint)', cursor: 'pointer', fontSize: 11, height: 22 }}
             >
-              Clear Path
+              ✕
             </button>
           )}
 
           {pathError && <span style={{ fontSize: 11, color: 'var(--error)' }}>{pathError}</span>}
+
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
+              Grid
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showRegions} onChange={() => toggleRegions()} />
+              Regions
+            </label>
+          </div>
         </div>
+
+        {/* Row 2: Node Count + Kind Filter */}
+        <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
+          <span className="event-badge" style={{ marginRight: 4 }}>
+            {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.nodes.length}/${entities.length} nodes` : `${entities.length} nodes`}
+          </span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Nodes:</span>
+            {['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'].map(kind => {
+              const active = filterKinds.includes(kind);
+              return (
+                <button
+                  key={kind}
+                  onClick={() => toggleFilterKind(kind)}
+                  style={{
+                    background: active ? KIND_COLORS[kind] : 'transparent',
+                    border: `1px solid ${active ? KIND_COLORS[kind] : 'var(--border)'}`,
+                    color: active ? '#000' : 'var(--text-secondary)',
+                    fontSize: 10,
+                    padding: '1px 7px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    opacity: active ? 1 : 0.6,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {kind}
+                </button>
+              );
+            })}
+            {filterKinds.length > 0 && (
+              <button
+                onClick={() => setFilterKinds([])}
+                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10, padding: '2px 4px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Row 3: Edge Count + Edge Label Filter */}
+        {allEdgeLabels.length > 0 && (
+          <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
+            <span className="event-badge" style={{ marginRight: 4 }}>
+              {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.edges.length}/${edges.length} edges` : `${edges.length} edges`}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Edges:</span>
+            {allEdgeLabels.map(label => {
+              const hidden = filterEdgeLabels.includes(label);
+              return (
+                <button
+                  key={label}
+                  onClick={() => toggleFilterEdgeLabel(label)}
+                  style={{
+                    background: hidden ? 'var(--bg-primary)' : 'transparent',
+                    border: `1px solid ${hidden ? 'var(--accent)' : 'var(--border)'}`,
+                    color: hidden ? 'var(--accent)' : 'var(--text-hint)',
+                    fontSize: 10,
+                    padding: '1px 8px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    textDecoration: hidden ? 'line-through' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
       </div>
 
       <div 

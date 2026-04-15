@@ -429,13 +429,13 @@ Improve keyboard productivity in the graph visualization and streamline bulk ope
 - [✓] **Graph Keyboard Deletion**: Bind the `Delete` (Supr) key in the `GraphPanel` to safely delete the currently selected entities, accompanied by standard confirmation logic.
 - [✓] **Bulk Deletion UI**: Add a prominent "Delete Selection" button in the `ViewportPanel` Properties tab when multiple entities are actively selected.
 - [✓] **Tag Autocompletion**: Upgrade the custom tag addition field in the `EntityInspector` to utilize an autocompleting, theme-aware dropdown (like `SearchableDropdown`) to efficiently suggest existing abstract tag entities.
-- [ ] **Graph Metrics Transparency**: Re-implement the Edge Count badge in the `GraphPanel` toolbar, positioning it next to the Node Count badge to provide live visibility into relationship density.
+- [✓] **Graph Metrics Transparency**: Re-implement the Edge Count badge in the `GraphPanel` toolbar, positioning it next to the Node Count badge to provide live visibility into relationship density.
 
 **Checks**
 - [✓] Pressing `Delete` while nodes are selected successfully prompts and removes them.
 - [✓] The Inspector displays a functional bulk-delete button during multi-selection.
 - [✓] The tag field provides an accurate dropdown list of existing tags when typing.
-- [ ] Both Node and Edge counts are visible in the toolbar and correctly reflect the strict inner subgraph filtering state.
+- [✓] Both Node and Edge counts are visible in the toolbar and correctly reflect the strict inner subgraph filtering state.
 
 ### Phase 38: Spatial Entity Modification
 **Description**
