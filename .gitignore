@@ -3,6 +3,7 @@ example
 test
 data
 docs
+assets
 
 # Rust
 target

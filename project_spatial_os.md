@@ -429,11 +429,13 @@ Improve keyboard productivity in the graph visualization and streamline bulk ope
 - [✓] **Graph Keyboard Deletion**: Bind the `Delete` (Supr) key in the `GraphPanel` to safely delete the currently selected entities, accompanied by standard confirmation logic.
 - [✓] **Bulk Deletion UI**: Add a prominent "Delete Selection" button in the `ViewportPanel` Properties tab when multiple entities are actively selected.
 - [✓] **Tag Autocompletion**: Upgrade the custom tag addition field in the `EntityInspector` to utilize an autocompleting, theme-aware dropdown (like `SearchableDropdown`) to efficiently suggest existing abstract tag entities.
+- [ ] **Graph Metrics Transparency**: Re-implement the Edge Count badge in the `GraphPanel` toolbar, positioning it next to the Node Count badge to provide live visibility into relationship density.
 
 **Checks**
 - [✓] Pressing `Delete` while nodes are selected successfully prompts and removes them.
 - [✓] The Inspector displays a functional bulk-delete button during multi-selection.
 - [✓] The tag field provides an accurate dropdown list of existing tags when typing.
+- [ ] Both Node and Edge counts are visible in the toolbar and correctly reflect the strict inner subgraph filtering state.
 
 ### Phase 38: Spatial Entity Modification
 **Description**
@@ -480,3 +482,275 @@ Provide advanced, programmer-friendly configuration capabilities by treating nod
 - [✓] Modifications in the terminal text file are reflected immediately in the Graph and Properties panels.
 - [✓] Terminal auto-focuses and elevates to the foreground when an editing session starts.
 - [✓] "Open Externally" command opens files using the native system handler (via `opener`).
+
+### Phase 41: Hybrid Globe Imagery & Local Fallback (10–20 GB)
+**Description**
+Implement a dual-layer imagery strategy: high-fidelity streaming via Google 3D Tiles and a robust, multi-gigabyte local fallback for offline/air-gapped operations.
+
+**Tasks**
+- [✓] **Local Tile Server**: Implement a lightweight MBTiles/TMS provider in `core_engine` (Rust) to serve the local imagery cache via loopback using `mmap` for zero-copy tile access.
+- [✓] **Full Planet mbtiles**: Find a reasonably sized mbtiles file of the entire planet and add it to the local cache. Sources:
+  - https://archive.org/download/osm-vector-mbtiles/
+  - https://www.limaps.org/tileserver.html
+- [✓] **Cesium Integration**: Configure `UrlTemplateImageryProvider` to target the local Rust server as the primary base layer.
+- [✓] **Google 3D Tiles**: Integrate `createGooglePhotorealistic3DTileset`. Inject the API key via Tauri's secured state (`tauri::State`) to prevent frontend exposure.
+- [✓] **Automatic Failover**: Implement network-status detection logic to automatically downgrade from Google 3D Tiles to the local cache when connectivity is severed.
+
+**Checks**
+- [✓] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
+
+**Current Blockers**:
+- [ ] **European Economic Area API restrictions**: Google Maps 3D tiles are not available in the EEA (https://developers.google.com/maps/comms/eea/map-tiles).
+- [ ] **Imagery Persistence**: MBTiles path persistence is correctly reaching the backend, but `get_app_state` appears to hang or return empty for the user.
+- [ ] **Online Resume**: Google Imagery does not automatically restore when toggling from Offline back to Online.
+
+### Phase 42: Unified Polymorphic Geometry (`SpatialTrait`)
+**Description**
+Refactor the three fragmented spatial trait structs (`SpatialTrait` for points, `PathTrait` for lines, `RegionTrait` for polygons) into a single, unified `SpatialTrait` backed by a `Geometry` enum. The MIME-like geometry type drives all downstream rendering behavior in Cesium.
+
+**Tasks**
+- [✓] **Initial Multi-Trait Foundation**: Baseline support for points, paths, and polygons established using separate struct-per-geometry architecture.
+- [ ] **`Geometry` Enum**: Define the following enum in `core_engine/src/models.rs`:
+    ```rust
+    pub enum Geometry {
+        Point { lat: f64, lng: f64, alt: Option<f64> },
+        LineString { points: Vec<Vec<f64>>, width: Option<f32>, color: Option<String> },
+        Polygon { boundary: Vec<Vec<f64>>, height: Option<f64>, fill_color: Option<String> },
+    }
+    ```
+- [ ] **Unified `SpatialTrait`**: Replace the separate `lat`, `lng`, `alt`, `points`, `boundary` fields in `SpatialTrait` with a single `geometry: Geometry` field. Remove the `PathTrait` and `RegionTrait` structs entirely from `models.rs`.
+- [ ] **Database Schema Consolidation**: Update `db.rs` to collapse the `path_trait` and `region_trait` SurrealDB tables into a single `spatial_trait` table. Define the `geometry` column as a flexible SurrealDB `object` field.
+- [ ] **Port Consolidation**: In `ports.rs`, remove the `save_path_trait` and `save_region_trait` methods from the `GraphDatabase` trait. All geometry is now persisted via `save_spatial_trait`.
+- [ ] **GeoJSON Serialization**: Implement a `to_geojson_feature()` method on `SpatialTrait` that maps each `Geometry` variant to the correct GeoJSON `type` (`"Point"`, `"LineString"`, `"Polygon"`). This is the single trust boundary between the Rust model and the Cesium renderer.
+- [ ] **Cesium Renderer Update**: Refactor `GlobePanel.tsx` to read a **unified geometry stream** and dispatch rendering (Cesium `PointPrimitive`, `Polyline`, `Polygon`) based on the GeoJSON `type` field in the feature, replacing the separate event handlers for paths and regions.
+- [ ] **Interface Updates**:
+    - [ ] Remove `pathTraits` and `regionTraits` from the Zustand store; merge all geometry into the `spatialTraits` map, keyed by entity ID.
+    - [ ] Update `EntityInspector` in `ViewportPanel.tsx` to render geometry details dynamically based on the variant, without separate `pathTrait` and `regionTrait` prop branches.
+    - [ ] Update `os_cli`'s `spatial add` command to accept a `--geometry` flag (values: `point`, `line`, `polygon`) instead of separate subcommands.
+
+**Checks**
+- [ ] The SurrealDB schema has a single `spatial_trait` table. `SHOW TABLES` returns no `path_trait` or `region_trait`.
+- [ ] `cargo check --workspace` passes with zero warnings and zero references to the removed `PathTrait` and `RegionTrait` structs.
+- [ ] A `Point`, a `LineString`, and a `Polygon` entity all render correctly on the Cesium globe simultaneously using the unified data stream.
+- [ ] The Prolog engine still correctly resolves spatial predicates (e.g., `nearby/2`) after the schema change.
+
+**Current Blockers**:
+- [✓] **Prolog Sync**: Schema and model alignment verified; error was due to missing field in test data.
+
+### Phase 43: Tile Server Extraction (Core → GUI)
+**Description**
+Remove the embedded HTTP tile server from `core_engine/src/tiles.rs` (which uses `axum` and opens a local TCP port) and replace it with a **Tauri Custom URI Scheme Protocol** handler in the GUI. The `.mbtiles` file path is registered as a `BlobTrait` entity in the knowledge graph, making the offline map a first-class trackable asset.
+
+**Tasks**
+- [ ] **Tauri Protocol Handler**: In `os_gui/src-tauri/src/lib.rs`, register a custom URI scheme `spatial-tiles://` using `tauri::Builder::register_uri_scheme_protocol`. The handler opens the `.mbtiles` SQLite file directly using `rusqlite` and returns tile bytes for a given `{z}/{x}/{y}` path.
+- [ ] **TMS Y-coordinate Conversion**: Port the TMS Y-axis inversion logic (`y_tms = (1 << z) - 1 - y`) from `tiles.rs` into the new Tauri protocol handler.
+- [ ] **MIME Type Detection**: Port the magic-byte MIME detection from `tiles.rs` into the handler so vector tiles (`application/vnd.mapbox-vector-tile`) and raster tiles (`image/png`, `image/webp`) are served with the correct `Content-Type`.
+- [ ] **`BlobTrait` Registration**: When the user selects an `.mbtiles` file, record it as a `BlobTrait` entity in the graph with `mime: "application/x-mbtiles"` and the absolute filesystem path in `storage_id`. The GUI reads this trait at startup to find the current tile file.
+- [ ] **Cesium URL Update**: Change the `UrlTemplateImageryProvider` URL in `GlobePanel.tsx` from `http://localhost:{PORT}/tiles/{z}/{x}/{y}` to `spatial-tiles://default/{z}/{x}/{y}`.
+- [ ] **Core Cleanup**: Delete `core_engine/src/tiles.rs`. Remove `axum`, `tokio-rusqlite`, and all tile-serving dependencies from `core_engine/Cargo.toml`. Remove the `TileServer` startup call from the application bootstrap.
+
+**Checks**
+- [ ] The Cesium globe renders offline tiles correctly using the `spatial-tiles://` protocol with no HTTP server running.
+- [ ] `lsof -i :{TILE_PORT}` confirms that no TCP port is opened by the application.
+- [ ] `cargo check --workspace` passes with zero warnings and no reference to the removed `tiles.rs` module.
+- [ ] The `.mbtiles` path is visible as a `BlobTrait` entity in the Entity Registry.
+- [ ] Selecting a new `.mbtiles` file via the native file picker updates the `BlobTrait` and causes Cesium to reload the new tileset.
+
+
+### Phase 44: Versioning & Temporal History (Event Sourcing)
+**Description**
+Transition the data model from a "current state" store to a "Git-like" versioned store. Every update to an entity or trait creates a new version, allowing for auditability and "time-travel" debugging of spatial/agent states.
+
+**Tasks**
+- [ ] **History Tables**: Redefine SurrealDB schema in `db.rs` to use separate history tables or `valid_from`/`valid_to` temporal indices for entities and traits.
+- [ ] **Append-Only Engine**: Update `save_entity` and `save_trait` methods to treat updates as new insertions rather than overrides.
+- [ ] **Snapshot Resolver**: Implement a `get_as_of(timestamp)` query capability in the `GraphDatabase` trait.
+- [ ] **Timeline Sync**: Enable the `TimelinePanel` to act as a historical scrubber, updating the Graph and Globe views to match the selected historical moment.
+
+**Checks**
+- [ ] Updating a `SpatialTrait` twice leaves three records in the database (Creation + 2 updates).
+- [ ] Querying "as of 10 minutes ago" returns the entity in its previous geographic position.
+
+### Phase 45: Formal Ontology & Semantic Inferencing
+**Description**
+Upgrade relationship labels from simple strings to first-class semantic types. Implement rules for transitivity and inheritance so the system can "understand" that if a Document is *inside* a Folder, and the Folder *moves*, the Document moves too.
+
+**Tasks**
+- [ ] **Edge Schema**: Define a `RelationshipOntology` registry where labels (like `is_part_of`) are assigned properties (Transitive, Symmetric, etc.).
+- [ ] **Trait Inheritance Engine**: Implement a resolver that allows child entities to functionally "inherit" traits (like `SpatialTrait`) from their parents across semantic edges.
+- [ ] **Inference Service**: Link the `core_engine` to the `prolog_engine` for recursive relationship discovery (e.g., "Find all ancestors").
+
+**Checks**
+- [ ] A "File" node with no `SpatialTrait` accurately reports the coordinates of its "Server" parent node via the `is_hosted_on` edge.
+- [ ] Proximity searches correctly identify inherited positions of sub-entities.
+
+### Phase 46: Edge Traits (Smart Arrows)
+**Description**
+Implement "Smart Arrows" by utilizing SurrealDB's first-class relationship properties. Move data like "Connection Strength" or "Network Latency" from entity metadata directly onto the relationship edge.
+
+**Tasks**
+- [ ] **Schema Expansion**: Update `DEFINE TABLE edge` in `db.rs` to be `SCHEMAFULL` with typed fields (e.g., `strength: float`, `latency: int`, `metadata: object`).
+- [ ] **Edge Model**: Define `EdgeProperties` in `models.rs` and update the `RELATE` syntax to use `SET content = $data`.
+- [ ] **Unified Traversal**: Upgrade `GraphDatabase::get_edges` to return the full property record instead of just a string label.
+- [ ] **GUI Edge Inspector**: Enable the `ViewportPanel` to inspect and edit an edge's properties when a connection is selected in the Graph view.
+
+**Checks**
+- [ ] Creating an edge with `strength = 0.9` persists accurately in SurrealDB.
+- [ ] The `sql` terminal command effectively filters edges based on properties (e.g., `SELECT * FROM edge WHERE latency < 5ms`).
+
+### Phase 47: Semantic Metadata Enforcement
+**Description**
+Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
+
+**Tasks**
+- [ ] **Schema Registry**: Build a registration system in `core_engine` for `EntityKind` metadata requirements (using JSON Schema or similar).
+- [ ] **Validation Middleware**: Add a validation step in `save_entity` that halts persistence if the provided metadata violates the Kind's schema.
+- [ ] **GUI Form Generation**: Auto-generate property input fields in the `EntityInspector` based on the required schema for the entity's kind.
+
+**Checks**
+- [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
+- [ ] The Inspector highlights missing but required fields in red.
+
+### Phase 48: Universal Content Trait & Unified Logic Integration
+**Description**
+Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into the unified `BlobTrait`. Instead of specialized traits, the system utilizes the `mime` field as the semantic discriminator. The `LogicTrait` is eliminated; logic rules are now stored as content-addressed blobs within the CAS.
+
+**Tasks**
+- [ ] **Trait Consolidation**: Remove `LogicTrait` and any "TextTrait" drafts. Update `BlobTrait` to ensure the `mime` type is strictly enforced as the primary metadata field.
+- [ ] **Logic-as-a-Blob**: Refactor the `InferenceEngine` (Prolog) to fetch rules by subscribing to `BlobTrait` events where `mime == "application/x-prolog"`.
+- [ ] **MIME-Driven Dispatch**: Implement a centralized `ContentDispatcher` in the GUI that automatically selects the correct viewer (Text Editor, Markdown Preview, 3D Renderer) based on the `BlobTrait` MIME type.
+- [ ] **CAS Consistency**: Ensure that all text-based content (including logic) is stored in the CAS and referenced by its hash via the `BlobTrait`, bringing automatic deduplication and versioning to the system rules.
+
+**Checks**
+- [ ] Prolog rules stored in the CAS are successfully loaded and executed by the `prolog_engine`.
+- [ ] The `PreviewPanel` correctly switches between a 3D view (for `.gltf`) and a Text Editor (for `.md` or `.pl`) using only the `BlobTrait` data.
+- [ ] `cargo check --workspace` passes without any reference to the deprecated `LogicTrait`.
+
+### Phase 49: Multilingual Ontology (`LabelTrait`)
+**Description**
+Implement a first-class multilingual naming system. Entities will support a canonical language representation while providing translated labels for any globally defined locale via the dedicated `LabelTrait`.
+
+**Tasks**
+- [ ] **Entity Schema Expansion**: Add a `canonical_lang` field (IETF BCP 47) to the `Entity` model and the SurrealDB `entity` table (e.g., defaults to `"en"`).
+- [ ] **LabelTrait Implementation**: Define the `LabelTrait` struct (`owner`, `lang`, `text`) and its corresponding SurrealDB table.
+- [ ] **Resolution Logic**: Implement the layered label resolver: (1) Active Locale Trait -> (2) Canonical Language Trait -> (3) Fallback `entity.label`.
+- [ ] **Locale Management**: Integrated a global locale selector in the GUI and a `--lang` session flag in the CLI to toggle the active display language across the entire graph.
+
+**Checks**
+- [ ] An entity created with `canonical_lang: "de"` correctly displays its German label even if the UI is set to English (if no English `LabelTrait` exists).
+- [ ] Adding a new `LabelTrait` for an existing entity instantly updates its display name in the Graph and Registry views.
+- [ ] The CLI `entity ls` command respects the `--lang` flag when displaying labels.
+
+### Phase 50: UI Utilities & UX Hardening
+**Description**
+Enhance the user experience with native integration for file management and quick identifier access.
+
+**Tasks**
+- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
+- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
+- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
+
+**Checks**
+- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
+- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+### Phase 51: Contextual & Query-Based Data Loading
+**Description**
+Improve system performance and discovery by moving from "all-or-nothing" state loading to granular, context-aware hydration.
+
+**Tasks**
+- [ ] **Context Loading Engine**: Implement a backend capability to load the "context" of a given entity (fetching all neighbors and related nodes within a specific hop count).
+- [ ] **Selective Hydration**: Update the Zustand store and SurrealDB queries to support loading specific subgraphs based on active exploration rather than full table scans.
+- [ ] **Query-Based Filtering**: Add support for selective loading via complex queries (e.g., "Load all 'Physical' nodes related to 'Location X'") within the GUI.
+
+**Checks**
+- [ ] Requesting an entity's context correctly populates the graph with relevant relationships.
+- [ ] Large databases do not stall the UI; only the queried subset is processed by the renderer.
+- [ ] `cargo check --workspace` passes with zero warnings.
+
+### Phase 52: Flexible Panel Architecture & Tab Merging
+**Description**
+Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursive panel system. Every component (Entity Registry, Inspector, Asset Preview, Timeline, and Calendar) becomes an atomic standalone panel that can either tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
+
+**Tasks**
+- [ ] **Atomic Component Extraction**: Decouple `EntityRegistry`, `EntityInspector`, `AssetPreview`, `Timeline`, and `Calendar` into independent top-level components, removing the rigid `ViewportPanel` and `TimelinePanel` containers.
+- [ ] **Recursive Tab-Group State**: Update the Zustand layout store to support a recursive tree structure where any DWM tile can be either a "Single Component" or a "Tab Group" containing multiple components.
+- [ ] **Drag-to-Merge Workflow**: Implement a header-based drag-and-drop interface where dragging a panel's title bar and dropping it onto another panel's header area merges them into a shared Tab Group.
+- [ ] **Tiling/Tab Seamless Transition**: Ensure panels can be easily "detached" from a Tab Group back into a standalone tile or floating window.
+- [ ] **Workspace Persistence**: Save and restore the entire recursive layout state (tiled, floating, and tabbed) across application restarts.
+
+**Checks**
+- [ ] Every component can be opened as a standalone tiling window by default.
+- [ ] Dropping the `Timeline` panel onto the `Inspector` header correctly merges them into a tabbed interface.
+- [ ] Resizing a Tab Group correctly scales all internal tabbed components.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+---
+
+## Potential Future Phases
+
+> The following phases are defined for directional reference. They are not yet scheduled and should be promoted to the main roadmap when their prerequisites are met.
+
+### Phase 52 (Potential): Live OSINT Ingestion (ADSB, TLE, Maritime)
+**Description**
+Build background workers in the Rust `core_engine` to ingest live Open Source Intelligence (OSINT) feeds (aircraft, satellites, maritime vessels) and broadcast them via the `EventBus`.
+
+**Tasks**
+- [ ] **ADSB Worker**: Implement an async Tokio worker to poll ADSB-Exchange or OpenSky for live aircraft coordinates.
+- [ ] **Satellite TLE Worker**: Integrate TLE propagation (via a Rust SGP4 crate) in the backend to compute live orbital positions from NORAD data.
+- [ ] **EventBus Mapping**: Map incoming live signals to ephemeral `Entity` nodes with `SpatialTrait` and `TemporalTrait` and emit them on the `EventBus`.
+- [ ] **Throttle Logic**: Implement spatial dead-reckoning to suppress IPC traffic for slowly-moving entities, reducing frontend update pressure.
+
+**Checks**
+- [ ] Live satellites and aircraft appear on the globe without manual refresh.
+- [ ] The `os_cli` can query the live position of any tracked agent via `entity ls --kind agent`.
+- [ ] Dead-reckoning correctly suppresses redundant updates (verified via EventBus message counters).
+- [ ] `cargo check --workspace` passes with zero warnings.
+
+### Phase 53 (Potential): Shader Intelligence (NVG, Thermal, CRT)
+**Description**
+Implement custom WebGL post-processing via Cesium's `PostProcessStageCollection` to emulate specialized sensor views: Night Vision Goggles (NVG), FLIR thermal, and a retro CRT aesthetic.
+
+**Tasks**
+- [ ] **NVG Stage**: Implement a fragment shader stage applying green-phosphor tint and procedural noise to simulate NVG optics.
+- [ ] **Thermal Stage**: Implement a luminance-to-heatmap fragment shader (cool-to-warm palette) to simulate FLIR.
+- [ ] **CRT Filter**: Add scanline and chromatic-aberration post-processing as a global Cesium post-process stage or CSS/shader overlay.
+- [ ] **Uniform Control**: Wire shader parameters (gain, noise level, palette intensity) to the Properties Panel when the 3D Viewport is focused.
+- [ ] **Mode Toggle**: Add a view-mode selector (Normal / NVG / Thermal / CRT) to the Globe panel toolbar.
+
+**Checks**
+- [ ] Toggle between Normal, NVG, Thermal, and CRT modes is instantaneous (no globe reload).
+- [ ] Shaders correctly preserve transparency for UI overlays (labels, icons, billboards).
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+### Phase 54 (Potential): 4D Causal Reconstruction
+**Description**
+Unify the Globe and Timeline for "God's Eye" historical playback — replaying any recorded event with all spatial actors (aircraft, ships, satellites) in their correct 3D positions, synchronized to the timeline scrubber.
+
+**Tasks**
+- [ ] **Record Mode**: Implement a Record mode that persists `EventBus` spatial updates into SurrealDB with sub-second temporal resolution (nanosecond `event_at` precision).
+- [ ] **Cesium Clock Sync**: Link the `TimelinePanel` scrub action to the Cesium `Clock` API so all entity positions update in lock-step during playback.
+- [ ] **Causal Highlighting**: When a node is selected on the `GraphPanel`, highlight the corresponding aircraft path and satellite overhead at the entity's exact timestamp on the globe.
+- [ ] **Playback Controls**: Add play/pause/speed controls to the `TimelinePanel` for replay sessions.
+
+**Checks**
+- [ ] Replaying a historical event shows all moving entities (planes, ships, satellites) in their correct 3D positions synchronized to the timeline.
+- [ ] Causal node selection correctly cross-links the Graph, Timeline, and Globe views simultaneously.
+- [ ] Sub-second resolution is preserved through the SurrealDB → IPC → Cesium Clock pipeline.
+- [ ] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
+
+### Phase 55 (Potential): Agentic Geospatial Command
+**Description**
+Integrate the LLM/Prolog inference engines with the geospatial layer to enable natural language "vibe-coding" queries that resolve to visual spatial selections and automated globe camera control.
+
+**Tasks**
+- [ ] **NLP-to-Spatial Query**: Implement `agent find "<natural language>"` in `os_cli` and the GUI terminal (e.g., "satellites over Austin") translating to structured SurrealDB spatial-temporal queries.
+- [ ] **Automatic Camera Control**: Allow the inference result to emit `camera_fly_to` Tauri IPC commands, flying the globe to the relevant area automatically.
+- [ ] **Constraint-Based Search**: Expose complex Prolog constraint patterns (e.g., "Find all tankers that turned off AIS within 50km of a known strike") using the `prolog_engine` inference loop.
+- [ ] **Cross-Panel Visual Resolution**: Resolved query results highlight matching entities on the `GraphPanel`, `TimelinePanel`, and Globe simultaneously.
+
+**Checks**
+- [ ] `agent find "satellites over Austin"` returns valid globe positions and flies the camera to the result.
+- [ ] Complex OSINT Prolog queries resolve to visual selections across all three panels (Graph, Timeline, Globe).
+- [ ] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
