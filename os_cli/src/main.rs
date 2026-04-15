@@ -85,7 +85,11 @@ enum EntitySub {
     /// Remove an entity
     Rm { term: String },
     /// List all active entities
-    Ls,
+    Ls {
+        /// Display labels resolved to this language (IETF BCP 47, e.g. "de").
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
     /// Search entities by label/metadata
     Search { term: String },
     /// Update metadata via JSON
@@ -199,6 +203,7 @@ async fn handle_blob(db: SurrealDbAdapter, bus: EventBus, blob: Arc<core_engine:
                 id: id.clone(),
                 kind: EntityKind::Blob,
                 label: label.clone(),
+                lang_canonical: "en".to_string(),
                 metadata: {
                     let mut m = HashMap::new();
                     m.insert("source_path".to_string(), serde_json::Value::String(file.clone()));
@@ -291,6 +296,7 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 id: id.clone(),
                 kind: kind_enum,
                 label: label.clone(),
+                lang_canonical: "en".to_string(),
                 metadata: HashMap::new(),
                 deleted_at: None,
             };
@@ -307,10 +313,11 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                 println!("❌ Could not resolve entity: {}", term);
             }
         }
-        EntitySub::Ls => {
+        EntitySub::Ls { lang } => {
             let entities = db.list_entities().await?;
             for e in entities {
-                println!("- {:?} | {} ({})", e.kind, e.label, e.id);
+                let display = db.resolve_display_label(&e.id, &lang).await.unwrap_or_else(|_| e.label.clone());
+                println!("- {:?} | {} ({})", e.kind, display, e.id);
             }
         }
         EntitySub::Search { term } => {
@@ -361,6 +368,7 @@ async fn handle_entity(db: SurrealDbAdapter, bus: EventBus, sub: EntitySub) -> R
                         id: id.clone(),
                         kind: EntityKind::Abstract,
                         label: tag.clone(),
+                        lang_canonical: "en".to_string(),
                         metadata: HashMap::new(),
                         deleted_at: None,
                     };

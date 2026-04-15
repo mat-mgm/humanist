@@ -483,6 +483,179 @@ Provide advanced, programmer-friendly configuration capabilities by treating nod
 - [✓] Terminal auto-focuses and elevates to the foreground when an editing session starts.
 - [✓] "Open Externally" command opens files using the native system handler (via `opener`).
 
+### Phase 41: Versioning & Temporal History (Lightweight Shadow History)
+**Description**
+Add auditable version history to entities and traits using a dual-write shadow history strategy. The main write path (UPSERT) is preserved intact. On every write, a timestamped copy is appended to dedicated history tables. A `get_as_of(entity_id, timestamp)` resolver reconstructs the entity/trait state at any past moment. The `EntityInspector` gains a shallow "History" section listing versions; clicking one populates the inspector fields with that snapshot (no full graph/globe time-travel).
+
+**Approach**: Lightweight Shadow History (Option B) — entities + all traits versioned (b) — Inspector-only shallow snapshot view.
+
+**Tasks**
+
+*Backend — Schema*
+- [✓] **History Tables**: Define two new SurrealDB tables in `db.rs`:
+  - `entity_history` — full copy of every entity write + `changed_at: datetime` + `entity_id: string`.
+  - `trait_history` — unified shadow for all traits, with `trait_type: string` discriminator (`"spatial"`, `"temporal"`), `entity_id: string`, `changed_at: datetime`, and `data: object` holding the serialized trait payload.
+
+*Backend — Dual-Write*
+- [✓] **Entity Shadow Write**: After every successful `save_entity` UPSERT, insert the full entity struct into `entity_history` with `changed_at = time::now()`.
+- [✓] **Trait Shadow Write**: After every successful `save_spatial_trait` / `save_temporal_trait` UPSERT, append one record to `trait_history` with the appropriate `trait_type` discriminator and full trait data in `data`.
+
+*Backend — Query*
+- [✓] **`get_entity_history(id)`**: Add to `GraphDatabase` port trait + `db.rs` implementation. Returns all `entity_history` records for a given entity ID, ordered by `changed_at` descending.
+- [✓] **`get_as_of(id, timestamp)`**: Add to `GraphDatabase` port + `db.rs`. Returns the single `entity_history` record with the largest `changed_at ≤ timestamp` for the given entity.
+
+*IPC Layer*
+- [✓] **Tauri Commands**: Expose `get_entity_history` and `get_as_of` as Tauri IPC commands in `src-tauri/src/lib.rs`.
+
+*Frontend — State*
+- [✓] **Store**: Add `entityHistory: EntitySnapshot[]` and `fetchEntityHistory(id)` action to Zustand `store.ts`. Define `EntitySnapshot` type in `models.ts` (mirrors `Entity` + `changedAt: string`).
+
+*Frontend — UI*
+- [✓] **Inspector History Section**: Add a collapsible "History" section at the bottom of `EntityInspector` in `ViewportPanel.tsx`. Lists versions as `[timestamp] — label (kind)` rows. Clicking a row calls `get_as_of` and displays the snapshot fields in a read-only overlay within the inspector (clearly marked "Viewing snapshot — read only").
+
+**Checks**
+- [✓] After two updates to the same entity's label, `entity_history` contains 3 records for that ID (initial create + 2 updates).
+- [✓] `get_as_of(id, T)` where T is between the first and second update returns the first updated label, not the latest.
+- [✓] The Inspector "History" section lists all versions with correct timestamps.
+- [✓] Clicking a snapshot row in the Inspector correctly populates the read-only snapshot view.
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 42: Semantic Edges — Ontology, Payloads & Trait Inheritance
+**Description**
+Elevate edges from dumb labeled arrows into first-class semantic objects. Each edge label is backed by a `relationship_type` definition (carrying properties like `transitive`, `symmetric`, `inherits_traits`) stored in SurrealDB for runtime extensibility. Individual edge instances gain a typed payload (`strength`, `latency`, `metadata`). A Rust resolver uses the `inherits_traits` flag to walk parent edges and resolve inherited `SpatialTrait` values for entities that have none of their own.
+
+**Tasks**
+
+*Backend — Schema*
+- [✓] **`relationship_type` table**: Define in `db.rs` with fields `label: string`, `transitive: bool`, `symmetric: bool`, `inherits_traits: bool`. Add a unique index on `label`.
+- [✓] **`edge` payload fields**: Extend the existing `edge` table with `strength: option<float>`, `latency: option<int>`, `metadata: object FLEXIBLE`.
+
+*Backend — Models & Port*
+- [✓] **`RelationshipType` model**: Add to `models.rs`.
+- [✓] **`EdgeRecord` model**: Replace the current `(String, String, String)` tuple with a proper struct (`from`, `to`, `label`, `strength`, `latency`, `metadata`) in `models.rs`.
+- [✓] **Port methods**: Add to `GraphDatabase` — `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_edges` updated to return `Vec<EdgeRecord>`.
+- [✓] **Trait inheritance resolver**: Add `get_effective_spatial_trait(entity_id: &str) -> Result<Option<SpatialTrait>, String>` to `GraphDatabase`. Walks outgoing edges whose `relationship_type` has `inherits_traits = true`, up to 5 hops, returning the first ancestor `SpatialTrait` found.
+- [✓] **Symmetric edge expansion**: `get_edges` expands symmetric relationship types at read time — a single stored edge with a symmetric label emits both directions without duplicate records.
+
+*IPC Layer*
+- [✓] **Tauri commands**: `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_effective_spatial_trait`. Update `add_edge` / `get_edges` to pass edge payload fields.
+
+*Frontend — State & Models*
+- [✓] **Models**: Add `RelationshipType` and `EdgeRecord` interfaces to `models.ts`. Update `GraphEdge` in `store.ts` to use `EdgeRecord`.
+- [✓] **Store**: Add `relationshipTypes: RelationshipType[]`, `fetchRelationshipTypes`, `saveRelationshipType`, `deleteRelationshipType` actions.
+
+*Frontend — UI*
+- [✓] **Relationship Type Manager**: Dedicated "Ontology" tab in `ViewportPanel` listing defined types, with a form to create new ones (label + toggles for `transitive`, `symmetric`, `inherits_traits`).
+- [✓] **Edge Inspector**: In `ViewportPanel`, clicking a relationship row expands an inline payload section showing `strength`, `latency`, `metadata`.
+- [✓] **Inherited trait display**: In the Inspector, if an entity has no `SpatialTrait`, `get_effective_spatial_trait` is called and coordinates are shown marked "Inherited from ancestor".
+
+**Checks**
+- [✓] A `relationship_type` record for `is_hosted_on` with `inherits_traits = true` persists in SurrealDB and appears in the type manager.
+- [✓] A "File" entity with no `SpatialTrait` returns its "Server" parent's coordinates via `get_effective_spatial_trait` when connected by an `is_hosted_on` edge.
+- [✓] Creating an edge with `strength = 0.9` persists correctly; `SELECT * FROM edge WHERE strength > 0.5` returns it via the SQL terminal.
+- [✓] The Edge Inspector shows `strength`, `latency`, and `metadata` for a selected edge.
+- [✓] A symmetric type (e.g. `is_connected_to`) causes A→B to appear as both directions in the graph; `SELECT * FROM edge` shows only one stored record.
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 43: Multilingual Ontology (`LabelTrait`)
+**Description**
+Implement a first-class multilingual naming system. Entities will support a canonical language representation while providing translated labels for any globally defined locale via the dedicated `LabelTrait`.
+
+**Tasks**
+- [✓] **Entity Schema Expansion**: Add a `lang_canonical` field (IETF BCP 47) to the `Entity` model and the SurrealDB `entity` table (defaults to `"en"`).
+- [✓] **LabelTrait Implementation**: Define the `LabelTrait` struct (`owner`, `lang`, `text`) and its corresponding SurrealDB table with unique index on `(owner, lang)`.
+- [✓] **Resolution Logic**: Implement the layered label resolver: (1) Active Locale Trait -> (2) Canonical Language Trait -> (3) Fallback `entity.label`. Applied app-wide via `resolvedLabel()` pure helper in the store; drives GraphPanel nodes, DataTablePanel rows, and EntityInspector header.
+- [✓] **Locale Management**: Language selector in the View menu (under Theme). `--lang` flag on `entity ls` in the CLI.
+
+**Checks**
+- [✓] An entity created with `lang_canonical: "de"` correctly displays its German label even if the UI is set to English (if no English `LabelTrait` exists).
+- [✓] Adding a new `LabelTrait` for an existing entity instantly updates its display name in the Graph and Registry views.
+- [✓] The CLI `entity ls` command respects the `--lang` flag when displaying labels.
+
+### Phase 44: UI Utilities & UX Hardening
+**Description**
+Enhance the user experience with native integration for file management and quick identifier access.
+
+**Tasks**
+- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
+- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
+- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
+
+**Checks**
+- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
+- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+### Phase 45: Contextual & Query-Based Data Loading
+**Description**
+Improve system performance and discovery by moving from "all-or-nothing" state loading to granular, context-aware hydration.
+
+**Tasks**
+- [ ] **Context Loading Engine**: Implement a backend capability to load the "context" of a given entity (fetching all neighbors and related nodes within a specific hop count).
+- [ ] **Selective Hydration**: Update the Zustand store and SurrealDB queries to support loading specific subgraphs based on active exploration rather than full table scans.
+- [ ] **Query-Based Filtering**: Add support for selective loading via complex queries (e.g., "Load all 'Physical' nodes related to 'Location X'") within the GUI.
+
+**Checks**
+- [ ] Requesting an entity's context correctly populates the graph with relevant relationships.
+- [ ] Large databases do not stall the UI; only the queried subset is processed by the renderer.
+- [ ] `cargo check --workspace` passes with zero warnings.
+
+### Phase 46: Flexible Panel Architecture & Tab Merging
+**Description**
+Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursive panel system. Every component (Entity Registry, Inspector, Asset Preview, Timeline, and Calendar) becomes an atomic standalone panel that can either tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
+
+**Tasks**
+- [ ] **Atomic Component Extraction**: Decouple `EntityRegistry`, `EntityInspector`, `AssetPreview`, `Timeline`, and `Calendar` into independent top-level components, removing the rigid `ViewportPanel` and `TimelinePanel` containers.
+- [ ] **Recursive Tab-Group State**: Update the Zustand layout store to support a recursive tree structure where any DWM tile can be either a "Single Component" or a "Tab Group" containing multiple components.
+- [ ] **Drag-to-Merge Workflow**: Implement a header-based drag-and-drop interface where dragging a panel's title bar and dropping it onto another panel's header area merges them into a shared Tab Group.
+- [ ] **Tiling/Tab Seamless Transition**: Ensure panels can be easily "detached" from a Tab Group back into a standalone tile or floating window.
+- [ ] **Workspace Persistence**: Save and restore the entire recursive layout state (tiled, floating, and tabbed) across application restarts.
+
+**Checks**
+- [ ] Every component can be opened as a standalone tiling window by default.
+- [ ] Dropping the `Timeline` panel onto the `Inspector` header correctly merges them into a tabbed interface.
+- [ ] Resizing a Tab Group correctly scales all internal tabbed components.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+### Phase 45: Semantic Metadata Enforcement
+**Description**
+Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
+
+**Tasks**
+- [ ] **Schema Registry**: Build a registration system in `core_engine` for `EntityKind` metadata requirements (using JSON Schema or similar).
+- [ ] **Validation Middleware**: Add a validation step in `save_entity` that halts persistence if the provided metadata violates the Kind's schema.
+- [ ] **GUI Form Generation**: Auto-generate property input fields in the `EntityInspector` based on the required schema for the entity's kind.
+
+**Checks**
+- [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
+- [ ] The Inspector highlights missing but required fields in red.
+
+### Phase 46: Universal Content Trait & Unified Logic Integration
+**Description**
+Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into the unified `BlobTrait`. Instead of specialized traits, the system utilizes the `mime` field as the semantic discriminator. The `LogicTrait` is eliminated; logic rules are now stored as content-addressed blobs within the CAS.
+
+**Tasks**
+- [ ] **Trait Consolidation**: Remove `LogicTrait` and any "TextTrait" drafts. Update `BlobTrait` to ensure the `mime` type is strictly enforced as the primary metadata field.
+- [ ] **Logic-as-a-Blob**: Refactor the `InferenceEngine` (Prolog) to fetch rules by subscribing to `BlobTrait` events where `mime == "application/x-prolog"`.
+- [ ] **MIME-Driven Dispatch**: Implement a centralized `ContentDispatcher` in the GUI that automatically selects the correct viewer (Text Editor, Markdown Preview, 3D Renderer) based on the `BlobTrait` MIME type.
+- [ ] **CAS Consistency**: Ensure that all text-based content (including logic) is stored in the CAS and referenced by its hash via the `BlobTrait`, bringing automatic deduplication and versioning to the system rules.
+
+**Checks**
+- [ ] Prolog rules stored in the CAS are successfully loaded and executed by the `prolog_engine`.
+- [ ] The `PreviewPanel` correctly switches between a 3D view (for `.gltf`) and a Text Editor (for `.md` or `.pl`) using only the `BlobTrait` data.
+- [ ] `cargo check --workspace` passes without any reference to the deprecated `LogicTrait`.
+
+**Current Blockers**:
+- [ ] **Prolog execution trigger**: Decide how prolog should interface with the rest of the system i.e. core, gui, cli and what should trigger prolog blob loading or inference.
+
+---
+
+## Potential Future Phases
+
+> The following phases are defined for directional reference. They are not yet scheduled and should be promoted to the main roadmap when their prerequisites are met.
+
 ### Phase 41: Hybrid Globe Imagery & Local Fallback (10–20 GB)
 **Description**
 Implement a dual-layer imagery strategy: high-fidelity streaming via Google 3D Tiles and a robust, multi-gigabyte local fallback for offline/air-gapped operations.
@@ -556,176 +729,6 @@ Remove the embedded HTTP tile server from `core_engine/src/tiles.rs` (which uses
 - [ ] The `.mbtiles` path is visible as a `BlobTrait` entity in the Entity Registry.
 - [ ] Selecting a new `.mbtiles` file via the native file picker updates the `BlobTrait` and causes Cesium to reload the new tileset.
 
-
-### Phase 44: Versioning & Temporal History (Lightweight Shadow History)
-**Description**
-Add auditable version history to entities and traits using a dual-write shadow history strategy. The main write path (UPSERT) is preserved intact. On every write, a timestamped copy is appended to dedicated history tables. A `get_as_of(entity_id, timestamp)` resolver reconstructs the entity/trait state at any past moment. The `EntityInspector` gains a shallow "History" section listing versions; clicking one populates the inspector fields with that snapshot (no full graph/globe time-travel).
-
-**Approach**: Lightweight Shadow History (Option B) — entities + all traits versioned (b) — Inspector-only shallow snapshot view.
-
-**Tasks**
-
-*Backend — Schema*
-- [✓] **History Tables**: Define two new SurrealDB tables in `db.rs`:
-  - `entity_history` — full copy of every entity write + `changed_at: datetime` + `entity_id: string`.
-  - `trait_history` — unified shadow for all traits, with `trait_type: string` discriminator (`"spatial"`, `"temporal"`), `entity_id: string`, `changed_at: datetime`, and `data: object` holding the serialized trait payload.
-
-*Backend — Dual-Write*
-- [✓] **Entity Shadow Write**: After every successful `save_entity` UPSERT, insert the full entity struct into `entity_history` with `changed_at = time::now()`.
-- [✓] **Trait Shadow Write**: After every successful `save_spatial_trait` / `save_temporal_trait` UPSERT, append one record to `trait_history` with the appropriate `trait_type` discriminator and full trait data in `data`.
-
-*Backend — Query*
-- [✓] **`get_entity_history(id)`**: Add to `GraphDatabase` port trait + `db.rs` implementation. Returns all `entity_history` records for a given entity ID, ordered by `changed_at` descending.
-- [✓] **`get_as_of(id, timestamp)`**: Add to `GraphDatabase` port + `db.rs`. Returns the single `entity_history` record with the largest `changed_at ≤ timestamp` for the given entity.
-
-*IPC Layer*
-- [✓] **Tauri Commands**: Expose `get_entity_history` and `get_as_of` as Tauri IPC commands in `src-tauri/src/lib.rs`.
-
-*Frontend — State*
-- [✓] **Store**: Add `entityHistory: EntitySnapshot[]` and `fetchEntityHistory(id)` action to Zustand `store.ts`. Define `EntitySnapshot` type in `models.ts` (mirrors `Entity` + `changedAt: string`).
-
-*Frontend — UI*
-- [✓] **Inspector History Section**: Add a collapsible "History" section at the bottom of `EntityInspector` in `ViewportPanel.tsx`. Lists versions as `[timestamp] — label (kind)` rows. Clicking a row calls `get_as_of` and displays the snapshot fields in a read-only overlay within the inspector (clearly marked "Viewing snapshot — read only").
-
-**Checks**
-- [✓] After two updates to the same entity's label, `entity_history` contains 3 records for that ID (initial create + 2 updates).
-- [✓] `get_as_of(id, T)` where T is between the first and second update returns the first updated label, not the latest.
-- [✓] The Inspector "History" section lists all versions with correct timestamps.
-- [✓] Clicking a snapshot row in the Inspector correctly populates the read-only snapshot view.
-- [✓] `cargo check --workspace` passes with zero warnings.
-- [✓] `npm run build` passes with zero TypeScript errors.
-
-### Phase 45: Semantic Edges — Ontology, Payloads & Trait Inheritance
-**Description**
-Elevate edges from dumb labeled arrows into first-class semantic objects. Each edge label is backed by a `relationship_type` definition (carrying properties like `transitive`, `symmetric`, `inherits_traits`) stored in SurrealDB for runtime extensibility. Individual edge instances gain a typed payload (`strength`, `latency`, `metadata`). A Rust resolver uses the `inherits_traits` flag to walk parent edges and resolve inherited `SpatialTrait` values for entities that have none of their own.
-
-**Tasks**
-
-*Backend — Schema*
-- [✓] **`relationship_type` table**: Define in `db.rs` with fields `label: string`, `transitive: bool`, `symmetric: bool`, `inherits_traits: bool`. Add a unique index on `label`.
-- [✓] **`edge` payload fields**: Extend the existing `edge` table with `strength: option<float>`, `latency: option<int>`, `metadata: object FLEXIBLE`.
-
-*Backend — Models & Port*
-- [✓] **`RelationshipType` model**: Add to `models.rs`.
-- [✓] **`EdgeRecord` model**: Replace the current `(String, String, String)` tuple with a proper struct (`from`, `to`, `label`, `strength`, `latency`, `metadata`) in `models.rs`.
-- [✓] **Port methods**: Add to `GraphDatabase` — `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_edges` updated to return `Vec<EdgeRecord>`.
-- [✓] **Trait inheritance resolver**: Add `get_effective_spatial_trait(entity_id: &str) -> Result<Option<SpatialTrait>, String>` to `GraphDatabase`. Walks outgoing edges whose `relationship_type` has `inherits_traits = true`, up to 5 hops, returning the first ancestor `SpatialTrait` found.
-- [✓] **Symmetric edge expansion**: `get_edges` expands symmetric relationship types at read time — a single stored edge with a symmetric label emits both directions without duplicate records.
-
-*IPC Layer*
-- [✓] **Tauri commands**: `save_relationship_type`, `list_relationship_types`, `delete_relationship_type`, `get_effective_spatial_trait`. Update `add_edge` / `get_edges` to pass edge payload fields.
-
-*Frontend — State & Models*
-- [✓] **Models**: Add `RelationshipType` and `EdgeRecord` interfaces to `models.ts`. Update `GraphEdge` in `store.ts` to use `EdgeRecord`.
-- [✓] **Store**: Add `relationshipTypes: RelationshipType[]`, `fetchRelationshipTypes`, `saveRelationshipType`, `deleteRelationshipType` actions.
-
-*Frontend — UI*
-- [✓] **Relationship Type Manager**: Dedicated "Ontology" tab in `ViewportPanel` listing defined types, with a form to create new ones (label + toggles for `transitive`, `symmetric`, `inherits_traits`).
-- [✓] **Edge Inspector**: In `ViewportPanel`, clicking a relationship row expands an inline payload section showing `strength`, `latency`, `metadata`.
-- [✓] **Inherited trait display**: In the Inspector, if an entity has no `SpatialTrait`, `get_effective_spatial_trait` is called and coordinates are shown marked "Inherited from ancestor".
-
-**Checks**
-- [✓] A `relationship_type` record for `is_hosted_on` with `inherits_traits = true` persists in SurrealDB and appears in the type manager.
-- [✓] A "File" entity with no `SpatialTrait` returns its "Server" parent's coordinates via `get_effective_spatial_trait` when connected by an `is_hosted_on` edge.
-- [✓] Creating an edge with `strength = 0.9` persists correctly; `SELECT * FROM edge WHERE strength > 0.5` returns it via the SQL terminal.
-- [✓] The Edge Inspector shows `strength`, `latency`, and `metadata` for a selected edge.
-- [✓] A symmetric type (e.g. `is_connected_to`) causes A→B to appear as both directions in the graph; `SELECT * FROM edge` shows only one stored record.
-- [✓] `cargo check --workspace` passes with zero warnings.
-- [✓] `npm run build` passes with zero TypeScript errors.
-
-### Phase 46: Semantic Metadata Enforcement (was 47)
-**Description**
-Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
-
-**Tasks**
-- [ ] **Schema Registry**: Build a registration system in `core_engine` for `EntityKind` metadata requirements (using JSON Schema or similar).
-- [ ] **Validation Middleware**: Add a validation step in `save_entity` that halts persistence if the provided metadata violates the Kind's schema.
-- [ ] **GUI Form Generation**: Auto-generate property input fields in the `EntityInspector` based on the required schema for the entity's kind.
-
-**Checks**
-- [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
-- [ ] The Inspector highlights missing but required fields in red.
-
-### Phase 47: Universal Content Trait & Unified Logic Integration (was 48)
-**Description**
-Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into the unified `BlobTrait`. Instead of specialized traits, the system utilizes the `mime` field as the semantic discriminator. The `LogicTrait` is eliminated; logic rules are now stored as content-addressed blobs within the CAS.
-
-**Tasks**
-- [ ] **Trait Consolidation**: Remove `LogicTrait` and any "TextTrait" drafts. Update `BlobTrait` to ensure the `mime` type is strictly enforced as the primary metadata field.
-- [ ] **Logic-as-a-Blob**: Refactor the `InferenceEngine` (Prolog) to fetch rules by subscribing to `BlobTrait` events where `mime == "application/x-prolog"`.
-- [ ] **MIME-Driven Dispatch**: Implement a centralized `ContentDispatcher` in the GUI that automatically selects the correct viewer (Text Editor, Markdown Preview, 3D Renderer) based on the `BlobTrait` MIME type.
-- [ ] **CAS Consistency**: Ensure that all text-based content (including logic) is stored in the CAS and referenced by its hash via the `BlobTrait`, bringing automatic deduplication and versioning to the system rules.
-
-**Checks**
-- [ ] Prolog rules stored in the CAS are successfully loaded and executed by the `prolog_engine`.
-- [ ] The `PreviewPanel` correctly switches between a 3D view (for `.gltf`) and a Text Editor (for `.md` or `.pl`) using only the `BlobTrait` data.
-- [ ] `cargo check --workspace` passes without any reference to the deprecated `LogicTrait`.
-
-### Phase 48: Multilingual Ontology (`LabelTrait`) (was 49)
-**Description**
-Implement a first-class multilingual naming system. Entities will support a canonical language representation while providing translated labels for any globally defined locale via the dedicated `LabelTrait`.
-
-**Tasks**
-- [ ] **Entity Schema Expansion**: Add a `canonical_lang` field (IETF BCP 47) to the `Entity` model and the SurrealDB `entity` table (e.g., defaults to `"en"`).
-- [ ] **LabelTrait Implementation**: Define the `LabelTrait` struct (`owner`, `lang`, `text`) and its corresponding SurrealDB table.
-- [ ] **Resolution Logic**: Implement the layered label resolver: (1) Active Locale Trait -> (2) Canonical Language Trait -> (3) Fallback `entity.label`.
-- [ ] **Locale Management**: Integrated a global locale selector in the GUI and a `--lang` session flag in the CLI to toggle the active display language across the entire graph.
-
-**Checks**
-- [ ] An entity created with `canonical_lang: "de"` correctly displays its German label even if the UI is set to English (if no English `LabelTrait` exists).
-- [ ] Adding a new `LabelTrait` for an existing entity instantly updates its display name in the Graph and Registry views.
-- [ ] The CLI `entity ls` command respects the `--lang` flag when displaying labels.
-
-### Phase 50: UI Utilities & UX Hardening
-**Description**
-Enhance the user experience with native integration for file management and quick identifier access.
-
-**Tasks**
-- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
-- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
-- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
-
-**Checks**
-- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
-- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
-- [ ] `npm run build` passes with zero TypeScript errors.
-
-### Phase 51: Contextual & Query-Based Data Loading
-**Description**
-Improve system performance and discovery by moving from "all-or-nothing" state loading to granular, context-aware hydration.
-
-**Tasks**
-- [ ] **Context Loading Engine**: Implement a backend capability to load the "context" of a given entity (fetching all neighbors and related nodes within a specific hop count).
-- [ ] **Selective Hydration**: Update the Zustand store and SurrealDB queries to support loading specific subgraphs based on active exploration rather than full table scans.
-- [ ] **Query-Based Filtering**: Add support for selective loading via complex queries (e.g., "Load all 'Physical' nodes related to 'Location X'") within the GUI.
-
-**Checks**
-- [ ] Requesting an entity's context correctly populates the graph with relevant relationships.
-- [ ] Large databases do not stall the UI; only the queried subset is processed by the renderer.
-- [ ] `cargo check --workspace` passes with zero warnings.
-
-### Phase 52: Flexible Panel Architecture & Tab Merging
-**Description**
-Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursive panel system. Every component (Entity Registry, Inspector, Asset Preview, Timeline, and Calendar) becomes an atomic standalone panel that can either tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
-
-**Tasks**
-- [ ] **Atomic Component Extraction**: Decouple `EntityRegistry`, `EntityInspector`, `AssetPreview`, `Timeline`, and `Calendar` into independent top-level components, removing the rigid `ViewportPanel` and `TimelinePanel` containers.
-- [ ] **Recursive Tab-Group State**: Update the Zustand layout store to support a recursive tree structure where any DWM tile can be either a "Single Component" or a "Tab Group" containing multiple components.
-- [ ] **Drag-to-Merge Workflow**: Implement a header-based drag-and-drop interface where dragging a panel's title bar and dropping it onto another panel's header area merges them into a shared Tab Group.
-- [ ] **Tiling/Tab Seamless Transition**: Ensure panels can be easily "detached" from a Tab Group back into a standalone tile or floating window.
-- [ ] **Workspace Persistence**: Save and restore the entire recursive layout state (tiled, floating, and tabbed) across application restarts.
-
-**Checks**
-- [ ] Every component can be opened as a standalone tiling window by default.
-- [ ] Dropping the `Timeline` panel onto the `Inspector` header correctly merges them into a tabbed interface.
-- [ ] Resizing a Tab Group correctly scales all internal tabbed components.
-- [ ] `npm run build` passes with zero TypeScript errors.
-
----
-
-## Potential Future Phases
-
-> The following phases are defined for directional reference. They are not yet scheduled and should be promoted to the main roadmap when their prerequisites are met.
 
 ### Phase 52 (Potential): Live OSINT Ingestion (ADSB, TLE, Maritime)
 **Description**

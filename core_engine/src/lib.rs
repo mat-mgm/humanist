@@ -30,7 +30,7 @@ mod tests {
             id: id_str.clone(),
             kind: EntityKind::Physical,
             label: "Test Entity".to_string(),
-            tags: vec![],
+            lang_canonical: "en".to_string(),
             metadata: HashMap::new(),
             deleted_at: None,
         };

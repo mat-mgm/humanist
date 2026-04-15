@@ -17,8 +17,24 @@ pub struct Entity {
     pub id: String,
     pub kind: EntityKind,
     pub label: String,
+    #[serde(default = "default_lang_canonical")]
+    pub lang_canonical: String,
     pub metadata: HashMap<String, serde_json::Value>,
     pub deleted_at: Option<String>,
+}
+
+fn default_lang_canonical() -> String {
+    "en".to_string()
+}
+
+/// A translated label for an entity in a specific language.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelTrait {
+    pub id: String,
+    pub owner: String,
+    /// IETF BCP 47 language tag, e.g. "en", "de", "pt".
+    pub lang: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

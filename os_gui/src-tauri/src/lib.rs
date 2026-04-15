@@ -1,6 +1,6 @@
 use core_engine::{
     db::SurrealDbAdapter,
-    models::{EdgeRecord, Entity, EntityKind, EntitySnapshot, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot},
+    models::{EdgeRecord, Entity, EntityKind, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot},
     ports::{GraphDatabase, StateObserver, BlobStorageProvider},
     bus::EventBus,
     blob::LocalBlobAdapter,
@@ -73,6 +73,7 @@ async fn ingest_entity(
         id: id.clone(),
         kind: EntityKind::Blob,
         label: label.clone(),
+        lang_canonical: "en".to_string(),
         metadata: {
             let mut m = HashMap::new();
             m.insert("source_path".to_string(), serde_json::Value::String(immutable_path));
@@ -261,6 +262,7 @@ async fn create_entity(
         id: id.clone(),
         kind: kind_enum,
         label: label.clone(),
+        lang_canonical: "en".to_string(),
         metadata: HashMap::new(),
         deleted_at: None,
     };
@@ -322,6 +324,7 @@ async fn tag_entity(
                 id: id.clone(),
                 kind: EntityKind::Abstract,
                 label: tag_label.clone(),
+                lang_canonical: "en".to_string(),
                 metadata: meta,
                 deleted_at: None,
             };
@@ -670,6 +673,56 @@ async fn get_effective_spatial_trait(
     st.db.get_effective_spatial_trait(&entity_id).await
 }
 
+// ── Phase 43: Multilingual label commands ─────────────────────────────────────
+
+#[tauri::command]
+async fn save_label_trait(
+    id: String,
+    owner: String,
+    lang: String,
+    text: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db.save_label_trait(LabelTrait { id, owner, lang, text }).await
+}
+
+#[tauri::command]
+async fn get_label_traits(
+    entity_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<LabelTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_label_traits(&entity_id).await
+}
+
+#[tauri::command]
+async fn get_all_label_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<LabelTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_all_label_traits().await
+}
+
+#[tauri::command]
+async fn delete_label_trait(
+    id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db.delete_label_trait(&id).await
+}
+
+#[tauri::command]
+async fn resolve_display_label(
+    entity_id: String,
+    active_lang: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let st = state.lock().await;
+    st.db.resolve_display_label(&entity_id, &active_lang).await
+}
+
 // ── Phase 44: History commands ────────────────────────────────────────────────
 
 #[tauri::command]
@@ -817,6 +870,11 @@ pub fn run() {
             list_relationship_types,
             delete_relationship_type,
             get_effective_spatial_trait,
+            save_label_trait,
+            get_label_traits,
+            get_all_label_traits,
+            delete_label_trait,
+            resolve_display_label,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,7 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-import { useOsStore } from '../store';
+import { useOsStore, resolvedLabel } from '../store';
 import { RelateDialog } from './RelateDialog';
 import { KEYBINDS } from '../App';
 import { getConvexHull, drawRoundedHullPath, getStableColor, findShortestPath, pathEdgeKeys } from '../utils/graphUtils';
@@ -75,6 +75,8 @@ export const GraphPanel = memo(function GraphPanel() {
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
   const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds, filterEdgeLabels, toggleFilterEdgeLabel, highlightedPath, highlightedEdgeKeys, setHighlightedPath, clearHighlightedPath } = useOsStore();
+  const allLabelTraits = useOsStore((s: any) => s.allLabelTraits);
+  const activeLocale = useOsStore((s: any) => s.activeLocale);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
@@ -717,15 +719,16 @@ export const GraphPanel = memo(function GraphPanel() {
       const live = liveById.get(strippedId);
       const saved = nodePositions[strippedId];
 
+      const displayLabel = resolvedLabel(entity, allLabelTraits, activeLocale);
       if (live) {
-        live.label = entity.label;
+        live.label = displayLabel;
         live.kind = entity.kind;
         live.metadata = entity.metadata;
         nextNodes.push(live);
       } else {
         nextNodes.push({
           id: strippedId,
-          label: entity.label,
+          label: displayLabel,
           kind: entity.kind,
           metadata: entity.metadata,
           x: saved?.x,
@@ -755,7 +758,7 @@ export const GraphPanel = memo(function GraphPanel() {
     }
 
     g.graphData({ nodes: nextNodes, links: nextLinks });
-  }, [filteredData, nodePositions, showRegions]);
+  }, [filteredData, nodePositions, showRegions, allLabelTraits, activeLocale]);
 
 
   useEffect(() => {

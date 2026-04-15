@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { EdgeRecord, Entity, EntitySnapshot, RelationshipType, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
+import { EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -19,6 +19,26 @@ interface GraphUpdateEvent {
 }
 
 export type GraphEdge = EdgeRecord;
+
+/**
+ * Pure helper: resolves the best display label for an entity.
+ * Resolution order:
+ *   1. LabelTrait matching activeLocale
+ *   2. LabelTrait matching entity.lang_canonical
+ *   3. entity.label fallback
+ */
+export function resolvedLabel(
+  entity: Entity,
+  allLabelTraits: LabelTrait[],
+  activeLocale: string,
+): string {
+  const own = allLabelTraits.filter(t => t.owner === entity.id);
+  const byActive = own.find(t => t.lang === activeLocale);
+  if (byActive) return byActive.text;
+  const byCanonical = own.find(t => t.lang === entity.lang_canonical);
+  if (byCanonical) return byCanonical.text;
+  return entity.label;
+}
 
 // ── Store definition ─────────────────────────────────────────────────────────
 
@@ -41,6 +61,11 @@ interface OsStore {
   // Phase 45: relationship types
   relationshipTypes: RelationshipType[];
 
+  // Phase 43: multilingual labels
+  activeLocale: string;
+  labelTraits: LabelTrait[];       // traits for the currently selected entity (inspector)
+  allLabelTraits: LabelTrait[];    // full table — used for app-wide label resolution
+
   // UI flags
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
@@ -51,6 +76,13 @@ interface OsStore {
   highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
   activePtySession: string;
+
+  // Phase 43: multilingual label actions
+  setActiveLocale: (lang: string) => void;
+  fetchLabelTraits: (entityId: string) => Promise<void>;
+  fetchAllLabelTraits: () => Promise<void>;
+  saveLabelTrait: (trait: LabelTrait) => Promise<void>;
+  deleteLabelTrait: (id: string) => Promise<void>;
 
   // Phase 44: history actions
   fetchEntityHistory: (entityId: string) => Promise<void>;
@@ -108,6 +140,9 @@ export const useOsStore = create<OsStore>((set, get) => ({
   entityHistory: [],
   traitHistory: [],
   relationshipTypes: [],
+  activeLocale: 'en',
+  labelTraits: [],
+  allLabelTraits: [],
   selectedEntityId: null,
   selectedIds: [],
   contextEntities: [],
@@ -372,6 +407,49 @@ export const useOsStore = create<OsStore>((set, get) => ({
     set({ highlightedPath: [], highlightedEdgeKeys: new Set() });
   },
 
+  // ── Phase 43: Multilingual labels ────────────────────────────────────────
+
+  setActiveLocale: (lang) => {
+    set({ activeLocale: lang, labelTraits: [] });
+  },
+
+  fetchAllLabelTraits: async () => {
+    try {
+      const traits = await invoke<LabelTrait[]>('get_all_label_traits');
+      set({ allLabelTraits: traits });
+    } catch (e) {
+      console.error('fetchAllLabelTraits error:', e);
+    }
+  },
+
+  fetchLabelTraits: async (entityId) => {
+    try {
+      const traits = await invoke<LabelTrait[]>('get_label_traits', { entityId });
+      set({ labelTraits: traits });
+    } catch (e) {
+      console.error('fetchLabelTraits error:', e);
+      set({ labelTraits: [] });
+    }
+  },
+
+  saveLabelTrait: async (trait) => {
+    await invoke('save_label_trait', {
+      id: trait.id,
+      owner: trait.owner,
+      lang: trait.lang,
+      text: trait.text,
+    });
+    await get().fetchLabelTraits(trait.owner);
+    await get().fetchAllLabelTraits();
+  },
+
+  deleteLabelTrait: async (id) => {
+    const owner = get().labelTraits.find(t => t.id === id)?.owner ?? '';
+    await invoke('delete_label_trait', { id });
+    if (owner) await get().fetchLabelTraits(owner);
+    await get().fetchAllLabelTraits();
+  },
+
   // ── Phase 45: Relationship types ─────────────────────────────────────────
 
   fetchRelationshipTypes: async () => {
@@ -447,6 +525,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       store.fetchSpatialTraits();
       store.fetchBlobTraits();
       store.fetchTemporalTraits();
+      store.fetchAllLabelTraits();
     });
 
     const unlistenGraph = await listen<GraphUpdateEvent>('graph-updated', () => {

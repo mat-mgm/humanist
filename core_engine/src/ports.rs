@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::models::{EdgeRecord, RelationshipType, SpatialTrait, TemporalTrait, EntitySnapshot, TraitSnapshot};
+use crate::models::{EdgeRecord, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait, EntitySnapshot, TraitSnapshot};
 
 #[async_trait]
 pub trait StateObserver {
@@ -56,4 +56,14 @@ pub trait GraphDatabase {
     async fn list_relationship_types(&self) -> Result<Vec<RelationshipType>, String>;
     async fn delete_relationship_type(&self, label: &str) -> Result<(), String>;
     async fn get_effective_spatial_trait(&self, entity_id: &str) -> Result<Option<SpatialTrait>, String>;
+
+    // Phase 43: Multilingual labels
+    async fn save_label_trait(&self, trait_: LabelTrait) -> Result<(), String>;
+    async fn get_label_traits(&self, entity_id: &str) -> Result<Vec<LabelTrait>, String>;
+    async fn get_all_label_traits(&self) -> Result<Vec<LabelTrait>, String>;
+    async fn delete_label_trait(&self, id: &str) -> Result<(), String>;
+    /// Resolves the best display label for an entity given an active locale.
+    /// Resolution order: (1) LabelTrait matching active_lang → (2) LabelTrait matching
+    /// entity.lang_canonical → (3) entity.label fallback.
+    async fn resolve_display_label(&self, entity_id: &str, active_lang: &str) -> Result<String, String>;
 }

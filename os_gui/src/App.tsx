@@ -60,7 +60,7 @@ export const KEYBINDS = {
 };
 
 export default function App() {
-  const { fetchEntities, fetchSpatialTraits, fetchEdges, startListening } = useOsStore();
+  const { fetchEntities, fetchSpatialTraits, fetchEdges, startListening, activeLocale, setActiveLocale, fetchAllLabelTraits } = useOsStore();
   const [ingestVisible, setIngestVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
@@ -103,6 +103,7 @@ export default function App() {
     fetchEdges();
     useOsStore.getState().fetchBlobTraits();
     useOsStore.getState().fetchTemporalTraits();
+    fetchAllLabelTraits();
     let cleanup: (() => void) | undefined;
     startListening().then((fn) => { cleanup = fn; });
     return () => { if (cleanup) cleanup(); };
@@ -268,6 +269,27 @@ export default function App() {
                     placeholder="Search themes..."
                     style={{ flex: 1 }}
                   />
+                </div>
+
+                <div style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8 }} onClick={e => e.stopPropagation()}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hint)', flexShrink: 0 }}>Language:</span>
+                  <select
+                    value={activeLocale}
+                    onChange={e => setActiveLocale(e.target.value)}
+                    style={{
+                      flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                      borderRadius: 4, padding: '3px 6px', fontSize: 11, color: 'var(--text-primary)',
+                      outline: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    <option value="en">en — English</option>
+                    <option value="de">de — Deutsch</option>
+                    <option value="fr">fr — Français</option>
+                    <option value="pt">pt — Português</option>
+                    <option value="es">es — Español</option>
+                    <option value="zh">zh — 中文</option>
+                    <option value="ar">ar — العربية</option>
+                  </select>
                 </div>
 
                 <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />

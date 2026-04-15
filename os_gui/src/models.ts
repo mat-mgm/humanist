@@ -4,8 +4,17 @@ export interface Entity {
   id: string;
   kind: EntityKind;
   label: string;
+  lang_canonical: string;
   metadata: Record<string, any>;
   deleted_at: string | null;
+}
+
+/** Phase 43: translated label for an entity in a specific IETF BCP 47 language. */
+export interface LabelTrait {
+  id: string;
+  owner: string;
+  lang: string;
+  text: string;
 }
 
 export interface SpatialTrait {

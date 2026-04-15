@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use std::sync::Arc;
 use std::path::PathBuf;
 
-use crate::models::{EdgeRecord, Entity, EntitySnapshot, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot};
+use crate::models::{EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot};
 use crate::ports::GraphDatabase;
 
 #[derive(Clone)]
@@ -26,8 +26,16 @@ impl SurrealDbAdapter {
             DEFINE TABLE entity SCHEMAFULL;
             DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
             DEFINE FIELD label ON entity TYPE string;
+            DEFINE FIELD IF NOT EXISTS lang_canonical ON entity TYPE string DEFAULT 'en';
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
+
+            DEFINE TABLE IF NOT EXISTS label_trait SCHEMAFULL;
+            DEFINE FIELD IF NOT EXISTS owner ON label_trait TYPE string;
+            DEFINE FIELD IF NOT EXISTS lang ON label_trait TYPE string;
+            DEFINE FIELD IF NOT EXISTS text ON label_trait TYPE string;
+            DEFINE INDEX IF NOT EXISTS idx_label_trait_owner ON label_trait FIELDS owner;
+            DEFINE INDEX IF NOT EXISTS idx_label_trait_owner_lang ON label_trait FIELDS owner, lang UNIQUE;
 
             DEFINE TABLE edge SCHEMAFULL TYPE RELATION IN entity OUT entity;
             DEFINE FIELD in ON edge TYPE record<entity>;
@@ -477,6 +485,70 @@ impl GraphDatabase for SurrealDbAdapter {
             frontier = next;
         }
         Ok(None)
+    }
+
+    // Phase 43: Multilingual labels
+
+    async fn save_label_trait(&self, trait_: LabelTrait) -> Result<(), String> {
+        let id_clean = trait_.id.replace("label_trait:", "");
+        let qs = format!("UPSERT label_trait:{} CONTENT $data;", id_clean);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
+        self.db.query(qs)
+            .bind(("data", value))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn get_label_traits(&self, entity_id: &str) -> Result<Vec<LabelTrait>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM label_trait WHERE owner = $owner ORDER BY lang ASC;")
+            .bind(("owner", entity_id.to_string()))
+            .await.map_err(|e| e.to_string())?;
+        let traits: Vec<LabelTrait> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(traits)
+    }
+
+    async fn get_all_label_traits(&self) -> Result<Vec<LabelTrait>, String> {
+        let mut resp = self.db
+            .query("SELECT *, type::string(id) AS id FROM label_trait ORDER BY lang ASC;")
+            .await.map_err(|e| e.to_string())?;
+        let traits: Vec<LabelTrait> = resp.take(0).map_err(|e| e.to_string())?;
+        Ok(traits)
+    }
+
+    async fn delete_label_trait(&self, id: &str) -> Result<(), String> {
+        let id_clean = id.replace("label_trait:", "");
+        let qs = format!("DELETE label_trait:{};", id_clean);
+        self.db.query(qs)
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Resolution order:
+    ///   1. LabelTrait where lang == active_lang
+    ///   2. LabelTrait where lang == entity.lang_canonical
+    ///   3. entity.label fallback
+    async fn resolve_display_label(&self, entity_id: &str, active_lang: &str) -> Result<String, String> {
+        let entity = self.get_entity(entity_id).await?;
+        let traits = self.get_label_traits(entity_id).await?;
+
+        // (1) Active locale match
+        if let Some(t) = traits.iter().find(|t| t.lang == active_lang) {
+            return Ok(t.text.clone());
+        }
+        // (2) Canonical language match
+        if active_lang != entity.lang_canonical {
+            if let Some(t) = traits.iter().find(|t| t.lang == entity.lang_canonical) {
+                return Ok(t.text.clone());
+            }
+        }
+        // (3) Fallback
+        Ok(entity.label)
     }
 }
 

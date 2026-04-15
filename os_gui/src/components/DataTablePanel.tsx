@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo } from 'react';
-import { useOsStore } from '../store';
-import { Entity } from '../models';
+import { useOsStore, resolvedLabel } from '../store';
+import { Entity, LabelTrait } from '../models';
 
 // Atomic selectors — each panel only re-renders for its own slice
 const selectEntities       = (s: ReturnType<typeof useOsStore.getState>) => s.entities;
@@ -11,12 +11,13 @@ const selectSelectEntity   = (s: ReturnType<typeof useOsStore.getState>) => s.se
 
 // Memoised row — only re-renders when its own selection/context state changes
 const EntityRow = memo(function EntityRow({
-  entity, isSelected, isContext, onSelect,
+  entity, isSelected, isContext, onSelect, displayLabel,
 }: {
   entity: Entity;
   isSelected: boolean;
   isContext: boolean;
   onSelect: (id: string | null) => void;
+  displayLabel: string;
 }) {
   return (
     <tr
@@ -24,7 +25,7 @@ const EntityRow = memo(function EntityRow({
       style={{ cursor: 'pointer' }}
       className={isSelected ? 'row-selected' : isContext ? 'row-context' : ''}
     >
-      <td title={entity.id}>{entity.label}</td>
+      <td title={entity.id}>{displayLabel}</td>
       <td><span className={`kind-badge kind-${entity.kind}`}>{entity.kind}</span></td>
       <td>{isSelected ? '◉' : isContext ? '◎' : ''}</td>
     </tr>
@@ -39,6 +40,8 @@ export const DataTablePanel = memo(function DataTablePanel() {
   const contextEntities = useOsStore(s => s.contextEntities);
   const contextIds     = useMemo(() => contextEntities.map(e => e.id), [contextEntities]);
   const selectEntity   = useOsStore(selectSelectEntity);
+  const allLabelTraits = useOsStore((s: any) => s.allLabelTraits as LabelTrait[]);
+  const activeLocale   = useOsStore((s: any) => s.activeLocale as string);
 
   const handleSelect = useCallback((id: string | null) => selectEntity(id), [selectEntity]);
 
@@ -71,6 +74,7 @@ export const DataTablePanel = memo(function DataTablePanel() {
                   isSelected={e.id === selectedId}
                   isContext={contextIds.includes(e.id)}
                   onSelect={handleSelect}
+                  displayLabel={resolvedLabel(e, allLabelTraits, activeLocale)}
                 />
               ))}
             </tbody>

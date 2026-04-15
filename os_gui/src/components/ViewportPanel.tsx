@@ -1,8 +1,8 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-import { useOsStore } from '../store';
-import { EntitySnapshot, SpatialTrait, TemporalTrait } from '../models';
+import { useOsStore, resolvedLabel } from '../store';
+import { EntitySnapshot, LabelTrait, SpatialTrait, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
 import { ThreeViewer } from './ThreeViewer';
 import { PdfViewer } from './PdfViewer';
@@ -278,12 +278,20 @@ const EntityInspector = memo(function EntityInspector({
   const spatialTraits = useOsStore(selectSpatialTraits);
   const temporalTraits = useOsStore(selectTemporalTraits);
   const selectEntity = useOsStore(selectSelectEntity);
-  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait, saveSpatialTrait, fetchEntityHistory, getEntityAsOf } = useOsStore();
+  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge, saveTemporalTrait, saveSpatialTrait, fetchEntityHistory, getEntityAsOf, fetchLabelTraits, saveLabelTrait, deleteLabelTrait } = useOsStore();
   const entityHistory = useOsStore(s => s.entityHistory);
+  const labelTraits = useOsStore(s => s.labelTraits);
+  const activeLocale = useOsStore(s => s.activeLocale);
 
   const selected = useMemo(
     () => entities.find(e => e.id === selectedId) ?? null,
     [entities, selectedId],
+  );
+
+  const allLabelTraits = useOsStore(s => s.allLabelTraits);
+  const selectedDisplayLabel = useMemo(
+    () => selected ? resolvedLabel(selected, allLabelTraits, activeLocale) : '',
+    [selected, allLabelTraits, activeLocale],
   );
 
   // Derive tag edges (outgoing tagged_as) and other edges
@@ -442,6 +450,30 @@ const EntityInspector = memo(function EntityInspector({
     getEffectiveSpatialTrait(selectedId).then(t => setInheritedSpatial(t ?? null));
   }, [selectedId, spatialTrait, getEffectiveSpatialTrait]);
 
+  // Translations section state
+  const [translationsOpen, setTranslationsOpen] = useState(false);
+  const [newLang, setNewLang] = useState('');
+  const [newText, setNewText] = useState('');
+
+  const openTranslations = useCallback(async () => {
+    if (!selected) return;
+    await fetchLabelTraits(selected.id);
+    setTranslationsOpen(true);
+  }, [selected, fetchLabelTraits]);
+
+  const addTranslation = useCallback(async () => {
+    if (!selected || !newLang.trim() || !newText.trim()) return;
+    const id = `label_trait:${crypto.randomUUID().replace(/-/g, '').toUpperCase()}`;
+    await saveLabelTrait({
+      id,
+      owner: selected.id,
+      lang: newLang.trim().toLowerCase(),
+      text: newText.trim(),
+    });
+    setNewLang('');
+    setNewText('');
+  }, [selected, newLang, newText, saveLabelTrait]);
+
   // History section state
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snapshot, setSnapshot] = useState<EntitySnapshot | null>(null);
@@ -460,10 +492,13 @@ const EntityInspector = memo(function EntityInspector({
 
   const clearSnapshot = useCallback(() => setSnapshot(null), []);
 
-  // Clear history state when selected entity changes
+  // Clear per-entity state when selection changes
   useEffect(() => {
     setHistoryOpen(false);
     setSnapshot(null);
+    setTranslationsOpen(false);
+    setNewLang('');
+    setNewText('');
   }, [selectedId]);
 
   if (!selected) {
@@ -482,7 +517,7 @@ const EntityInspector = memo(function EntityInspector({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <span className={`kind-badge kind-${selected.kind}`}>{selected.kind}</span>
-        <span style={{ fontWeight: 700, fontSize: 14, flex: 1, color: 'var(--text-primary)', wordBreak: 'break-all' }}>{selected.label}</span>
+        <span style={{ fontWeight: 700, fontSize: 14, flex: 1, color: 'var(--text-primary)', wordBreak: 'break-all' }}>{selectedDisplayLabel}</span>
         {!confirmDelete ? (
           <button
             onClick={() => setConfirmDelete(true)}
@@ -953,6 +988,81 @@ const EntityInspector = memo(function EntityInspector({
                 )}
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Translations ──────────────────────────────────────────────── */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+          onClick={translationsOpen ? () => setTranslationsOpen(false) : openTranslations}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>
+            Translations
+            {selected?.lang_canonical && <span style={{ fontWeight: 400, marginLeft: 6, textTransform: 'none' }}>({selected.lang_canonical})</span>}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{translationsOpen ? '▲' : '▼'}</span>
+        </div>
+
+        {translationsOpen && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {labelTraits.length === 0
+              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No translations</span>
+              : labelTraits.map((t: LabelTrait) => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{
+                    fontFamily: 'monospace', fontSize: 10, padding: '2px 6px',
+                    borderRadius: 3, background: 'var(--bg-secondary)', color: 'var(--accent)',
+                    flexShrink: 0, minWidth: 28, textAlign: 'center',
+                  }}>{t.lang}</span>
+                  <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.text}
+                  </span>
+                  {t.lang === activeLocale && (
+                    <span style={{ fontSize: 9, color: 'var(--accent)', flexShrink: 0 }}>active</span>
+                  )}
+                  <button
+                    onClick={() => deleteLabelTrait(t.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 12, padding: '0 2px', flexShrink: 0 }}
+                    title="Delete translation"
+                  >✕</button>
+                </div>
+              ))
+            }
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              <input
+                value={newLang}
+                onChange={e => setNewLang(e.target.value)}
+                placeholder="lang (e.g. de)"
+                maxLength={10}
+                style={{
+                  width: 64, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)',
+                  outline: 'none',
+                }}
+              />
+              <input
+                value={newText}
+                onChange={e => setNewText(e.target.value)}
+                placeholder="translated label"
+                style={{
+                  flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)',
+                  outline: 'none',
+                }}
+                onKeyDown={e => e.key === 'Enter' && addTranslation()}
+              />
+              <button
+                onClick={addTranslation}
+                disabled={!newLang.trim() || !newText.trim()}
+                style={{
+                  background: 'var(--accent)', border: 'none', borderRadius: 4,
+                  padding: '4px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 600,
+                  opacity: (!newLang.trim() || !newText.trim()) ? 0.5 : 1,
+                }}
+              >Add</button>
+            </div>
           </div>
         )}
       </div>
