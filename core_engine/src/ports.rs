@@ -34,6 +34,13 @@ pub trait GraphDatabase {
 
     // Phase 4: Context queries — fetch all entities reachable from a context entity's edges
     async fn query_context(&self, context_id: &str) -> Result<Vec<crate::models::Entity>, String>;
+
+    // Phase 44: N-hop neighborhood — returns (entities, connecting edges) within `hops` hops
+    async fn get_entity_neighborhood(&self, entity_id: &str, hops: u8) -> Result<(Vec<crate::models::Entity>, Vec<EdgeRecord>), String>;
+    // Phase 44: Multilingual label search — matches entity.label and label_trait.text
+    async fn search_entities_by_label(&self, query: &str, lang: Option<&str>) -> Result<Vec<crate::models::Entity>, String>;
+    // Phase 44: Execute arbitrary SurrealQL and return entity IDs (strings) from the result rows
+    async fn query_entity_ids(&self, query: &str) -> Result<Vec<String>, String>;
     
     // Phase 4: Graph edges
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String>;

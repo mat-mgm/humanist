@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 // @ts-ignore
 import ForceGraph2D from 'force-graph';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -61,6 +61,8 @@ const REGION_STYLE = {
 };
 
 
+const ENTITY_KINDS = ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
+
 export const GraphPanel = memo(function GraphPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -74,10 +76,34 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds, filterEdgeLabels, toggleFilterEdgeLabel, highlightedPath, highlightedEdgeKeys, setHighlightedPath, clearHighlightedPath } = useOsStore();
+  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds, filterEdgeLabels, toggleFilterEdgeLabel, highlightedPath, highlightedEdgeKeys, setHighlightedPath, clearHighlightedPath, expandContext, loadExactIds, clearGraph, loadFullGraph, setHopCount, graphMode } = useOsStore();
+  const hopCount = useOsStore((s: any) => s.hopCount);
   const allLabelTraits = useOsStore((s: any) => s.allLabelTraits);
   const activeLocale = useOsStore((s: any) => s.activeLocale);
+  const allEntities = useOsStore((s: any) => s.allEntities);
+  const backendReady = useOsStore((s: any) => s.backendReady);
 
+  // Phase 44: explore bar state
+  const [exploreQuery, setExploreQuery] = useState('');
+  const [exploreInputFocused, setExploreInputFocused] = useState(false);
+  const [exploreStatus, setExploreStatus] = useState<string | null>(null);
+  const exploreDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Local dropdown list: filters allEntities by kind and/or label without a backend round-trip.
+  const filteredDropdown = useMemo(() => {
+    const q = exploreQuery.trim().toLowerCase();
+    if (/^select\s/i.test(q)) return []; // SQL mode — dropdown not used
+    return allEntities.filter((e: any) => {
+      if (q.length === 0) return true; // show all when empty
+      if (ENTITY_KINDS.includes(q)) return e.kind === q; // exact kind match
+      if ((e.kind as string).startsWith(q)) return true;                        // partial kind
+      const label = resolvedLabel(e, allLabelTraits, activeLocale).toLowerCase();
+      if (label.includes(q)) return true;
+      return allLabelTraits.some((t: any) => t.owner === e.id && t.text.toLowerCase().includes(q));
+    }).slice(0, 60);
+  }, [exploreQuery, allEntities, allLabelTraits, activeLocale]);
+
+  // searchQuery drives local node highlight in the canvas; wired to exploreQuery
   const [searchQuery, setSearchQuery] = useState('');
   const [showGrid, setShowGrid] = useState(true);
   const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
@@ -111,6 +137,34 @@ export const GraphPanel = memo(function GraphPanel() {
   const selectedIdsRef = useRef(selectedIds);
   const highlightedPathRef = useRef<string[]>([]);
   const highlightedEdgeKeysRef = useRef<Set<string>>(new Set());
+
+  // Phase 44: SQL passthrough — debounced only for SELECT queries; dropdown uses local filter
+  useEffect(() => {
+    setSearchQuery(exploreQuery); // keep canvas highlight in sync
+    const q = exploreQuery.trim();
+    if (!/^select\s/i.test(q)) return; // non-SQL handled by filteredDropdown
+    if (exploreDebounceRef.current) clearTimeout(exploreDebounceRef.current);
+    exploreDebounceRef.current = setTimeout(async () => {
+      try {
+        const ids = await invoke<string[]>('query_entity_ids', { query: q });
+        if (ids.length > 0) {
+          await loadExactIds(ids);
+          setExploreQuery('');
+          setExploreInputFocused(false);
+          setExploreStatus(`${ids.length} entit${ids.length === 1 ? 'y' : 'ies'} loaded`);
+          setTimeout(() => setExploreStatus(null), 2500);
+          setTimeout(() => graphRef.current?.zoomToFit(400, 30), 150);
+        } else {
+          setExploreStatus('No entities found');
+          setTimeout(() => setExploreStatus(null), 2000);
+        }
+      } catch (e) {
+        console.error('explore sql error:', e);
+        setExploreStatus('Query error');
+        setTimeout(() => setExploreStatus(null), 2000);
+      }
+    }, 250);
+  }, [exploreQuery]);
 
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
@@ -785,26 +839,117 @@ export const GraphPanel = memo(function GraphPanel() {
 
   return (
     <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
-      {/* TOOLBAR: Row 1 - Search, Reset, Toggles */}
+      {/* TOOLBAR: Row 1 - Explore bar, graph controls, toggles */}
       <div className="panel-stats">
         <div className="panel-row" style={{ flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="Search nodes..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ 
-              background: 'var(--bg-primary)', 
-              border: '1px solid var(--border)', 
-              color: 'var(--text-primary)', 
-              padding: '2px 8px', 
-              borderRadius: 4, 
-              outline: 'none', 
-              fontSize: 11, 
-              width: 120,
-              height: 22
-            }}
-          />
+          {/* Phase 44: Explore bar */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              placeholder={/^select\s/i.test(exploreQuery) ? 'SurrealQL...' : 'Explore entities...'}
+              value={exploreQuery}
+              onChange={e => setExploreQuery(e.target.value)}
+              onFocus={() => setExploreInputFocused(true)}
+              onBlur={() => setTimeout(() => setExploreInputFocused(false), 150)}
+              style={{
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--accent)',
+                color: 'var(--text-primary)',
+                padding: '2px 8px',
+                borderRadius: 4,
+                outline: 'none',
+                fontSize: 11,
+                width: 180,
+                height: 22,
+              }}
+            />
+            {exploreInputFocused && filteredDropdown.length > 0 && (
+              <div style={{
+                position: 'absolute',
+                top: 25,
+                left: 0,
+                width: 240,
+                maxHeight: 260,
+                overflowY: 'auto',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                zIndex: 200,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              }}>
+                {filteredDropdown.map((e: any) => {
+                  const q = exploreQuery.trim().toLowerCase();
+                  const ownTraits = allLabelTraits.filter((t: any) => t.owner === e.id);
+                  const matchingTrait = q.length > 0
+                    ? ownTraits.find((t: any) => t.text.toLowerCase().includes(q))
+                    : undefined;
+                  const displayLabel = matchingTrait
+                    ? matchingTrait.text
+                    : resolvedLabel(e, allLabelTraits, activeLocale);
+                  return (
+                    <div
+                      key={e.id}
+                      onMouseDown={() => {
+                        expandContext(e.id);
+                        selectEntity(e.id);
+                        setExploreQuery('');
+                        setExploreInputFocused(false);
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)',
+                        borderBottom: '1px solid var(--border)',
+                        display: 'flex',
+                        gap: 6,
+                        alignItems: 'center',
+                      }}
+                      onMouseEnter={el => (el.currentTarget.style.background = 'var(--bg-primary)')}
+                      onMouseLeave={el => (el.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ color: KIND_COLORS[e.kind as string] ?? 'var(--text-hint)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>{e.kind as string}</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
+                      {matchingTrait && matchingTrait.lang !== activeLocale && (
+                        <span style={{ fontSize: 9, color: 'var(--text-hint)', flexShrink: 0 }}>{matchingTrait.lang}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {exploreStatus && (
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontStyle: 'italic' }}>
+              {exploreStatus}
+            </span>
+          )}
+
+          {/* Graph mode controls */}
+          <button
+            onClick={() => clearGraph()}
+            title="Clear graph"
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-hint)', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, height: 22 }}
+          >
+            Clear
+          </button>
+          <button
+            onClick={() => backendReady && loadFullGraph()}
+            disabled={!backendReady}
+            title={backendReady ? 'Load all entities from database' : 'Backend initializing…'}
+            style={{ background: graphMode === 'full' ? 'var(--accent)' : 'var(--bg-secondary)', border: `1px solid ${graphMode === 'full' ? 'var(--accent)' : 'var(--border)'}`, color: graphMode === 'full' ? '#fff' : backendReady ? 'var(--text-primary)' : 'var(--text-hint)', padding: '2px 8px', borderRadius: 4, cursor: backendReady ? 'pointer' : 'not-allowed', fontSize: 11, height: 22, opacity: backendReady ? 1 : 0.5 }}
+          >
+            {backendReady ? 'Load Full' : 'Init…'}
+          </button>
+
+          {/* Hops spinner */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>Hops:</span>
+            <button onClick={() => setHopCount(hopCount - 1)} disabled={hopCount <= 0} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11, width: 18, height: 18, padding: 0, lineHeight: 1 }}>−</button>
+            <span style={{ fontSize: 11, color: 'var(--text-primary)', minWidth: 10, textAlign: 'center' }}>{hopCount}</span>
+            <button onClick={() => setHopCount(hopCount + 1)} disabled={hopCount >= 5} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11, width: 18, height: 18, padding: 0, lineHeight: 1 }}>+</button>
+          </div>
 
           <button
             onClick={() => {
@@ -921,8 +1066,8 @@ export const GraphPanel = memo(function GraphPanel() {
           </div>
         </div>
 
-        {/* Row 3: Edge Count + Edge Label Filter */}
-        {allEdgeLabels.length > 0 && (
+        {/* Row 3: Edge Count + Edge Label Filter — show when edges exist OR active filters set */}
+        {(allEdgeLabels.length > 0 || filterEdgeLabels.length > 0) && (
           <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
             <span className="event-badge" style={{ marginRight: 4 }}>
               {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.edges.length}/${edges.length} edges` : `${edges.length} edges`}
@@ -982,6 +1127,25 @@ export const GraphPanel = memo(function GraphPanel() {
             pointerEvents: 'none',
             zIndex: 10,
           }} />
+        )}
+
+        {/* Phase 44: empty-state overlay */}
+        {entities.length === 0 && graphMode === 'context' && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 28, opacity: 0.18 }}>◎</span>
+            <span style={{ fontSize: 12, color: 'var(--text-hint)', opacity: 0.55, fontStyle: 'italic' }}>
+              Search or select an entity to explore
+            </span>
+          </div>
         )}
       </div>
 

@@ -181,6 +181,67 @@ async fn query_context(
     st.db.query_context(&context_id).await
 }
 
+// Phase 44: N-hop neighborhood
+#[derive(serde::Serialize)]
+struct NeighborhoodResult {
+    entities: Vec<serde_json::Value>,
+    edges: Vec<EdgeRecord>,
+}
+
+#[tauri::command]
+async fn get_entity_neighborhood(
+    entity_id: String,
+    hops: u8,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<NeighborhoodResult, String> {
+    let st = state.lock().await;
+    let (entities, edges) = st.db.get_entity_neighborhood(&entity_id, hops).await?;
+    // Serialize entities the same way list_entities does (id as string)
+    let entities_json: Vec<serde_json::Value> = entities.iter().map(|e| {
+        serde_json::json!({
+            "id": e.id,
+            "kind": e.kind,
+            "label": e.label,
+            "lang_canonical": e.lang_canonical,
+            "metadata": e.metadata,
+            "deleted_at": e.deleted_at,
+        })
+    }).collect();
+    Ok(NeighborhoodResult { entities: entities_json, edges })
+}
+
+// Phase 44: Execute SurrealQL and return matching entity IDs as strings
+#[tauri::command]
+async fn query_entity_ids(
+    query: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<String>, String> {
+    let st = state.lock().await;
+    st.db.query_entity_ids(&query).await
+}
+
+// Phase 44: Multilingual label search
+#[tauri::command]
+async fn search_entities(
+    query: String,
+    lang: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let st = state.lock().await;
+    let entities = st.db.search_entities_by_label(&query, lang.as_deref()).await?;
+    let result = entities.iter().map(|e| {
+        serde_json::json!({
+            "id": e.id,
+            "kind": e.kind,
+            "label": e.label,
+            "lang_canonical": e.lang_canonical,
+            "metadata": e.metadata,
+            "deleted_at": e.deleted_at,
+        })
+    }).collect();
+    Ok(result)
+}
+
 #[tauri::command]
 async fn add_edge(
     from_id: String,
@@ -769,17 +830,25 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle().clone();
 
-            tauri::async_runtime::spawn(async move {
+            // Everything that calls tokio::spawn (GC, bus listener) must run inside a
+            // tokio context.  The setup closure runs on the Tauri event-loop thread — NOT
+            // inside tokio — so we block_on an async block that does all the init work.
+            // block_on drives the future on Tauri's internal runtime and returns once the
+            // future resolves, keeping the setup closure synchronous from Tauri's POV.
+            // app.manage() is called after block_on returns, guaranteeing the state is
+            // registered before any frontend command can fire.
+            let (db, bus, blob, query_tx) = tauri::async_runtime::block_on(async {
                 let db = SurrealDbAdapter::new().await.expect("SurrealDB init failed");
                 let bus = EventBus::new();
                 let blob_dir = core_engine::db::store_path().join("blobs");
                 let blob = LocalBlobAdapter::new(blob_dir);
                 let blob_arc = Arc::new(blob.clone());
+
+                // GC needs tokio::spawn — safe here because we're inside block_on
                 gc::start_garbage_collection(db.clone(), blob_arc);
 
-                // Fan out broadcast events as Tauri IPC events
+                // Fan out broadcast events to the frontend
                 let mut rx = bus.sender.subscribe();
-                let bus_clone = bus.clone();
                 let ah = app_handle.clone();
                 tokio::spawn(async move {
                     while let Ok(event) = rx.recv().await {
@@ -791,10 +860,10 @@ pub fn run() {
                     }
                 });
 
-                // Prolog Machine Injection in Dedicated Thread
+                // Prolog Machine in its own dedicated thread
                 let (query_tx, mut query_rx) = mpsc::channel::<(String, oneshot::Sender<Result<Vec<String>, String>>)>(32);
                 let db_p = db.clone();
-                let bus_p = bus_clone.clone();
+                let bus_p = bus.clone();
 
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -808,13 +877,13 @@ pub fn run() {
 
                         let sync_task = prolog_engine::synchronizer::StateSynchronizerTask::new(machine.clone(), db_p.clone());
                         let sync_rx = bus_p.sender.subscribe();
-                        
+
                         tokio::task::spawn_local(async move {
                             sync_task.run(sync_rx).await;
                         });
 
                         let inference = prolog_engine::InferenceEngine::new((*machine).clone());
-                        
+
                         while let Some((query, resp_tx)) = query_rx.recv().await {
                             let res = inference.query(&query).map_err(|e| e.to_string());
                             let _ = resp_tx.send(res);
@@ -822,14 +891,22 @@ pub fn run() {
                     });
                 });
 
-                app_handle.manage(Mutex::new(AppState { 
-                    db, 
-                    bus: bus_clone, 
-                    blob, 
-                    query_tx,
-                    pty_sessions: std::sync::Mutex::new(HashMap::new()),
-                }));
+                (db, bus, blob, query_tx)
             });
+
+            // Manage state after block_on — guaranteed before any Tauri command fires
+            app.manage(Mutex::new(AppState {
+                db,
+                bus,
+                blob,
+                query_tx,
+                pty_sessions: std::sync::Mutex::new(HashMap::new()),
+            }));
+
+            // Tell the frontend the backend is fully ready.  The webview may have
+            // already mounted and tried to invoke commands while block_on was running;
+            // this event lets it know it is now safe to call anything.
+            let _ = app.handle().emit("backend-ready", ());
 
             Ok(())
         })
@@ -843,6 +920,9 @@ pub fn run() {
             get_presigned_url,
             save_blob_content,
             query_context,
+            get_entity_neighborhood,
+            query_entity_ids,
+            search_entities,
             spawn_terminal,
             kill_terminal,
             write_to_terminal,

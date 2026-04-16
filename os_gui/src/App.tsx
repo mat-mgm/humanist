@@ -60,7 +60,7 @@ export const KEYBINDS = {
 };
 
 export default function App() {
-  const { fetchEntities, fetchSpatialTraits, fetchEdges, startListening, activeLocale, setActiveLocale, fetchAllLabelTraits } = useOsStore();
+  const { fetchSpatialTraits, startListening, activeLocale, setActiveLocale, fetchAllLabelTraits, fetchAllEntities } = useOsStore();
   const [ingestVisible, setIngestVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
@@ -96,14 +96,13 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  // Bootstrap
+  // Bootstrap — graph starts empty in context mode; traits and labels are still pre-loaded
   useEffect(() => {
-    fetchEntities();
     fetchSpatialTraits();
-    fetchEdges();
     useOsStore.getState().fetchBlobTraits();
     useOsStore.getState().fetchTemporalTraits();
     fetchAllLabelTraits();
+    fetchAllEntities();
     let cleanup: (() => void) | undefined;
     startListening().then((fn) => { cleanup = fn; });
     return () => { if (cleanup) cleanup(); };

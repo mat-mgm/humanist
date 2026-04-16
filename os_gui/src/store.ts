@@ -66,6 +66,15 @@ interface OsStore {
   labelTraits: LabelTrait[];       // traits for the currently selected entity (inspector)
   allLabelTraits: LabelTrait[];    // full table — used for app-wide label resolution
 
+  // Phase 44: exploration mode
+  graphMode: 'context' | 'full';
+  hopCount: number;
+
+  // Backend readiness — false until the Rust side emits "backend-ready"
+  backendReady: boolean;
+  // Full entity list for the explore dropdown (refreshed on every entity event)
+  allEntities: Entity[];
+
   // UI flags
   isLoading: boolean;
   lastEvent: EntityUpdateEvent | null;
@@ -94,6 +103,17 @@ interface OsStore {
   saveRelationshipType: (rel: Omit<RelationshipType, 'id'> & { id?: string }) => Promise<void>;
   deleteRelationshipType: (label: string) => Promise<void>;
   getEffectiveSpatialTrait: (entityId: string) => Promise<SpatialTrait | null>;
+
+  fetchAllEntities: () => Promise<void>;
+
+  // Phase 44: exploration actions
+  expandContext: (entityId: string) => Promise<void>;
+  /** Load exactly these entity IDs + edges between them — no BFS expansion. Used by SQL queries. */
+  loadExactIds: (ids: string[]) => Promise<void>;
+  clearGraph: () => void;
+  loadFullGraph: () => Promise<void>;
+  setHopCount: (n: number) => void;
+  searchEntitiesAction: (query: string, lang?: string) => Promise<Entity[]>;
 
   // Actions — read
   setActivePtySession: (sessionId: string) => void;
@@ -147,6 +167,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
   selectedIds: [],
   contextEntities: [],
   selectedEntityEdges: [],
+  graphMode: 'context' as const,
+  hopCount: 2,
+  backendReady: false,
+  allEntities: [],
   isLoading: false,
   lastEvent: null,
   nodePositions: {},
@@ -262,6 +286,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
       get().queryContext(id);
       get().fetchEntityEdges(id);
       get().fetchTemporalTraits();
+      // Phase 44: auto-expand neighborhood in context mode
+      if (get().graphMode === 'context') {
+        get().expandContext(id);
+      }
     }
   },
 
@@ -272,6 +300,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
       get().queryContext(primary);
       get().fetchEntityEdges(primary);
       get().fetchTemporalTraits();
+      // Phase 44: auto-expand neighborhood in context mode
+      if (get().graphMode === 'context') {
+        get().expandContext(primary);
+      }
     }
   },
 
@@ -289,6 +321,115 @@ export const useOsStore = create<OsStore>((set, get) => ({
       set({ contextEntities: related });
     } catch (e) {
       console.error('queryContext error:', e);
+    }
+  },
+
+  // Phase 44: merge N-hop neighborhood into the visible graph (non-destructive)
+  expandContext: async (entityId) => {
+    const { hopCount } = get();
+    try {
+      const result = await invoke<{ entities: Entity[]; edges: GraphEdge[] }>(
+        'get_entity_neighborhood',
+        { entityId, hops: hopCount }
+      );
+      set(state => {
+        const existingEntityIds = new Set(state.entities.map(e => e.id));
+        const newEntities = result.entities.filter(e => !existingEntityIds.has(e.id));
+        const existingEdgeKeys = new Set(
+          state.edges.map(e => `${e.from}|${e.to}|${e.label}`)
+        );
+        const newEdges = result.edges.filter(
+          e => !existingEdgeKeys.has(`${e.from}|${e.to}|${e.label}`)
+        );
+        return {
+          entities: [...state.entities, ...newEntities],
+          edges: [...state.edges, ...newEdges],
+        };
+      });
+    } catch (e) {
+      console.error('expandContext error:', e);
+    }
+  },
+
+  fetchAllEntities: async () => {
+    // On first call (e.g. app bootstrap) the backend may still be initialising.
+    // Retry for up to ~10 s so the Load Full button becomes active as soon as the
+    // backend is ready, without the user having to do anything.
+    for (let attempt = 0; attempt < 35; attempt++) {
+      try {
+        const records = await invoke<Entity[]>('list_entities');
+        set({ allEntities: records, backendReady: true });
+        return;
+      } catch {
+        if (attempt < 34) await new Promise(r => setTimeout(r, 300));
+      }
+    }
+    console.error('fetchAllEntities: backend did not become ready within timeout');
+  },
+
+  loadExactIds: async (ids: string[]) => {
+    if (ids.length === 0) return;
+    set({ isLoading: true });
+    // Fetch all entities and filter to exactly the queried IDs — no BFS expansion.
+    let fetchedEntities: Entity[] = [];
+    try {
+      const all = await invoke<Entity[]>('list_entities');
+      const idSet = new Set(ids);
+      fetchedEntities = all.filter(e => idSet.has(e.id));
+    } catch (e) {
+      console.error('loadExactIds list_entities error:', e);
+    }
+    // Fetch only the edges that connect entities within the result set.
+    let crossEdges: GraphEdge[] = [];
+    try {
+      const allEdges = await invoke<GraphEdge[]>('get_edges');
+      const idSet = new Set(ids);
+      crossEdges = allEdges.filter(e => idSet.has(e.from) && idSet.has(e.to));
+    } catch { /* edges optional */ }
+    set({ entities: fetchedEntities, edges: crossEdges, graphMode: 'context', isLoading: false });
+  },
+
+  clearGraph: () => {
+    set({
+      entities: [],
+      edges: [],
+      selectedEntityId: null,
+      selectedIds: [],
+      contextEntities: [],
+      selectedEntityEdges: [],
+      graphMode: 'context',
+    });
+  },
+
+  loadFullGraph: async () => {
+    // Do NOT clear entities before the fetch — setting entities:[] triggers a
+    // render with an empty ForceGraph2D while its simulation is still running,
+    // which causes "The object can not be found here." from a stale callback.
+    // Instead, switch mode and mark loading, then replace data in one update.
+    set({ graphMode: 'full', isLoading: true });
+    try {
+      const [entities, edges] = await Promise.all([
+        invoke<Entity[]>('list_entities'),
+        invoke<GraphEdge[]>('get_edges'),
+      ]);
+      set({ entities, edges, isLoading: false });
+    } catch (e: any) {
+      console.error('loadFullGraph failed:', e);
+      set({ isLoading: false });
+    }
+  },
+
+  setHopCount: (n) => set({ hopCount: Math.min(5, Math.max(0, n)) }),
+
+  searchEntitiesAction: async (query, lang) => {
+    try {
+      return await invoke<Entity[]>('search_entities', {
+        query,
+        lang: lang ?? null,
+      });
+    } catch (e) {
+      console.error('searchEntities error:', e);
+      return [];
     }
   },
 
@@ -518,6 +659,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
   },
 
   startListening: async () => {
+    const unlistenReady = await listen('backend-ready', () => {
+      set({ backendReady: true });
+    });
+
     const unlistenEntity = await listen<EntityUpdateEvent>('entity-updated', (event) => {
       set({ lastEvent: event.payload });
       const store = useOsStore.getState();
@@ -526,6 +671,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       store.fetchBlobTraits();
       store.fetchTemporalTraits();
       store.fetchAllLabelTraits();
+      store.fetchAllEntities();
     });
 
     const unlistenGraph = await listen<GraphUpdateEvent>('graph-updated', () => {
@@ -535,6 +681,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
     });
 
     return () => {
+      unlistenReady();
       unlistenEntity();
       unlistenGraph();
     };

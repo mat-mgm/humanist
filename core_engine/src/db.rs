@@ -226,24 +226,201 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn query_context(&self, context_id: &str) -> Result<Vec<Entity>, String> {
-        let id_part = context_id.strip_prefix("entity:").unwrap_or(context_id).to_string();
-        // Get all entity IDs linked from this context entity via edges
-        let qs = "SELECT to_id FROM edge WHERE from_id = $context_id AND deleted_at = NONE;";
-        let mut resp = self.db.query(qs)
-            .bind(("context_id", format!("entity:{}", id_part)))
-            .await.map_err(|e| e.to_string())?;
-        
-        let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
-        
-        let mut entities = Vec::new();
-        for row in rows {
-            if let Some(to_id) = row.get("to_id").and_then(|v| v.as_str()) {
-                if let Ok(e) = self.get_entity(to_id).await {
+        // Delegate to get_entity_neighborhood (1 hop) and exclude the seed itself.
+        let (mut entities, _) = self.get_entity_neighborhood(context_id, 1).await?;
+        let full_id = if context_id.starts_with("entity:") {
+            context_id.to_string()
+        } else {
+            format!("entity:{}", context_id)
+        };
+        entities.retain(|e| e.id != full_id && e.id != context_id);
+        Ok(entities)
+    }
+
+    async fn get_entity_neighborhood(
+        &self,
+        entity_id: &str,
+        hops: u8,
+    ) -> Result<(Vec<Entity>, Vec<EdgeRecord>), String> {
+        use std::collections::HashSet;
+
+        let full_id = if entity_id.starts_with("entity:") {
+            entity_id.to_string()
+        } else {
+            format!("entity:{}", entity_id)
+        };
+
+        let mut all_ids: HashSet<String> = HashSet::new();
+        all_ids.insert(full_id.clone());
+        let mut frontier: Vec<String> = vec![full_id];
+
+        for _ in 0..hops {
+            if frontier.is_empty() { break; }
+            let mut next_frontier: Vec<String> = Vec::new();
+            for current_id in &frontier {
+                // Outgoing: current -> edge -> neighbor
+                let qs_out = format!(
+                    "SELECT type::string(out) AS neighbor FROM edge WHERE in = {};",
+                    current_id
+                );
+                let mut resp = self.db.query(qs_out).await.map_err(|e| e.to_string())?;
+                let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
+                for row in rows {
+                    if let Some(n) = row.get("neighbor").and_then(|v| v.as_str()) {
+                        let n = n.to_string();
+                        if !all_ids.contains(&n) {
+                            all_ids.insert(n.clone());
+                            next_frontier.push(n);
+                        }
+                    }
+                }
+                // Incoming: neighbor -> edge -> current
+                let qs_in = format!(
+                    "SELECT type::string(in) AS neighbor FROM edge WHERE out = {};",
+                    current_id
+                );
+                let mut resp2 = self.db.query(qs_in).await.map_err(|e| e.to_string())?;
+                let rows2: Vec<serde_json::Value> = resp2.take(0).map_err(|e| e.to_string())?;
+                for row in rows2 {
+                    if let Some(n) = row.get("neighbor").and_then(|v| v.as_str()) {
+                        let n = n.to_string();
+                        if !all_ids.contains(&n) {
+                            all_ids.insert(n.clone());
+                            next_frontier.push(n);
+                        }
+                    }
+                }
+            }
+            frontier = next_frontier;
+        }
+
+        // Fetch entities (skip deleted)
+        let mut entities: Vec<Entity> = Vec::new();
+        for id in &all_ids {
+            if let Ok(e) = self.get_entity(id).await {
+                if e.deleted_at.is_none() {
                     entities.push(e);
                 }
             }
         }
+
+        // Fetch edges where both endpoints are within the neighborhood
+        if all_ids.is_empty() {
+            return Ok((entities, vec![]));
+        }
+        let ids_literal = all_ids.iter().cloned().collect::<Vec<_>>().join(", ");
+        let edge_qs = format!(
+            "SELECT type::string(in) AS in, type::string(out) AS out, label, strength, latency, metadata \
+             FROM edge WHERE in INSIDE [{ids}] AND out INSIDE [{ids}];",
+            ids = ids_literal
+        );
+        let mut edge_resp = self.db.query(edge_qs).await.map_err(|e| e.to_string())?;
+        let edge_rows: Vec<serde_json::Value> = edge_resp.take(0).map_err(|e| e.to_string())?;
+
+        let mut edges: Vec<EdgeRecord> = edge_rows.iter().filter_map(|r| {
+            let from = r.get("in")?.as_str()?.replace("entity:", "");
+            let to = r.get("out")?.as_str()?.replace("entity:", "");
+            let label = r.get("label")?.as_str()?.to_string();
+            let strength = r.get("strength").and_then(|v| v.as_f64());
+            let latency = r.get("latency").and_then(|v| v.as_i64());
+            let metadata = r.get("metadata").cloned();
+            Some(EdgeRecord { from, to, label, strength, latency, metadata })
+        }).collect();
+
+        // Expand symmetric relationship types (same logic as get_edges)
+        let rel_types = self.list_relationship_types().await.unwrap_or_default();
+        let symmetric_labels: std::collections::HashSet<&str> = rel_types.iter()
+            .filter(|rt| rt.symmetric)
+            .map(|rt| rt.label.as_str())
+            .collect();
+        if !symmetric_labels.is_empty() {
+            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges.iter()
+                .map(|e| (e.from.as_str(), e.to.as_str(), e.label.as_str()))
+                .collect();
+            let mut synthetic: Vec<EdgeRecord> = edges.iter()
+                .filter(|e| symmetric_labels.contains(e.label.as_str()))
+                .filter(|e| !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str())))
+                .map(|e| EdgeRecord {
+                    from: e.to.clone(),
+                    to: e.from.clone(),
+                    label: e.label.clone(),
+                    strength: e.strength,
+                    latency: e.latency,
+                    metadata: e.metadata.clone(),
+                })
+                .collect();
+            edges.append(&mut synthetic);
+        }
+
+        Ok((entities, edges))
+    }
+
+    async fn search_entities_by_label(
+        &self,
+        query: &str,
+        lang: Option<&str>,
+    ) -> Result<Vec<Entity>, String> {
+        use std::collections::HashSet;
+
+        let q_lower = query.to_lowercase();
+
+        // 1. Match on entity.label (case-insensitive substring)
+        let mut resp = self.db.query(
+            "SELECT *, type::string(id) AS id FROM entity \
+             WHERE string::contains(string::lowercase(label), $q) AND deleted_at = NONE LIMIT 50;"
+        )
+        .bind(("q", q_lower.clone()))
+        .await.map_err(|e| e.to_string())?;
+        let mut entities: Vec<Entity> = resp.take(0).map_err(|e| e.to_string())?;
+
+        // 2. Match on label_trait.text (multilingual, case-insensitive substring)
+        let mut lt_resp = if let Some(l) = lang {
+            self.db.query(
+                "SELECT *, type::string(id) AS id FROM label_trait \
+                 WHERE string::contains(string::lowercase(text), $q) AND lang = $lang LIMIT 50;"
+            )
+            .bind(("q", q_lower.clone()))
+            .bind(("lang", l.to_string()))
+            .await.map_err(|e| e.to_string())?
+        } else {
+            self.db.query(
+                "SELECT *, type::string(id) AS id FROM label_trait \
+                 WHERE string::contains(string::lowercase(text), $q) LIMIT 50;"
+            )
+            .bind(("q", q_lower.clone()))
+            .await.map_err(|e| e.to_string())?
+        };
+        let lt_rows: Vec<LabelTrait> = lt_resp.take(0).map_err(|e| e.to_string())?;
+
+        let mut seen_ids: HashSet<String> = entities.iter().map(|e| e.id.clone()).collect();
+        for lt in lt_rows {
+            if !seen_ids.contains(&lt.owner) {
+                seen_ids.insert(lt.owner.clone());
+                if let Ok(e) = self.get_entity(&lt.owner).await {
+                    if e.deleted_at.is_none() {
+                        entities.push(e);
+                    }
+                }
+            }
+        }
+
         Ok(entities)
+    }
+
+    async fn query_entity_ids(&self, query: &str) -> Result<Vec<String>, String> {
+        // Strip trailing semicolons — a bare semicolon inside a SurrealDB subquery
+        // (`FROM ({user_query;})`) breaks the parser and silently returns 0 rows.
+        let clean = query.trim().trim_end_matches(';').trim();
+        // Wrap so the outer SELECT normalises every result row to a plain string ID.
+        // The WHERE clause is omitted; filtering happens in Rust below.
+        let wrapped = format!("SELECT type::string(id) AS id FROM ({});", clean);
+        let mut resp = self.db.query(wrapped).await.map_err(|e| e.to_string())?;
+        let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
+        let ids = rows.iter()
+            .filter_map(|r| r.get("id")?.as_str().map(|s| s.to_string()))
+            .filter(|id| id.starts_with("entity:"))
+            .collect();
+        Ok(ids)
     }
 
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String> {

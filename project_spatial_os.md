@@ -77,6 +77,28 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
 ### General conditions
 Execution context: Local application built with Tauri, Rust, Vite, React. Theme-able frontend.
 
+### Phase 0: Template phase
+**Description**
+This phase is just an example to illustrate a the structure of a phase. Is not part of the real roadmap.
+
+**Tasks**
+- [] Task
+
+**Checks**
+- [] Check
+
+**Design decisions** (optional)
+- Decision:  
+  Rationale:  
+  Alternatives (optional):  
+  Trade-offs (optional):
+
+**Dependencies** (optional)
+
+**Notes / Risks / Resources** (optional)
+- Context, constraints, risks or auxiliar resources to support planning and execution.
+
+
 ### Phase 1: Prolog & Database Foundation
 **Description**
 Establish the core data and logic backend, ensuring Prolog integration and CAS functionality.
@@ -574,35 +596,66 @@ Implement a first-class multilingual naming system. Entities will support a cano
 - [✓] Adding a new `LabelTrait` for an existing entity instantly updates its display name in the Graph and Registry views.
 - [✓] The CLI `entity ls` command respects the `--lang` flag when displaying labels.
 
-### Phase 44: UI Utilities & UX Hardening
+### Phase 44: Contextual & Query-Based Data Loading
 **Description**
-Enhance the user experience with native integration for file management and quick identifier access.
+Replace the "all-or-nothing" graph load with an Exploration Mode: the graph starts empty and is built incrementally by selecting entities. A backend N-hop BFS resolver hydrates the neighborhood of any entity; a multilingual explore bar drives discovery. Full-graph load remains available as an escape hatch.
 
-**Tasks**
-- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
-- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
-- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
+**Approach**: Exploration/Expand Mode — graph starts blank; selecting or searching an entity merges its N-hop neighborhood into the visible graph. Default mode is context; "Load Full" and "Clear" buttons provide escape hatches. Hop count is configurable via a toolbar spinner (0–5, default 2). The explore bar does multilingual label search by default; inputs starting with `SELECT` are executed as raw SurrealQL and load exactly the returned entities (no BFS expansion).
+
+*Backend — Port & Implementation*
+- [✓] **`get_entity_neighborhood`**: Add to `GraphDatabase` port + `db.rs`. Iterative BFS in Rust: each hop uses SurrealDB's native graph syntax (`->edge->entity` and `<-edge<-entity`). Returns `(Vec<Entity>, Vec<EdgeRecord>)` — both the N-hop cloud of entities and the edges connecting only those entities.
+- [✓] **`search_entities_by_label`**: Add to `GraphDatabase` port + `db.rs`. Queries `entity.label` (CONTAINS) and `label_trait.text` (CONTAINS, optional `lang` filter). Returns active (non-deleted) entities only.
+- [✓] **Fix/deprecate `query_context`**: The existing implementation is broken (references non-existent `from_id`/`to_id` columns post Phase 18). Replace calls with `get_entity_neighborhood`.
+- [✓] **`query_entity_ids`**: Add to `db.rs`. Wraps any user SurrealQL as a subquery, strips trailing semicolons, returns only `entity:`-prefixed IDs.
+
+*IPC Layer*
+- [✓] **Tauri commands**: `get_entity_neighborhood(entity_id: String, hops: u8)`, `search_entities(query: String, lang: Option<String>)`, and `query_entity_ids(query: String)`.
+- [✓] **`backend-ready` event**: emitted from Rust after `app.manage()` completes so the frontend can gate actions on confirmed backend availability.
+
+*Frontend — Store*
+- [✓] **New state**: `graphMode: 'context' | 'full'` (default `'context'`), `hopCount: number` (default `2`).
+- [✓] **`expandContext(entityId)`**: Calls `get_entity_neighborhood`, merges (deduplicates by ID) into `entities` and `edges`. Does not clear existing graph state.
+- [✓] **`loadExactIds(ids)`**: Fetches only the specified entity IDs and the edges between them — no BFS expansion. Used by SQL queries to load precisely what the query returns.
+- [✓] **`clearGraph()`**: Resets `entities: []`, `edges: []`.
+- [✓] **`loadFullGraph()`**: Calls `list_entities` + `get_edges` directly, sets `graphMode: 'full'`. Does not pre-clear entities to avoid triggering a mid-simulation empty state in ForceGraph2D.
+- [✓] **`setHopCount(n)`**: Updates `hopCount`. Minimum is 0 (entity itself only, no neighbors).
+- [✓] **`selectEntity` auto-expand**: In context mode, `selectEntity` also triggers `expandContext` for the selected ID.
+- [✓] **`App.tsx` startup**: Remove `fetchEntities()` and `fetchEdges()` bootstrap calls; graph starts empty.
+- [✓] **`allEntities`**: Full entity list kept in sync for instant local filtering in the explore dropdown (refreshed on every `entity-updated` event and on startup).
+- [✓] **`backendReady`**: Boolean flag; set to `true` by `fetchAllEntities` on first successful IPC call. Gates the Load Full button.
+
+*Frontend — GraphPanel UI*
+- [✓] **Explore bar — all-entities dropdown**: On focus (even with empty input) lists all entities from `allEntities`, filtered locally by label, kind, or `LabelTrait` text. No backend round-trip required.
+- [✓] **Explore bar — kind search**: Typing a kind name (e.g. `physical`, `abstract`) filters the dropdown to entities of that kind.
+- [✓] **Explore bar — SQL passthrough**: Input starting with `SELECT` is debounced and executed via `query_entity_ids`; results are loaded with `loadExactIds` (hop count ignored).
+- [✓] **Explore bar — status feedback**: Brief status message (e.g. "3 entities loaded", "No entities found") shown inline after SQL execution.
+- [✓] **"Clear" button**: calls `clearGraph()`.
+- [✓] **"Load Full" button**: disabled and labelled "Init…" until `backendReady` is true; calls `loadFullGraph()` once active.
+- [✓] **Hops spinner**: integer input 0–5, updates `hopCount`. 0 = load the entity itself with no neighbors.
+- [✓] **Empty-state overlay**: when `entities.length === 0` in context mode, render a centered hint over the graph canvas: *"Search or select an entity to explore"*.
+
+*Data*
+- [✓] **Seed script** (`test/seed_db.sh`): populates the DB with 14 entities, 4 spatial traits, 2 temporal traits, 25 label traits (de/fr/pt), 8 relationship types, and 18 edges for representative test data.
 
 **Checks**
-- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
-- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
-- [ ] `npm run build` passes with zero TypeScript errors.
+- [✓] Graph starts empty on launch (no full table scan at boot).
+- [✓] Searching a label in the explore bar returns a dropdown of matching entities (respecting active locale).
+- [✓] Clicking the explore bar with no text shows all entities in the dropdown.
+- [✓] Typing a kind name (e.g. `physical`) filters the dropdown to entities of that kind.
+- [✓] Selecting a search result populates the graph with the entity and its N-hop neighborhood.
+- [✓] Clicking a node already in the graph expands its context (merges new neighbors without clearing existing nodes).
+- [✓] The hops spinner correctly controls neighborhood depth (0 hops = entity only, no neighbors).
+- [✓] "Clear" resets the graph to empty; "Load Full" loads all entities and edges.
+- [✓] A `SELECT`-prefixed query loads exactly the returned entities — hop count is ignored, no BFS expansion.
+- [✓] "Load Full" button is disabled with label "Init…" until the backend signals readiness.
+- [ ] "Load Full" on first launch no longer crashes the Knowledge Graph panel. *(regression: ForceGraph2D simulation callback fires on stale node reference during the first load; subsequent loads work correctly)*
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
-### Phase 45: Contextual & Query-Based Data Loading
-**Description**
-Improve system performance and discovery by moving from "all-or-nothing" state loading to granular, context-aware hydration.
+**Known Issues**
+- **Load Full first-launch crash**: Clicking "Load Full" immediately after launch crashes the Knowledge Graph panel with "The object can not be found here." Clicking the ErrorBoundary retry button recovers and all subsequent loads work correctly. Root cause is suspected to be a ForceGraph2D d3 simulation callback referencing a node that no longer exists during the first state transition. Mitigations attempted: `block_on` in Rust setup, frontend retry loop, `backend-ready` event gating, removing the pre-clear step in `loadFullGraph`. None fully resolved the issue on first launch.
 
-**Tasks**
-- [ ] **Context Loading Engine**: Implement a backend capability to load the "context" of a given entity (fetching all neighbors and related nodes within a specific hop count).
-- [ ] **Selective Hydration**: Update the Zustand store and SurrealDB queries to support loading specific subgraphs based on active exploration rather than full table scans.
-- [ ] **Query-Based Filtering**: Add support for selective loading via complex queries (e.g., "Load all 'Physical' nodes related to 'Location X'") within the GUI.
-
-**Checks**
-- [ ] Requesting an entity's context correctly populates the graph with relevant relationships.
-- [ ] Large databases do not stall the UI; only the queried subset is processed by the renderer.
-- [ ] `cargo check --workspace` passes with zero warnings.
-
-### Phase 46: Flexible Panel Architecture & Tab Merging
+### Phase 45: Flexible Panel Architecture & Tab Merging
 **Description**
 Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursive panel system. Every component (Entity Registry, Inspector, Asset Preview, Timeline, and Calendar) becomes an atomic standalone panel that can either tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
 
@@ -617,6 +670,20 @@ Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursi
 - [ ] Every component can be opened as a standalone tiling window by default.
 - [ ] Dropping the `Timeline` panel onto the `Inspector` header correctly merges them into a tabbed interface.
 - [ ] Resizing a Tab Group correctly scales all internal tabbed components.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+### Phase 46: UI Utilities & UX Hardening
+**Description**
+Enhance the user experience with native integration for file management and quick identifier access.
+
+**Tasks**
+- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
+- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
+- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
+
+**Checks**
+- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
+- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 
 ### Phase 45: Semantic Metadata Enforcement
@@ -655,6 +722,9 @@ Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into
 ## Potential Future Phases
 
 > The following phases are defined for directional reference. They are not yet scheduled and should be promoted to the main roadmap when their prerequisites are met.
+
+[] Add potential phase for database remove and populate with useful data script.
+[] Add potential phase for improved and cleaned debug system.
 
 ### Phase 41: Hybrid Globe Imagery & Local Fallback (10–20 GB)
 **Description**
