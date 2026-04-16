@@ -655,22 +655,71 @@ Replace the "all-or-nothing" graph load with an Exploration Mode: the graph star
 **Known Issues**
 - **Load Full first-launch crash**: Clicking "Load Full" immediately after launch crashes the Knowledge Graph panel with "The object can not be found here." Clicking the ErrorBoundary retry button recovers and all subsequent loads work correctly. Root cause is suspected to be a ForceGraph2D d3 simulation callback referencing a node that no longer exists during the first state transition. Mitigations attempted: `block_on` in Rust setup, frontend retry loop, `backend-ready` event gating, removing the pre-clear step in `loadFullGraph`. None fully resolved the issue on first launch.
 
-### Phase 45: Flexible Panel Architecture & Tab Merging
+### Phase 45: Flexible Panel Architecture & Tab Merging ✓
 **Description**
-Refactor the GUI from a fixed tabbed-viewport model to a fully flexible, recursive panel system. Every component (Entity Registry, Inspector, Asset Preview, Timeline, and Calendar) becomes an atomic standalone panel that can either tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
+Refactor the GUI from a fixed tabbed-viewport model to a fully flexible panel system. Every component becomes an atomic standalone panel that can tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
+
+**Design Decisions**
+- **9 atomic panels**: Graph, Globe, Terminal, Properties (EntityInspector), Preview (AssetPreview), Entities (EntityRegistry), Relationships (OntologyPanel), TimelineView, CalendarView
+- **Drag-to-merge**: `react-dnd` + `react-dnd-html5-backend`; drag item carries `{ id, fromSlotIdx }` to distinguish merge-from-outside vs reorder-within
+- **Layout state**: Minimal tree — `SlotNode = { type: 'pane'; id: string } | { type: 'tabgroup'; ids: string[]; active: string }`. `tiledPaneIds: string[]` → `tiledSlots: SlotNode[]`. Existing `LayoutMode` presets preserved.
+- **Persistence**: `localStorage` key `spatial-os:layout` (serializes `tiledSlots`, `floatingPaneIds`, `layoutMode`)
+- **Default layout**: `[pane:graph, tabgroup:[inspector, registry, preview, ontology]]` — Globe, Timeline, Calendar, Terminal off by default
+- **Panel reordering**: `Alt+Enter` promotes focused tiled slot to index 0; `Alt+j` / `Alt+k` are context-sensitive — cycle tabs within a focused tabgroup (stopping at the boundary and moving to the adjacent slot rather than wrapping)
+- **Panel renames**: Inspector → Properties, Asset Preview → Preview, Entity Registry → Entities, Ontology → Relationships
 
 **Tasks**
-- [ ] **Atomic Component Extraction**: Decouple `EntityRegistry`, `EntityInspector`, `AssetPreview`, `Timeline`, and `Calendar` into independent top-level components, removing the rigid `ViewportPanel` and `TimelinePanel` containers.
-- [ ] **Recursive Tab-Group State**: Update the Zustand layout store to support a recursive tree structure where any DWM tile can be either a "Single Component" or a "Tab Group" containing multiple components.
-- [ ] **Drag-to-Merge Workflow**: Implement a header-based drag-and-drop interface where dragging a panel's title bar and dropping it onto another panel's header area merges them into a shared Tab Group.
-- [ ] **Tiling/Tab Seamless Transition**: Ensure panels can be easily "detached" from a Tab Group back into a standalone tile or floating window.
-- [ ] **Workspace Persistence**: Save and restore the entire recursive layout state (tiled, floating, and tabbed) across application restarts.
+
+*Atomic Extraction*
+- [✓] Extract `EntityInspector` → `components/EntityInspector.tsx`
+- [✓] Extract `AssetPreview` → `components/AssetPreview.tsx`
+- [✓] Extract `EntityRegistry` → `components/EntityRegistry.tsx`
+- [✓] Extract `OntologyPanel` → `components/OntologyPanel.tsx`
+- [✓] Extract `TimelineView` (timeline tab) → `components/TimelineView.tsx`
+- [✓] Extract `CalendarView` (calendar tab) → `components/CalendarView.tsx`
+- [✓] Delete `ViewportPanel.tsx` and `TimelinePanel.tsx`
+
+*Layout State Refactoring*
+- [✓] Define `SlotNode` type; replace `tiledPaneIds` with `tiledSlots: SlotNode[]` in `App.tsx`
+- [✓] Update `ALL_PANES` to include all 9 atomic panels
+- [✓] Update `TilingLayout` to accept and render `SlotNode[]` instead of `PaneConfig[]`
+
+*Tab Group UI*
+- [✓] Implement `TabGroupPane` sub-component in `TilingLayout.tsx`: tab bar + active pane body
+- [✓] Each tab chip has an `×` close button (removes from group; collapses single-child groups to plain `pane`)
+- [✓] Each tab chip has a `↗` detach button (removes from group; inserts as new tiled slot or floating)
+
+*Drag-to-Merge*
+- [✓] Install `react-dnd` + `react-dnd-html5-backend`
+- [✓] Wrap `<App>` in `DndProvider`
+- [✓] Pane headers and tab chips are drag sources (`type: 'PANEL'`, payload: `{ id, fromSlotIdx }`)
+- [✓] Pane headers and tab bar are drop targets: dropping merges dragged panel into the target's tab group (creates one if needed)
+- [✓] Visual highlight on valid drop target during hover
+- [✓] Tab chips are also drop targets for reordering within the same tabgroup (`canDrop` checks `fromSlotIdx === slotIdx`)
+
+*Reordering*
+- [✓] `Alt+Enter`: promote focused tiled slot to index 0
+- [✓] `Alt+j` / `Alt+k`: context-sensitive tab/slot navigation — cycle tabs within tabgroup, escape to adjacent slot at boundary
+
+*Floating → Tab Attachment*
+- [✓] Floating panel header has `⊕` button revealing a slot picker dropdown
+- [✓] Selecting a slot from the picker calls `onMergeInto`, removing the panel from the floating layer and merging it into that slot as a tab
+
+*Workspace Persistence*
+- [✓] Serialize `{ tiledSlots, floatingPaneIds, layoutMode }` to `localStorage` on every mutation
+- [✓] Restore on startup; fall back to default on parse error
 
 **Checks**
-- [ ] Every component can be opened as a standalone tiling window by default.
-- [ ] Dropping the `Timeline` panel onto the `Inspector` header correctly merges them into a tabbed interface.
-- [ ] Resizing a Tab Group correctly scales all internal tabbed components.
-- [ ] `npm run build` passes with zero TypeScript errors.
+- [✓] Every panel can be opened as a standalone tiling window
+- [✓] Dragging `Timeline` onto `Inspector`'s header merges them into a shared tab group
+- [✓] Resizing a TabGroup slot correctly scales all internal panels
+- [✓] Detaching a tab from a TabGroup works (both to tiled and floating)
+- [✓] `Alt+Enter` promotes focused slot to master
+- [✓] `Alt+j` / `Alt+k` cycle tabs in a focused tab group and escape at boundary to the adjacent slot
+- [✓] Tabs within a tabgroup can be reordered by dragging one chip onto another
+- [✓] Floating panel can be attached as a tab into any existing tiled slot via the `⊕` slot picker
+- [✓] Layout state survives an app restart (localStorage)
+- [✓] `npm run build` passes with zero TypeScript errors
 
 ### Phase 46: UI Utilities & UX Hardening
 **Description**

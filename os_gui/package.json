@@ -22,6 +22,8 @@
     "leaflet": "^1.9.4",
     "pdfjs-dist": "^5.6.205",
     "react": "^19.1.0",
+    "react-dnd": "^16.0.1",
+    "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^19.1.0",
     "react-rnd": "^10.5.3",
     "three": "^0.183.2",
