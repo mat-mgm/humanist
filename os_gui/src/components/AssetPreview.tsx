@@ -1,5 +1,6 @@
 import { memo, useState, useEffect } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { Eye, Package } from 'lucide-react';
 import { useOsStore } from '../store';
 import { ThreeViewer } from './ThreeViewer';
 import { PdfViewer } from './PdfViewer';
@@ -64,7 +65,7 @@ export const AssetPreview = memo(function AssetPreview() {
   if (!selected) {
     return (
       <div className="panel panel-placeholder" style={{ height: '100%' }}>
-        <div className="placeholder-icon">👁️</div>
+        <div className="placeholder-icon"><Eye size={32} /></div>
         <p>No preview available</p>
       </div>
     );
@@ -122,7 +123,7 @@ export const AssetPreview = memo(function AssetPreview() {
           )
         ) : (
           <div className="panel-placeholder">
-            <div className="placeholder-icon">📦</div>
+            <div className="placeholder-icon"><Package size={32} /></div>
             <p>Unknown blob structure.</p>
             <pre style={{ textAlign: 'left', fontSize: 10, background: '#111', padding: 8, borderRadius: 4, width: '90%', overflow: 'auto', color: '#ffb86c' }}>
               {blobTrait ? JSON.stringify({ ...blobTrait, isImage, isPdf, isCad }, null, 2) : 'No BlobTrait attached to this Entity!'}

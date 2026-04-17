@@ -149,6 +149,33 @@ interface OsStore {
   toggleFilterEdgeLabel: (label: string) => void;
   setHighlightedPath: (path: string[], edgeKeys: Set<string>) => void;
   clearHighlightedPath: () => void;
+
+  // ── Activity bar / shell layout state ────────────────────────
+  activeActivity: string;
+  sidePanelOpen: boolean;
+  rightPanelId: string | null;
+  tilingModeEnabled: boolean;
+  setActiveActivity: (id: string) => void;
+  toggleSidePanel: () => void;
+  setSidePanelOpen: (open: boolean) => void;
+  setRightPanelId: (id: string | null) => void;
+  setTilingModeEnabled: (enabled: boolean) => void;
+
+  // ── Lifted graph toolbar state (shared with GraphSidePanel) ──
+  graphExploreQuery: string;
+  graphExploreStatus: string | null;
+  graphShowGrid: boolean;
+  graphPathFrom: string;
+  graphPathTo: string;
+  graphPathError: string | null;
+  setGraphExploreQuery: (q: string) => void;
+  setGraphExploreStatus: (s: string | null) => void;
+  setGraphShowGrid: (show: boolean) => void;
+  setGraphPathFrom: (id: string) => void;
+  setGraphPathTo: (id: string) => void;
+  setGraphPathError: (err: string | null) => void;
+  graphResetViewFn: (() => void) | null;
+  setGraphResetViewFn: (fn: (() => void) | null) => void;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -180,6 +207,33 @@ export const useOsStore = create<OsStore>((set, get) => ({
   highlightedPath: [],
   highlightedEdgeKeys: new Set<string>(),
   activePtySession: 'main',
+
+  // Activity bar / shell layout
+  activeActivity: 'graph',
+  sidePanelOpen: true,
+  rightPanelId: null,
+  tilingModeEnabled: false,
+  setActiveActivity: (id) => set({ activeActivity: id }),
+  toggleSidePanel: () => set(s => ({ sidePanelOpen: !s.sidePanelOpen })),
+  setSidePanelOpen: (open) => set({ sidePanelOpen: open }),
+  setRightPanelId: (id) => set({ rightPanelId: id }),
+  setTilingModeEnabled: (enabled) => set({ tilingModeEnabled: enabled }),
+
+  // Lifted graph toolbar state
+  graphExploreQuery: '',
+  graphExploreStatus: null,
+  graphShowGrid: true,
+  graphPathFrom: '',
+  graphPathTo: '',
+  graphPathError: null,
+  setGraphExploreQuery: (q) => set({ graphExploreQuery: q }),
+  setGraphExploreStatus: (s) => set({ graphExploreStatus: s }),
+  setGraphShowGrid: (show) => set({ graphShowGrid: show }),
+  setGraphPathFrom: (id) => set({ graphPathFrom: id }),
+  setGraphPathTo: (id) => set({ graphPathTo: id }),
+  setGraphPathError: (err) => set({ graphPathError: err }),
+  graphResetViewFn: null,
+  setGraphResetViewFn: (fn) => set({ graphResetViewFn: fn }),
 
   setActivePtySession: (sessionId) => set({ activePtySession: sessionId }),
 

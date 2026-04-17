@@ -20,6 +20,7 @@
     "force-graph": "^1.51.2",
     "globe.gl": "^2.45.1",
     "leaflet": "^1.9.4",
+    "lucide-react": "^1.8.0",
     "pdfjs-dist": "^5.6.205",
     "react": "^19.1.0",
     "react-dnd": "^16.0.1",

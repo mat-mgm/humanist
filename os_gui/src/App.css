@@ -923,3 +923,301 @@ body,
   padding: 5px 8px;
   border-radius: 4px;
 }
+
+/* ── Activity bar layout ─────────────────────────────────────── */
+.activity-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Activity rail */
+.activity-bar {
+  width: 48px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  gap: 2px;
+  z-index: 100;
+}
+
+.activity-bar-top {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0 6px;
+}
+
+.activity-bar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0 6px 4px;
+}
+
+.activity-bar-sep {
+  width: 28px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* Icon buttons — icons inherit currentColor, so color = theme var */
+.activity-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-hint);         /* inactive: dimmed, adapts to theme */
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.activity-btn:hover {
+  background: var(--bg-panel-header);
+  color: var(--text-primary);      /* hover: full text color */
+}
+
+.activity-btn.active {
+  background: var(--bg-panel-header);
+  color: var(--accent);            /* active: accent color */
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding-left: 2px;
+}
+
+/* Side panel */
+.side-panel {
+  width: 280px; /* default — overridden by inline style when resizing */
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.side-panel-resizer {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.side-panel-resizer:hover,
+.side-panel-resizer:active {
+  background: var(--accent);
+}
+
+/* Causal panel horizontal split handle */
+.causal-split-handle {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: var(--border);
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.causal-split-handle:hover,
+.causal-split-handle:active {
+  background: var(--accent);
+}
+
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--bg-panel-header);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.side-panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-hint);
+}
+
+.side-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-hint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.side-panel-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.side-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Panel picker — scrollable icon row (used in right panel) */
+.side-panel-picker {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.side-panel-picker::-webkit-scrollbar { height: 3px; }
+.side-panel-picker::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.side-panel-picker-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-hint);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.side-panel-picker-btn:hover {
+  background: var(--bg-panel-header);
+  color: var(--text-primary);
+}
+
+.side-panel-picker-btn.active {
+  background: var(--bg-panel-header);
+  color: var(--accent);
+}
+
+/* Primary canvas */
+.primary-canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.canvas-toolbar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.canvas-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-hint);         /* inherits theme via currentColor */
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.canvas-toolbar-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--bg-panel-header);
+}
+
+.canvas-toolbar-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-panel-header);
+}
+
+.canvas-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Right panel */
+.right-panel {
+  width: 300px; /* overridden by inline style when resizing */
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.right-panel-inner {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+}
+
+/* Window control buttons */
+.window-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  background: none;
+  border: none;
+  color: var(--text-hint);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  -webkit-app-region: no-drag;
+}
+
+.window-btn:hover {
+  background: var(--bg-panel-header);
+  color: var(--text-primary);
+}
+
+.window-btn-close:hover {
+  background: var(--error);
+  color: #fff;
+}

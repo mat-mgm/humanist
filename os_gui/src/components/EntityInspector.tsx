@@ -1,5 +1,6 @@
 import { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Trash2, Pencil, Info } from 'lucide-react';
 
 import { useOsStore, resolvedLabel } from '../store';
 import { EntitySnapshot, LabelTrait, SpatialTrait, TemporalTrait } from '../models';
@@ -74,7 +75,7 @@ const SelectionPanel = memo(function SelectionPanel() {
           {!confirmDelete ? (
             <button onClick={() => setConfirmDelete(true)}
               style={{ background: 'none', border: '1px solid #ff6b6b', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#ff6b6b', fontSize: 11, fontWeight: 700 }}>
-              🗑 Delete All
+              <Trash2 size={12} style={{ marginRight: 4 }} /> Delete All
             </button>
           ) : (
             <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -351,7 +352,7 @@ const SingleInspector = memo(function SingleInspector() {
   if (!selected) {
     return (
       <div className="panel-placeholder">
-        <div className="placeholder-icon">📐</div>
+        <div className="placeholder-icon"><Info size={32} /></div>
         <p>Click an entity to inspect it</p>
       </div>
     );
@@ -368,7 +369,7 @@ const SingleInspector = memo(function SingleInspector() {
         {!confirmDelete ? (
           <button onClick={() => setConfirmDelete(true)}
             style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
-            🗑 Delete
+            <Trash2 size={12} style={{ marginRight: 4 }} /> Delete
           </button>
         ) : (
           <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -413,7 +414,7 @@ const SingleInspector = memo(function SingleInspector() {
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Metadata</span>
         {editMeta == null
-          ? <button onClick={startEditMeta} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>✏ Edit</button>
+          ? <button onClick={startEditMeta} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}><Pencil size={11} style={{ marginRight: 3 }} /> Edit</button>
           : <span style={{ display: 'flex', gap: 6 }}>
               <button onClick={saveMeta} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Save</button>
               <button onClick={() => { setEditMeta(null); setMetaError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
@@ -459,7 +460,7 @@ const SingleInspector = memo(function SingleInspector() {
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Temporal</span>
         {editTemporal == null
-          ? <button onClick={startEditTemporal} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>✏ {temporalTrait ? 'Edit' : 'Add'}</button>
+          ? <button onClick={startEditTemporal} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}><Pencil size={11} style={{ marginRight: 3 }} /> {temporalTrait ? 'Edit' : 'Add'}</button>
           : <span style={{ display: 'flex', gap: 6 }}>
               <button onClick={saveTemp} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Save</button>
               <button onClick={() => { setEditTemporal(null); setTempError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
@@ -514,7 +515,7 @@ const SingleInspector = memo(function SingleInspector() {
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Spatial</span>
         {editSpatial == null
-          ? <button onClick={startEditSpatial} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>✏ {spatialTrait ? 'Edit' : 'Add'}</button>
+          ? <button onClick={startEditSpatial} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}><Pencil size={11} style={{ marginRight: 3 }} /> {spatialTrait ? 'Edit' : 'Add'}</button>
           : <span style={{ display: 'flex', gap: 6 }}>
               <button onClick={saveSpatial} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Save</button>
               <button onClick={() => { setEditSpatial(null); setSpatialError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>

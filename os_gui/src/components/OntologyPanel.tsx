@@ -1,4 +1,5 @@
 import { memo, useState, useCallback, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { useOsStore } from '../store';
 
 export const OntologyPanel = memo(function OntologyPanel() {
@@ -55,7 +56,7 @@ export const OntologyPanel = memo(function OntologyPanel() {
                 onClick={() => deleteRelationshipType(rt.label)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12, padding: '0 4px' }}
                 title="Delete"
-              >✕</button>
+              ><X size={11} /></button>
             </div>
           ))
         }

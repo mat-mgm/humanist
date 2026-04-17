@@ -348,7 +348,7 @@ export function TimelineView() {
                           border: `1px solid ${color}88`, borderRadius: 4, cursor: 'pointer', overflow: 'visible',
                           boxShadow: isSelected ? `0 0 8px ${color}88` : 'none', zIndex: isSelected ? 10 : 1 }}>
                         <span style={{ position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)', fontSize: 11, fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-                          {entity?.label} <span style={{ opacity: 0.6, fontSize: 10 }}>🔁 ×{sortedGroup.length}</span>
+                          {entity?.label} <span style={{ opacity: 0.6, fontSize: 10 }}>↻ ×{sortedGroup.length}</span>
                         </span>
                       </div>
                     );

@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { useOsStore } from '../store';
@@ -231,7 +232,7 @@ export const TerminalPanel = memo(function TerminalPanel({ onClose }: TerminalPa
         onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
         onMouseLeave={(e) => e.currentTarget.style.opacity = '0.6'}
       >
-        🔄 Refresh
+        <RefreshCw size={12} style={{ marginRight: 4 }} /> Refresh
       </div>
       <div className="panel-body" style={{ padding: 8 }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />

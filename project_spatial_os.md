@@ -4,7 +4,7 @@
 A spatial operating system interface and backend.
 * Purpose: A local-first, "Git for Data" Multimodal Intelligence Platform, managing nodes, edges, and blobs through generic, trait-based representations. It provides a unified environment to explore, interact with, and interconnect data, nodes, and spatial elements using a local database, PROLOG engine, and a window-managed GUI.
 * Context: Built using a Rust backend internally structured with Hexagonal Architecture. It exposes functionality via a Tauri wrapper for the GUI and a CLI binary. The web-based frontend uses React, Vite, TypeScript, and Zustand. All environments are reproducible via NixOS `flake.nix`.
-* Scope: Includes a CAS system, Prolog-based logic, DWM-style tiling window manager using `flexlayout-react`, a graph node viewer, a 3D globe viewer, properties panel, and an integrated terminal.
+* Scope: Includes a CAS system, Prolog-based logic, a VS Code-style activity bar layout (default), a DWM-style tiling window manager (opt-in via Settings), a graph node viewer, a 3D globe viewer with causal timeline, an entity knowledge panel, and an integrated terminal.
 
 ## Status
 Current status: in-progress
@@ -54,7 +54,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, blob storage via `aws-sdk-s3`, background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). Context entities emit semantic edges.
 * **Temporal Causal Context Tracking**: Entities of the `temporal` kind can be associated with a `Temporal Trait` (supporting points, spans, and recurring events). The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where Selecting a node in any view highlights its temporal position.
 * **Unified Semantic Relationships (Graph Edges & Tags)**: 
@@ -655,7 +655,7 @@ Replace the "all-or-nothing" graph load with an Exploration Mode: the graph star
 **Known Issues**
 - **Load Full first-launch crash**: Clicking "Load Full" immediately after launch crashes the Knowledge Graph panel with "The object can not be found here." Clicking the ErrorBoundary retry button recovers and all subsequent loads work correctly. Root cause is suspected to be a ForceGraph2D d3 simulation callback referencing a node that no longer exists during the first state transition. Mitigations attempted: `block_on` in Rust setup, frontend retry loop, `backend-ready` event gating, removing the pre-clear step in `loadFullGraph`. None fully resolved the issue on first launch.
 
-### Phase 45: Flexible Panel Architecture & Tab Merging ✓
+### Phase 45: Flexible Panel Architecture & Tab Merging
 **Description**
 Refactor the GUI from a fixed tabbed-viewport model to a fully flexible panel system. Every component becomes an atomic standalone panel that can tile, float, or be merged into another panel as a tab via interactive drag-and-drop.
 
@@ -720,6 +720,89 @@ Refactor the GUI from a fixed tabbed-viewport model to a fully flexible panel sy
 - [✓] Floating panel can be attached as a tab into any existing tiled slot via the `⊕` slot picker
 - [✓] Layout state survives an app restart (localStorage)
 - [✓] `npm run build` passes with zero TypeScript errors
+
+### Phase 47: Activity Bar Layout, Side Panel & Lucide Icons
+**Description**
+Redesigned the application shell from a top-menu DWM interface to a VS Code-style activity bar layout. A 48 px left rail (`ActivityBar`) holds three primary canvas buttons (Knowledge Graph, Causal, Terminal) and a Settings button at the bottom. Clicking the active icon collapses/expands the left side panel (VS Code behavior). The remaining width is the primary canvas. An optional resizable right panel with a panel picker can be opened via `Ctrl+\`. The left side panel is also user-resizable. Globe, Timeline, and Calendar are merged into a single **CausalPanel** (resizable split; Globe top, Timeline/Calendar tabbed bottom). Entities and Relationships are merged into a **EntityKnowledgePanel** (tabbed, scrollable). All emoji replaced with `lucide-react` icons. The DWM tiling layout is preserved and opt-in via Settings.
+
+**Design Decisions**
+- **Activity bar**: Three primary canvas entries — Graph (`Search`), Causal (`Globe`), Terminal (`Terminal`) — plus Settings at bottom. No separate tool-panel buttons in the rail; all auxiliary panels are accessed via the right panel picker.
+- **Side panel**: Collapsible, user-resizable (160–600 px, default 280 px). Content is context-sensitive: Graph → GraphSidePanel; Causal → companion hint; Settings → SettingsPanel (theme, locale, Tiling Mode toggle). Clicking the active icon again toggles it.
+- **CausalPanel**: Globe (lazy, top section) + 4 px drag handle + tab bar (Timeline / Calendar) + bottom section. Top height is user-adjustable (15–85 % of container). Code modules (GlobePanel, TimelineView, CalendarView) remain separate.
+- **EntityKnowledgePanel**: Tabs (Entities / Relationships) with compact accent-button style matching CausalPanel's tab bar; scrollable body.
+- **Right panel**: Resizable (160–700 px, default 300 px). A panel picker icon bar allows selecting any panel except those already in the primary canvas. When Causal is the primary canvas, Globe/Timeline/Calendar are all excluded from the picker (they are subsumed by CausalPanel); otherwise only the active canvas panel is excluded.
+- **Primary canvas isolation**: Clicking Settings or any future tool entry does not alter `primaryCanvasId`; only graph/causal/terminal clicks update it.
+- **Tiling WM**: DWM layout accessible via "Tiling Mode" toggle in Settings side panel; "Exit Tiling Mode" button in tiling menubar. Enabling restores previous tiled workspace from `localStorage`.
+- **Icon set**: `lucide-react`; mapping below.
+
+**Activity Bar Icon Mapping**
+
+| Position | Activity | Lucide Icon |
+|----------|----------|-------------|
+| Top | Knowledge Graph (canvas) | `Search` |
+| Top | Causal Panel (canvas) | `Globe` |
+| Top | Terminal (canvas) | `Terminal` |
+| Bottom | Settings | `Settings` |
+
+**Right Panel Picker Icon Mapping**
+
+| Panel | Lucide Icon |
+|-------|-------------|
+| Graph | `Search` |
+| Globe | `Globe` |
+| Timeline | `Clock` |
+| Calendar | `Calendar` |
+| Terminal | `Terminal` |
+| Entity Inspector | `Info` |
+| Entity Registry | `Database` |
+| Asset Preview | `Eye` |
+
+**Tasks**
+
+*Dependencies*
+- [✓] Add `lucide-react` to `os_gui` npm dependencies.
+
+*Icon Migration*
+- [✓] Replace emoji and text-based icons app-wide with `lucide-react` components.
+
+*Shell Layout Refactor*
+- [✓] Create `components/ActivityBar.tsx`: 48 px left rail; primary canvas icons top; Settings icon bottom; active icon highlighted; click-to-toggle side panel.
+- [✓] Create `components/SidePanel.tsx`: collapsible, user-resizable panel (default 280 px). Context-sensitive content per active activity.
+- [✓] Inline right panel in `App.tsx`: user-resizable, with panel picker; hidden by default.
+- [✓] Refactor `App.tsx` shell: `ActivityBar | SidePanel | PrimaryCanvas | RightPanel` flex layout as default.
+- [✓] Move graph toolbar controls into `GraphSidePanel.tsx`; rendered in side panel when Graph is active.
+- [✓] Create `components/CausalPanel.tsx`: Globe (top) + resizable drag handle + Timeline/Calendar tabs (bottom).
+- [✓] Create `components/EntityKnowledgePanel.tsx`: Entities / Relationships tabs with scrollable body.
+
+*Right Panel*
+- [✓] Bind `Ctrl+\` to toggle the right panel open/closed.
+- [ ] Drag-and-drop from activity bar icon to right edge to open panel in right slot. *(not implemented)*
+
+*Store Updates*
+- [✓] Add to Zustand store: `activeActivity`, `sidePanelOpen`, `rightPanelId`, `tilingModeEnabled`.
+
+*Keyboard Shortcuts*
+- [✓] `Ctrl+G` → switch to Graph canvas.
+- [✓] `Ctrl+B` → toggle side panel.
+- [✓] `Ctrl+\` → toggle right panel.
+
+*Settings Side Panel*
+- [✓] Settings activity renders: theme selector, locale selector, Tiling Mode toggle.
+- [✓] Tiling Mode toggle re-enables DWM layout and hides activity bar; "Exit Tiling Mode" in tiling menubar returns to activity bar.
+
+**Checks**
+- [✓] Activity bar renders with correct Lucide icons; active icon is visually highlighted.
+- [✓] Clicking a primary canvas icon (Graph, Causal, Terminal) switches the primary canvas.
+- [✓] Clicking the active icon again collapses the side panel; clicking it once more re-opens it.
+- [✓] Clicking Settings does not switch the primary canvas.
+- [✓] Right panel opens/closes via `Ctrl+\`; panel picker selects the displayed panel.
+- [✓] Right panel and side panel are both user-resizable by dragging their inner edge.
+- [✓] CausalPanel split between Globe and Timeline/Calendar is movable by dragging the handle.
+- [✓] EntityKnowledgePanel Entities/Relationships tabs scroll when content overflows.
+- [✓] Settings side panel exposes theme selector, locale selector, and Tiling Mode toggle.
+- [✓] Enabling Tiling Mode from Settings switches to the DWM layout; "Exit Tiling Mode" restores activity bar.
+- [✓] No emoji characters remain in any panel component.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
 ### Phase 46: UI Utilities & UX Hardening
 **Description**

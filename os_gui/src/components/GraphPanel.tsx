@@ -9,8 +9,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 import { useOsStore, resolvedLabel } from '../store';
 import { RelateDialog } from './RelateDialog';
 import { KEYBINDS } from '../App';
-import { getConvexHull, drawRoundedHullPath, getStableColor, findShortestPath, pathEdgeKeys } from '../utils/graphUtils';
-import { SearchableDropdown } from './SearchableDropdown';
+import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
 
 interface GNode {
   id: string;
@@ -61,8 +60,6 @@ const REGION_STYLE = {
 };
 
 
-const ENTITY_KINDS = ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
-
 export const GraphPanel = memo(function GraphPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -76,42 +73,21 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, toggleRegions, updateNodePosition, nodePositions, filterKinds, toggleFilterKind, setFilterKinds, filterEdgeLabels, toggleFilterEdgeLabel, highlightedPath, highlightedEdgeKeys, setHighlightedPath, clearHighlightedPath, expandContext, loadExactIds, clearGraph, loadFullGraph, setHopCount, graphMode } = useOsStore();
-  const hopCount = useOsStore((s: any) => s.hopCount);
+  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, updateNodePosition, nodePositions, filterKinds, filterEdgeLabels, highlightedPath, highlightedEdgeKeys, loadExactIds, graphMode, setGraphResetViewFn } = useOsStore();
   const allLabelTraits = useOsStore((s: any) => s.allLabelTraits);
   const activeLocale = useOsStore((s: any) => s.activeLocale);
-  const allEntities = useOsStore((s: any) => s.allEntities);
-  const backendReady = useOsStore((s: any) => s.backendReady);
 
-  // Phase 44: explore bar state
-  const [exploreQuery, setExploreQuery] = useState('');
-  const [exploreInputFocused, setExploreInputFocused] = useState(false);
-  const [exploreStatus, setExploreStatus] = useState<string | null>(null);
+  // Toolbar state — now lives in the store so GraphSidePanel can share it
+  const exploreQuery     = useOsStore((s: any) => s.graphExploreQuery);
+  const showGrid         = useOsStore((s: any) => s.graphShowGrid);
+  const setExploreQuery  = useOsStore((s: any) => s.setGraphExploreQuery);
+  const setExploreStatus = useOsStore((s: any) => s.setGraphExploreStatus);
+
   const exploreDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local dropdown list: filters allEntities by kind and/or label without a backend round-trip.
-  const filteredDropdown = useMemo(() => {
-    const q = exploreQuery.trim().toLowerCase();
-    if (/^select\s/i.test(q)) return []; // SQL mode — dropdown not used
-    return allEntities.filter((e: any) => {
-      if (q.length === 0) return true; // show all when empty
-      if (ENTITY_KINDS.includes(q)) return e.kind === q; // exact kind match
-      if ((e.kind as string).startsWith(q)) return true;                        // partial kind
-      const label = resolvedLabel(e, allLabelTraits, activeLocale).toLowerCase();
-      if (label.includes(q)) return true;
-      return allLabelTraits.some((t: any) => t.owner === e.id && t.text.toLowerCase().includes(q));
-    }).slice(0, 60);
-  }, [exploreQuery, allEntities, allLabelTraits, activeLocale]);
-
-  // searchQuery drives local node highlight in the canvas; wired to exploreQuery
+  // searchQuery mirrors exploreQuery for canvas highlight
   const [searchQuery, setSearchQuery] = useState('');
-  const [showGrid, setShowGrid] = useState(true);
   const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
-
-  // Path finder state
-  const [pathFrom, setPathFrom] = useState('');
-  const [pathTo, setPathTo] = useState('');
-  const [pathError, setPathError] = useState<string | null>(null);
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string } | null>(null);
@@ -150,7 +126,6 @@ export const GraphPanel = memo(function GraphPanel() {
         if (ids.length > 0) {
           await loadExactIds(ids);
           setExploreQuery('');
-          setExploreInputFocused(false);
           setExploreStatus(`${ids.length} entit${ids.length === 1 ? 'y' : 'ies'} loaded`);
           setTimeout(() => setExploreStatus(null), 2500);
           setTimeout(() => graphRef.current?.zoomToFit(400, 30), 150);
@@ -618,6 +593,15 @@ export const GraphPanel = memo(function GraphPanel() {
     });
 
     graphRef.current = g;
+
+    // Register zoom-reset function so GraphSidePanel can call it
+    setGraphResetViewFn(() => {
+      if (graphRef.current) {
+        graphRef.current.zoom(1, 400);
+        setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
+      }
+    });
+    return () => setGraphResetViewFn(null);
   }, [onNodeClick, onNodeRightClick]);
 
   // Marquee: intercept at window capture phase to beat d3-zoom
@@ -830,276 +814,8 @@ export const GraphPanel = memo(function GraphPanel() {
     return () => ro.disconnect();
   }, []);
 
-  // Derive unique edge labels for the label filter
-  const allEdgeLabels = useMemo(() => {
-    const labels = new Set<string>();
-    edges.forEach((e: any) => e.label && labels.add(e.label));
-    return Array.from(labels).sort();
-  }, [edges]);
-
   return (
     <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
-      {/* TOOLBAR: Row 1 - Explore bar, graph controls, toggles */}
-      <div className="panel-stats">
-        <div className="panel-row" style={{ flexWrap: 'wrap' }}>
-          {/* Phase 44: Explore bar */}
-          <div style={{ position: 'relative' }}>
-            <input
-              type="text"
-              placeholder={/^select\s/i.test(exploreQuery) ? 'SurrealQL...' : 'Explore entities...'}
-              value={exploreQuery}
-              onChange={e => setExploreQuery(e.target.value)}
-              onFocus={() => setExploreInputFocused(true)}
-              onBlur={() => setTimeout(() => setExploreInputFocused(false), 150)}
-              style={{
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--accent)',
-                color: 'var(--text-primary)',
-                padding: '2px 8px',
-                borderRadius: 4,
-                outline: 'none',
-                fontSize: 11,
-                width: 180,
-                height: 22,
-              }}
-            />
-            {exploreInputFocused && filteredDropdown.length > 0 && (
-              <div style={{
-                position: 'absolute',
-                top: 25,
-                left: 0,
-                width: 240,
-                maxHeight: 260,
-                overflowY: 'auto',
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                zIndex: 200,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-              }}>
-                {filteredDropdown.map((e: any) => {
-                  const q = exploreQuery.trim().toLowerCase();
-                  const ownTraits = allLabelTraits.filter((t: any) => t.owner === e.id);
-                  const matchingTrait = q.length > 0
-                    ? ownTraits.find((t: any) => t.text.toLowerCase().includes(q))
-                    : undefined;
-                  const displayLabel = matchingTrait
-                    ? matchingTrait.text
-                    : resolvedLabel(e, allLabelTraits, activeLocale);
-                  return (
-                    <div
-                      key={e.id}
-                      onMouseDown={() => {
-                        expandContext(e.id);
-                        selectEntity(e.id);
-                        setExploreQuery('');
-                        setExploreInputFocused(false);
-                      }}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                        color: 'var(--text-primary)',
-                        borderBottom: '1px solid var(--border)',
-                        display: 'flex',
-                        gap: 6,
-                        alignItems: 'center',
-                      }}
-                      onMouseEnter={el => (el.currentTarget.style.background = 'var(--bg-primary)')}
-                      onMouseLeave={el => (el.currentTarget.style.background = 'transparent')}
-                    >
-                      <span style={{ color: KIND_COLORS[e.kind as string] ?? 'var(--text-hint)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>{e.kind as string}</span>
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
-                      {matchingTrait && matchingTrait.lang !== activeLocale && (
-                        <span style={{ fontSize: 9, color: 'var(--text-hint)', flexShrink: 0 }}>{matchingTrait.lang}</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {exploreStatus && (
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontStyle: 'italic' }}>
-              {exploreStatus}
-            </span>
-          )}
-
-          {/* Graph mode controls */}
-          <button
-            onClick={() => clearGraph()}
-            title="Clear graph"
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-hint)', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, height: 22 }}
-          >
-            Clear
-          </button>
-          <button
-            onClick={() => backendReady && loadFullGraph()}
-            disabled={!backendReady}
-            title={backendReady ? 'Load all entities from database' : 'Backend initializing…'}
-            style={{ background: graphMode === 'full' ? 'var(--accent)' : 'var(--bg-secondary)', border: `1px solid ${graphMode === 'full' ? 'var(--accent)' : 'var(--border)'}`, color: graphMode === 'full' ? '#fff' : backendReady ? 'var(--text-primary)' : 'var(--text-hint)', padding: '2px 8px', borderRadius: 4, cursor: backendReady ? 'pointer' : 'not-allowed', fontSize: 11, height: 22, opacity: backendReady ? 1 : 0.5 }}
-          >
-            {backendReady ? 'Load Full' : 'Init…'}
-          </button>
-
-          {/* Hops spinner */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>Hops:</span>
-            <button onClick={() => setHopCount(hopCount - 1)} disabled={hopCount <= 0} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11, width: 18, height: 18, padding: 0, lineHeight: 1 }}>−</button>
-            <span style={{ fontSize: 11, color: 'var(--text-primary)', minWidth: 10, textAlign: 'center' }}>{hopCount}</span>
-            <button onClick={() => setHopCount(hopCount + 1)} disabled={hopCount >= 5} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11, width: 18, height: 18, padding: 0, lineHeight: 1 }}>+</button>
-          </div>
-
-          <button
-            onClick={() => {
-              if (graphRef.current) {
-                graphRef.current.zoom(1, 400);
-                setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
-              }
-            }}
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, height: 22 }}
-          >
-            Reset
-          </button>
-
-          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase', marginLeft: 8 }}>Find Path:</span>
-
-          <SearchableDropdown
-            placeholder="From entity..."
-            value={pathFrom}
-            onChange={setPathFrom}
-            options={entities.map((e: any) => ({ id: e.id, label: e.label }))}
-            style={{ width: 140 }}
-          />
-
-          <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>→</span>
-
-          <SearchableDropdown
-            placeholder="To entity..."
-            value={pathTo}
-            onChange={setPathTo}
-            options={entities.map((e: any) => ({ id: e.id, label: e.label }))}
-            style={{ width: 140 }}
-          />
-
-          <button
-            onClick={() => {
-              setPathError(null);
-              const fromEntity = entities.find((e: any) => e.label === pathFrom || e.id === pathFrom || e.id === `entity:${pathFrom}`);
-              const toEntity = entities.find((e: any) => e.label === pathTo || e.id === pathTo || e.id === `entity:${pathTo}`);
-              if (!fromEntity || !toEntity) { setPathError('Entity not found'); return; }
-              const fromShort = fromEntity.id.replace('entity:', '');
-              const toShort = toEntity.id.replace('entity:', '');
-              const shortEdges = edges.map((e: any) => ({ from: e.from.replace('entity:', ''), to: e.to.replace('entity:', ''), label: e.label }));
-              const pathShort = findShortestPath(fromShort, toShort, shortEdges);
-              if (!pathShort) { setPathError('No path found'); return; }
-              const pathPrefixed = pathShort.map(id => `entity:${id}`);
-              const eKeys = pathEdgeKeys(pathShort);
-              setHighlightedPath(pathPrefixed, eKeys);
-            }}
-            style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '2px 10px', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600, height: 22 }}
-          >
-            Find
-          </button>
-
-          {highlightedPath.length > 0 && (
-            <button
-              onClick={() => { clearHighlightedPath(); setPathError(null); }}
-              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', color: 'var(--text-hint)', cursor: 'pointer', fontSize: 11, height: 22 }}
-            >
-              ✕
-            </button>
-          )}
-
-          {pathError && <span style={{ fontSize: 11, color: 'var(--error)' }}>{pathError}</span>}
-
-          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
-              Grid
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-hint)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showRegions} onChange={() => toggleRegions()} />
-              Regions
-            </label>
-          </div>
-        </div>
-
-        {/* Row 2: Node Count + Kind Filter */}
-        <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
-          <span className="event-badge" style={{ marginRight: 4 }}>
-            {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.nodes.length}/${entities.length} nodes` : `${entities.length} nodes`}
-          </span>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Nodes:</span>
-            {['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'].map(kind => {
-              const active = filterKinds.includes(kind);
-              return (
-                <button
-                  key={kind}
-                  onClick={() => toggleFilterKind(kind)}
-                  style={{
-                    background: active ? KIND_COLORS[kind] : 'transparent',
-                    border: `1px solid ${active ? KIND_COLORS[kind] : 'var(--border)'}`,
-                    color: active ? '#000' : 'var(--text-secondary)',
-                    fontSize: 10,
-                    padding: '1px 7px',
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    opacity: active ? 1 : 0.6,
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {kind}
-                </button>
-              );
-            })}
-            {filterKinds.length > 0 && (
-              <button
-                onClick={() => setFilterKinds([])}
-                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10, padding: '2px 4px', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Row 3: Edge Count + Edge Label Filter — show when edges exist OR active filters set */}
-        {(allEdgeLabels.length > 0 || filterEdgeLabels.length > 0) && (
-          <div className="panel-row" style={{ borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 4 }}>
-            <span className="event-badge" style={{ marginRight: 4 }}>
-              {filterKinds.length > 0 || filterEdgeLabels.length > 0 ? `${filteredData.edges.length}/${edges.length} edges` : `${edges.length} edges`}
-            </span>
-            <span style={{ fontSize: 10, color: 'var(--text-hint)', fontWeight: 600, textTransform: 'uppercase' }}>Edges:</span>
-            {allEdgeLabels.map(label => {
-              const hidden = filterEdgeLabels.includes(label);
-              return (
-                <button
-                  key={label}
-                  onClick={() => toggleFilterEdgeLabel(label)}
-                  style={{
-                    background: hidden ? 'var(--bg-primary)' : 'transparent',
-                    border: `1px solid ${hidden ? 'var(--accent)' : 'var(--border)'}`,
-                    color: hidden ? 'var(--accent)' : 'var(--text-hint)',
-                    fontSize: 10,
-                    padding: '1px 8px',
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    textDecoration: hidden ? 'line-through' : 'none',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-      </div>
-
       <div 
         ref={containerRef} 
         style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative', outline: 'none' }} 

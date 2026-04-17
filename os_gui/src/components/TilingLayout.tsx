@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, ReactNode } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
+import { ExternalLink, X } from 'lucide-react';
 
 export type LayoutMode = 'master' | 'bstack' | 'monocle' | 'grid';
 
@@ -242,7 +243,7 @@ function SlotPane({ config, slotIdx, isFocused, onClick, onDetach, onMergeInto }
             <span className="pane-detach-btn"
               style={{ cursor: 'pointer', padding: '0 4px', fontSize: '11px', color: isOver ? '#fff' : 'var(--text-hint)' }}
               onClick={e => { e.stopPropagation(); onDetach(config.id); }}
-              title="Detach as Floating Panel">↗️</span>
+              title="Detach as Floating Panel"><ExternalLink size={11} /></span>
           </div>
         )}
       </div>
@@ -378,12 +379,12 @@ function TabChip({ config, slotIdx, isActive, onActivate, onClose, onDetach, onR
         onClick={e => { e.stopPropagation(); onDetach(); }}
         title="Detach tab"
         style={{ fontSize: 9, color: 'var(--text-hint)', padding: '0 1px', lineHeight: 1, cursor: 'pointer', opacity: 0.6 }}
-      >↗</span>
+      ><ExternalLink size={9} /></span>
       <span
         onClick={e => { e.stopPropagation(); onClose(); }}
         title="Close tab"
-        style={{ fontSize: 10, color: 'var(--text-hint)', padding: '0 1px', lineHeight: 1, cursor: 'pointer' }}
-      >×</span>
+        style={{ fontSize: 10, color: 'var(--text-hint)', padding: '0 1px', lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+      ><X size={9} /></span>
     </div>
   );
 }
