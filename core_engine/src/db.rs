@@ -1,10 +1,13 @@
 use async_trait::async_trait;
+use std::path::PathBuf;
+use std::sync::Arc;
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
-use std::sync::Arc;
-use std::path::PathBuf;
 
-use crate::models::{EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot};
+use crate::models::{
+    EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait,
+    TraitSnapshot,
+};
 use crate::ports::GraphDatabase;
 
 #[derive(Clone)]
@@ -19,9 +22,14 @@ impl SurrealDbAdapter {
     pub async fn new() -> Result<Self, String> {
         let path = default_db_path();
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-        let db = Surreal::new::<SurrealKv>(path).await.map_err(|e| e.to_string())?;
-        db.use_ns("spatial_os").use_db("core").await.map_err(|e| e.to_string())?;
-        
+        let db = Surreal::new::<SurrealKv>(path)
+            .await
+            .map_err(|e| e.to_string())?;
+        db.use_ns("spatial_os")
+            .use_db("core")
+            .await
+            .map_err(|e| e.to_string())?;
+
         let schema_ql = r#"
             DEFINE TABLE entity SCHEMAFULL;
             DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
@@ -60,6 +68,7 @@ impl SurrealDbAdapter {
 
             DEFINE TABLE blob_trait SCHEMAFULL;
             DEFINE FIELD owner ON blob_trait TYPE string;
+            DEFINE FIELD IF NOT EXISTS filename ON blob_trait TYPE string;
             DEFINE FIELD storage_id ON blob_trait TYPE string;
             DEFINE FIELD bucket ON blob_trait TYPE string;
             DEFINE FIELD mime ON blob_trait TYPE string;
@@ -82,7 +91,7 @@ impl SurrealDbAdapter {
             DEFINE FIELD ends_at ON temporal_trait TYPE option<string>;
             DEFINE FIELD recurrence ON temporal_trait TYPE option<string>;
         "#;
-        
+
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
 
         Ok(Self { db: Arc::new(db) })
@@ -94,25 +103,32 @@ impl GraphDatabase for SurrealDbAdapter {
     async fn save_entity(&self, entity: Entity) -> Result<(), String> {
         let id_clean = entity.id.replace("entity:", "");
         let qs = format!("UPSERT entity:{} CONTENT $entity;", id_clean);
-        
+
         let mut value = serde_json::to_value(&entity).map_err(|e| e.to_string())?;
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
         }
-        
-        self.db.query(qs)
+
+        self.db
+            .query(qs)
             .bind(("entity", value.clone()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
 
         // Shadow write: append a full snapshot to entity_history.
         let history_qs = "CREATE entity_history CONTENT $snap;";
         let mut snap = value;
         if let Some(obj) = snap.as_object_mut() {
-            obj.insert("entity_id".to_string(), serde_json::Value::String(entity.id.clone()));
-            obj.insert("changed_at".to_string(), serde_json::Value::String(
-                chrono::Utc::now().to_rfc3339()
-            ));
+            obj.insert(
+                "entity_id".to_string(),
+                serde_json::Value::String(entity.id.clone()),
+            );
+            obj.insert(
+                "changed_at".to_string(),
+                serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+            );
         }
         let _ = self.db.query(history_qs).bind(("snap", snap)).await;
         Ok(())
@@ -120,12 +136,11 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn get_entity(&self, id: &str) -> Result<Entity, String> {
         let qs = format!("SELECT *, type::string(id) AS id FROM {};", id);
-        
-        let mut response = self.db.query(qs)
-            .await.map_err(|e| e.to_string())?;
-            
+
+        let mut response = self.db.query(qs).await.map_err(|e| e.to_string())?;
+
         let mut entities: Vec<Entity> = response.take(0).map_err(|e| e.to_string())?;
-        
+
         if let Some(mut e) = entities.pop() {
             e.id = id.to_string();
             Ok(e)
@@ -147,10 +162,13 @@ impl GraphDatabase for SurrealDbAdapter {
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
         }
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("trait_", value.clone()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
 
         // Shadow write: append to unified trait_history.
         let snap = serde_json::json!({
@@ -159,34 +177,50 @@ impl GraphDatabase for SurrealDbAdapter {
             "data": value,
             "changed_at": chrono::Utc::now().to_rfc3339(),
         });
-        let _ = self.db.query("CREATE trait_history CONTENT $snap;").bind(("snap", snap)).await;
+        let _ = self
+            .db
+            .query("CREATE trait_history CONTENT $snap;")
+            .bind(("snap", snap))
+            .await;
         Ok(())
     }
 
     async fn get_spatial_traits(&self) -> Result<Vec<SpatialTrait>, String> {
-        let mut response = self.db.query("SELECT *, type::string(id) AS id FROM spatial_trait;")
-            .await.map_err(|e| e.to_string())?;
+        let mut response = self
+            .db
+            .query("SELECT *, type::string(id) AS id FROM spatial_trait;")
+            .await
+            .map_err(|e| e.to_string())?;
         let traits: Vec<SpatialTrait> = response.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
     }
 
     async fn save_blob_trait(&self, trait_: crate::models::BlobTrait) -> Result<(), String> {
-        let qs = format!("CREATE {} CONTENT $trait_;", trait_.id);
+        let id_cleaned = trait_.id.replace("blob_trait:", "");
+        let qs = format!("UPSERT blob_trait:{} CONTENT $trait_;", id_cleaned);
         let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
         }
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("trait_", value))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     async fn get_blob_traits(&self) -> Result<Vec<crate::models::BlobTrait>, String> {
-        let mut response = self.db.query("SELECT *, type::string(id) AS id, type::string(owner) AS owner FROM blob_trait;")
-            .await.map_err(|e| e.to_string())?;
-            
+        let mut response = self
+            .db
+            .query(
+                "SELECT *, type::string(id) AS id, type::string(owner) AS owner FROM blob_trait;",
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
         let traits: Vec<crate::models::BlobTrait> = response.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
     }
@@ -201,10 +235,13 @@ impl GraphDatabase for SurrealDbAdapter {
             // not JSON null. Absent fields in CONTENT are stored as NONE automatically.
             obj.retain(|_, v| !v.is_null());
         }
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("trait_", value.clone()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
 
         // Shadow write: append to unified trait_history.
         let snap = serde_json::json!({
@@ -213,7 +250,11 @@ impl GraphDatabase for SurrealDbAdapter {
             "data": value,
             "changed_at": chrono::Utc::now().to_rfc3339(),
         });
-        let _ = self.db.query("CREATE trait_history CONTENT $snap;").bind(("snap", snap)).await;
+        let _ = self
+            .db
+            .query("CREATE trait_history CONTENT $snap;")
+            .bind(("snap", snap))
+            .await;
         Ok(())
     }
 
@@ -255,7 +296,9 @@ impl GraphDatabase for SurrealDbAdapter {
         let mut frontier: Vec<String> = vec![full_id];
 
         for _ in 0..hops {
-            if frontier.is_empty() { break; }
+            if frontier.is_empty() {
+                break;
+            }
             let mut next_frontier: Vec<String> = Vec::new();
             for current_id in &frontier {
                 // Outgoing: current -> edge -> neighbor
@@ -317,29 +360,44 @@ impl GraphDatabase for SurrealDbAdapter {
         let mut edge_resp = self.db.query(edge_qs).await.map_err(|e| e.to_string())?;
         let edge_rows: Vec<serde_json::Value> = edge_resp.take(0).map_err(|e| e.to_string())?;
 
-        let mut edges: Vec<EdgeRecord> = edge_rows.iter().filter_map(|r| {
-            let from = r.get("in")?.as_str()?.replace("entity:", "");
-            let to = r.get("out")?.as_str()?.replace("entity:", "");
-            let label = r.get("label")?.as_str()?.to_string();
-            let strength = r.get("strength").and_then(|v| v.as_f64());
-            let latency = r.get("latency").and_then(|v| v.as_i64());
-            let metadata = r.get("metadata").cloned();
-            Some(EdgeRecord { from, to, label, strength, latency, metadata })
-        }).collect();
+        let mut edges: Vec<EdgeRecord> = edge_rows
+            .iter()
+            .filter_map(|r| {
+                let from = r.get("in")?.as_str()?.replace("entity:", "");
+                let to = r.get("out")?.as_str()?.replace("entity:", "");
+                let label = r.get("label")?.as_str()?.to_string();
+                let strength = r.get("strength").and_then(|v| v.as_f64());
+                let latency = r.get("latency").and_then(|v| v.as_i64());
+                let metadata = r.get("metadata").cloned();
+                Some(EdgeRecord {
+                    from,
+                    to,
+                    label,
+                    strength,
+                    latency,
+                    metadata,
+                })
+            })
+            .collect();
 
         // Expand symmetric relationship types (same logic as get_edges)
         let rel_types = self.list_relationship_types().await.unwrap_or_default();
-        let symmetric_labels: std::collections::HashSet<&str> = rel_types.iter()
+        let symmetric_labels: std::collections::HashSet<&str> = rel_types
+            .iter()
             .filter(|rt| rt.symmetric)
             .map(|rt| rt.label.as_str())
             .collect();
         if !symmetric_labels.is_empty() {
-            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges.iter()
+            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges
+                .iter()
                 .map(|e| (e.from.as_str(), e.to.as_str(), e.label.as_str()))
                 .collect();
-            let mut synthetic: Vec<EdgeRecord> = edges.iter()
+            let mut synthetic: Vec<EdgeRecord> = edges
+                .iter()
                 .filter(|e| symmetric_labels.contains(e.label.as_str()))
-                .filter(|e| !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str())))
+                .filter(|e| {
+                    !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str()))
+                })
                 .map(|e| EdgeRecord {
                     from: e.to.clone(),
                     to: e.from.clone(),
@@ -365,30 +423,37 @@ impl GraphDatabase for SurrealDbAdapter {
         let q_lower = query.to_lowercase();
 
         // 1. Match on entity.label (case-insensitive substring)
-        let mut resp = self.db.query(
-            "SELECT *, type::string(id) AS id FROM entity \
-             WHERE string::contains(string::lowercase(label), $q) AND deleted_at = NONE LIMIT 50;"
-        )
-        .bind(("q", q_lower.clone()))
-        .await.map_err(|e| e.to_string())?;
+        let mut resp = self
+            .db
+            .query(
+                "SELECT *, type::string(id) AS id FROM entity \
+             WHERE string::contains(string::lowercase(label), $q) AND deleted_at = NONE LIMIT 50;",
+            )
+            .bind(("q", q_lower.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
         let mut entities: Vec<Entity> = resp.take(0).map_err(|e| e.to_string())?;
 
         // 2. Match on label_trait.text (multilingual, case-insensitive substring)
         let mut lt_resp = if let Some(l) = lang {
-            self.db.query(
-                "SELECT *, type::string(id) AS id FROM label_trait \
-                 WHERE string::contains(string::lowercase(text), $q) AND lang = $lang LIMIT 50;"
-            )
-            .bind(("q", q_lower.clone()))
-            .bind(("lang", l.to_string()))
-            .await.map_err(|e| e.to_string())?
+            self.db
+                .query(
+                    "SELECT *, type::string(id) AS id FROM label_trait \
+                 WHERE string::contains(string::lowercase(text), $q) AND lang = $lang LIMIT 50;",
+                )
+                .bind(("q", q_lower.clone()))
+                .bind(("lang", l.to_string()))
+                .await
+                .map_err(|e| e.to_string())?
         } else {
-            self.db.query(
-                "SELECT *, type::string(id) AS id FROM label_trait \
-                 WHERE string::contains(string::lowercase(text), $q) LIMIT 50;"
-            )
-            .bind(("q", q_lower.clone()))
-            .await.map_err(|e| e.to_string())?
+            self.db
+                .query(
+                    "SELECT *, type::string(id) AS id FROM label_trait \
+                 WHERE string::contains(string::lowercase(text), $q) LIMIT 50;",
+                )
+                .bind(("q", q_lower.clone()))
+                .await
+                .map_err(|e| e.to_string())?
         };
         let lt_rows: Vec<LabelTrait> = lt_resp.take(0).map_err(|e| e.to_string())?;
 
@@ -416,7 +481,8 @@ impl GraphDatabase for SurrealDbAdapter {
         let wrapped = format!("SELECT type::string(id) AS id FROM ({});", clean);
         let mut resp = self.db.query(wrapped).await.map_err(|e| e.to_string())?;
         let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
-        let ids = rows.iter()
+        let ids = rows
+            .iter()
             .filter_map(|r| r.get("id")?.as_str().map(|s| s.to_string()))
             .filter(|id| id.starts_with("entity:"))
             .collect();
@@ -425,28 +491,42 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String> {
         let qs = format!("RELATE {}->edge->{} SET label = $label;", from_id, to_id);
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("label", label.to_string()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     async fn add_edge_with_payload(
-        &self, from_id: &str, to_id: &str, label: &str,
-        strength: Option<f64>, latency: Option<i64>, metadata: Option<serde_json::Value>,
+        &self,
+        from_id: &str,
+        to_id: &str,
+        label: &str,
+        strength: Option<f64>,
+        latency: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<(), String> {
         let qs = format!(
             "RELATE {}->edge->{} SET label = $label, strength = $strength, latency = $latency, metadata = $metadata;",
             from_id, to_id
         );
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("label", label.to_string()))
             .bind(("strength", strength))
             .bind(("latency", latency))
-            .bind(("metadata", metadata.unwrap_or(serde_json::Value::Object(Default::default()))))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .bind((
+                "metadata",
+                metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+            ))
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -456,30 +536,45 @@ impl GraphDatabase for SurrealDbAdapter {
         ).await.map_err(|e| e.to_string())?;
         let rows: Vec<serde_json::Value> = resp.take(0).map_err(|e| e.to_string())?;
 
-        let mut edges: Vec<EdgeRecord> = rows.iter().filter_map(|r| {
-            let from = r.get("in")?.as_str()?.replace("entity:", "");
-            let to = r.get("out")?.as_str()?.replace("entity:", "");
-            let label = r.get("label")?.as_str()?.to_string();
-            let strength = r.get("strength").and_then(|v| v.as_f64());
-            let latency = r.get("latency").and_then(|v| v.as_i64());
-            let metadata = r.get("metadata").cloned();
-            Some(EdgeRecord { from, to, label, strength, latency, metadata })
-        }).collect();
+        let mut edges: Vec<EdgeRecord> = rows
+            .iter()
+            .filter_map(|r| {
+                let from = r.get("in")?.as_str()?.replace("entity:", "");
+                let to = r.get("out")?.as_str()?.replace("entity:", "");
+                let label = r.get("label")?.as_str()?.to_string();
+                let strength = r.get("strength").and_then(|v| v.as_f64());
+                let latency = r.get("latency").and_then(|v| v.as_i64());
+                let metadata = r.get("metadata").cloned();
+                Some(EdgeRecord {
+                    from,
+                    to,
+                    label,
+                    strength,
+                    latency,
+                    metadata,
+                })
+            })
+            .collect();
 
         // Expand symmetric relationship types at read time — no duplicate storage.
         let rel_types = self.list_relationship_types().await.unwrap_or_default();
-        let symmetric_labels: std::collections::HashSet<&str> = rel_types.iter()
+        let symmetric_labels: std::collections::HashSet<&str> = rel_types
+            .iter()
             .filter(|rt| rt.symmetric)
             .map(|rt| rt.label.as_str())
             .collect();
 
         if !symmetric_labels.is_empty() {
-            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges.iter()
+            let existing_keys: std::collections::HashSet<(&str, &str, &str)> = edges
+                .iter()
                 .map(|e| (e.from.as_str(), e.to.as_str(), e.label.as_str()))
                 .collect();
-            let mut synthetic: Vec<EdgeRecord> = edges.iter()
+            let mut synthetic: Vec<EdgeRecord> = edges
+                .iter()
                 .filter(|e| symmetric_labels.contains(e.label.as_str()))
-                .filter(|e| !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str())))
+                .filter(|e| {
+                    !existing_keys.contains(&(e.to.as_str(), e.from.as_str(), e.label.as_str()))
+                })
                 .map(|e| EdgeRecord {
                     from: e.to.clone(),
                     to: e.from.clone(),
@@ -496,30 +591,48 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn resolve_label(&self, label: &str) -> Result<Option<String>, String> {
         let entities = self.list_entities().await?;
-        Ok(entities.into_iter().find(|e| e.label == label).map(|e| e.id))
+        Ok(entities
+            .into_iter()
+            .find(|e| e.label == label)
+            .map(|e| e.id))
     }
 
     async fn resolve_path(&self, path: &str) -> Result<Option<String>, String> {
         let entities = self.list_entities().await?;
-        Ok(entities.into_iter()
-            .find(|e| e.metadata.get("source_path").and_then(|v| v.as_str()) == Some(path))
+        Ok(entities
+            .into_iter()
+            .find(|e| {
+                e.metadata.get("source_path").and_then(|v| v.as_str()) == Some(path)
+                    || e.metadata.get("import_path").and_then(|v| v.as_str()) == Some(path)
+            })
             .map(|e| e.id))
     }
 
-    async fn delete_edge(&self, from_id: &str, to_id: &str, label: Option<&str>) -> Result<(), String> {
+    async fn delete_edge(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        label: Option<&str>,
+    ) -> Result<(), String> {
         let qs = match label {
-            Some(lbl) => format!("DELETE edge WHERE in = {} AND out = {} AND label = '{}';", from_id, to_id, lbl),
+            Some(lbl) => format!(
+                "DELETE edge WHERE in = {} AND out = {} AND label = '{}';",
+                from_id, to_id, lbl
+            ),
             None => format!("DELETE edge WHERE in = {} AND out = {};", from_id, to_id),
         };
-        self.db.query(qs)
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+        self.db
+            .query(qs)
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     async fn execute_raw_sql(&self, query: &str) -> Result<Vec<String>, String> {
         let mut resp = self.db.query(query).await.map_err(|e| e.to_string())?;
-        
+
         // Take the raw surrealdb::Value natively!
         // This invokes `impl QueryResult<Value> for usize` which safely retrieves the raw AST
         // bypassing `serde` deserialization bugs on Record Enums inside Vec<T>.
@@ -527,21 +640,22 @@ impl GraphDatabase for SurrealDbAdapter {
         match raw_val {
             Ok(val) => {
                 // val.to_string() formats it nicely. But if it's an inline string, it might be compact.
-                // We'll return it formatted using the #? Debug formatter if we want it pretty printed, 
+                // We'll return it formatted using the #? Debug formatter if we want it pretty printed,
                 // but #? on Value might be an AST structure.
                 // Let's print it formatted like JSON!
-                let formatted = format!("{:#}", val); 
+                let formatted = format!("{:#}", val);
                 Ok(vec![formatted])
-            },
-            Err(e) => {
-                Ok(vec![format!("Error extracting raw AST: {}", e)])
             }
+            Err(e) => Ok(vec![format!("Error extracting raw AST: {}", e)]),
         }
     }
 
     async fn list_entities(&self) -> Result<Vec<Entity>, String> {
-        let mut response = self.db.query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
-            .await.map_err(|e| e.to_string())?;
+        let mut response = self
+            .db
+            .query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
+            .await
+            .map_err(|e| e.to_string())?;
         let entities: Vec<Entity> = response.take(0).map_err(|e| e.to_string())?;
         Ok(entities)
     }
@@ -557,7 +671,11 @@ impl GraphDatabase for SurrealDbAdapter {
         Ok(snaps)
     }
 
-    async fn get_entity_as_of(&self, entity_id: &str, timestamp: &str) -> Result<Option<EntitySnapshot>, String> {
+    async fn get_entity_as_of(
+        &self,
+        entity_id: &str,
+        timestamp: &str,
+    ) -> Result<Option<EntitySnapshot>, String> {
         let mut resp = self.db
             .query("SELECT *, type::string(id) AS id FROM entity_history WHERE entity_id = $eid AND changed_at <= $ts ORDER BY changed_at DESC LIMIT 1;")
             .bind(("eid", entity_id.to_string()))
@@ -585,17 +703,22 @@ impl GraphDatabase for SurrealDbAdapter {
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
         }
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("data", value))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     async fn list_relationship_types(&self) -> Result<Vec<RelationshipType>, String> {
-        let mut resp = self.db
+        let mut resp = self
+            .db
             .query("SELECT *, type::string(id) AS id FROM relationship_type ORDER BY label ASC;")
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         let types: Vec<RelationshipType> = resp.take(0).map_err(|e| e.to_string())?;
         Ok(types)
     }
@@ -604,14 +727,19 @@ impl GraphDatabase for SurrealDbAdapter {
         self.db
             .query("DELETE relationship_type WHERE label = $label;")
             .bind(("label", label.to_string()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     /// Walk outgoing edges whose relationship_type has `inherits_traits = true`,
     /// up to MAX_DEPTH hops, returning the first ancestor SpatialTrait found.
-    async fn get_effective_spatial_trait(&self, entity_id: &str) -> Result<Option<SpatialTrait>, String> {
+    async fn get_effective_spatial_trait(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<SpatialTrait>, String> {
         const MAX_DEPTH: usize = 5;
 
         // Collect all inheriting labels once.
@@ -642,7 +770,9 @@ impl GraphDatabase for SurrealDbAdapter {
                         && inheriting_labels.contains(&edge.label)
                     {
                         let parent = format!("entity:{}", edge.to);
-                        if visited.contains(&parent) { continue; }
+                        if visited.contains(&parent) {
+                            continue;
+                        }
                         visited.insert(parent.clone());
 
                         // Check if parent has a SpatialTrait
@@ -658,7 +788,9 @@ impl GraphDatabase for SurrealDbAdapter {
                     }
                 }
             }
-            if next.is_empty() { break; }
+            if next.is_empty() {
+                break;
+            }
             frontier = next;
         }
         Ok(None)
@@ -673,10 +805,13 @@ impl GraphDatabase for SurrealDbAdapter {
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");
         }
-        self.db.query(qs)
+        self.db
+            .query(qs)
             .bind(("data", value))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -690,9 +825,11 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn get_all_label_traits(&self) -> Result<Vec<LabelTrait>, String> {
-        let mut resp = self.db
+        let mut resp = self
+            .db
             .query("SELECT *, type::string(id) AS id FROM label_trait ORDER BY lang ASC;")
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         let traits: Vec<LabelTrait> = resp.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
     }
@@ -700,9 +837,12 @@ impl GraphDatabase for SurrealDbAdapter {
     async fn delete_label_trait(&self, id: &str) -> Result<(), String> {
         let id_clean = id.replace("label_trait:", "");
         let qs = format!("DELETE label_trait:{};", id_clean);
-        self.db.query(qs)
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+        self.db
+            .query(qs)
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -710,7 +850,11 @@ impl GraphDatabase for SurrealDbAdapter {
     ///   1. LabelTrait where lang == active_lang
     ///   2. LabelTrait where lang == entity.lang_canonical
     ///   3. entity.label fallback
-    async fn resolve_display_label(&self, entity_id: &str, active_lang: &str) -> Result<String, String> {
+    async fn resolve_display_label(
+        &self,
+        entity_id: &str,
+        active_lang: &str,
+    ) -> Result<String, String> {
         let entity = self.get_entity(entity_id).await?;
         let traits = self.get_label_traits(entity_id).await?;
 
@@ -731,11 +875,13 @@ impl GraphDatabase for SurrealDbAdapter {
 
 /// Returns the conventional store path: `$SPATIAL_OS_STORE` -> `~/.local/share/spatial-os/store` -> `/tmp/spatial-os-store`
 pub fn store_path() -> PathBuf {
-    std::env::var("SPATIAL_OS_STORE").map(PathBuf::from).unwrap_or_else(|_| {
-        std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join(".local/share/spatial-os/store"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/spatial-os-store"))
-    })
+    std::env::var("SPATIAL_OS_STORE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".local/share/spatial-os/store"))
+                .unwrap_or_else(|_| PathBuf::from("/tmp/spatial-os-store"))
+        })
 }
 
 /// Resolves to `store_path()/db`.

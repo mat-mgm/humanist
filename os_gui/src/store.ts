@@ -142,7 +142,7 @@ interface OsStore {
   untagEntity: (targetId: string, tagLabel: string) => Promise<void>;
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
-  saveBlobContent: (storage_id: string, content: string) => Promise<void>;
+  saveBlobContent: (owner: string, content: string) => Promise<void>;
   toggleRegions: () => void;
   toggleFilterKind: (kind: string) => void;
   setFilterKinds: (kinds: string[]) => void;
@@ -549,9 +549,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
     if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
   },
 
-  saveBlobContent: async (storage_id, content) => {
-    await invoke('save_blob_content', { storage_id, content });
+  saveBlobContent: async (owner, content) => {
+    await invoke('save_blob_content', { owner, content });
     await get().fetchBlobTraits();
+    await get().fetchEntities();
   },
 
   addEdgeAction: async (fromId, toId, label) => {

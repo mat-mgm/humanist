@@ -1,15 +1,18 @@
 use core_engine::{
-    db::SurrealDbAdapter,
-    models::{EdgeRecord, Entity, EntityKind, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait, TraitSnapshot},
-    ports::{GraphDatabase, StateObserver, BlobStorageProvider},
-    bus::EventBus,
     blob::LocalBlobAdapter,
+    bus::EventBus,
+    db::SurrealDbAdapter,
     gc,
+    models::{
+        EdgeRecord, Entity, EntityKind, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait,
+        TemporalTrait, TraitSnapshot,
+    },
+    ports::{BlobStorageProvider, GraphDatabase, StateObserver},
 };
-use ulid::Ulid;
 use std::{collections::HashMap, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
+use ulid::Ulid;
 
 mod pty_manager;
 use pty_manager::PtyHost;
@@ -38,35 +41,22 @@ async fn ingest_entity(
 
     let st = state.lock().await;
 
-    // Upload to blob store (path handoff — Rust processes the file, not the GUI)
-    let storage_id = format!("{}/{}", ulid, std::path::Path::new(&file_path)
-        .file_name().and_then(|n| n.to_str()).unwrap_or("blob"));
-        
-    let immutable_path = match st.blob.upload(&file_path, &storage_id).await {
-        Ok(_) => st.blob.presign_url(&storage_id).await.unwrap_or(file_path.clone()),
-        Err(e) => {
-            eprintln!("Blob upload warning: {}", e);
-            file_path.clone()
-        }
-    };
-
-    let size = std::fs::metadata(&file_path).map(|m| m.len() as i64).unwrap_or(0);
-    let l_path = file_path.to_lowercase();
-    let mime = if l_path.ends_with(".png") { "image/png" }
-               else if l_path.ends_with(".jpg") || l_path.ends_with(".jpeg") { "image/jpeg" }
-               else if l_path.ends_with(".gif") { "image/gif" }
-               else if l_path.ends_with(".pdf") { "application/pdf" }
-               else if l_path.ends_with(".glb") || l_path.ends_with(".gltf") { "model/gltf-binary" }
-               else { "application/octet-stream" };
+    let stored = st.blob.store_file(&file_path, Some(label.clone())).await?;
+    let mime = core_engine::blob::infer_mime_from_path(&file_path);
+    let extension = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|ext| ext.to_str());
+    let filename = core_engine::blob::blob_filename_for_label(Some(&label), extension);
 
     let blob_trait = core_engine::models::BlobTrait {
         id: format!("blob_trait:{}", ulid),
         owner: id.clone(),
-        storage_id: storage_id.clone(),
+        filename,
+        storage_id: stored.storage_id.clone(),
         bucket: "local".to_string(),
-        mime: mime.to_string(),
-        hash: ulid.clone(),
-        size,
+        mime,
+        hash: stored.hash.clone(),
+        size: stored.size,
     };
 
     let entity = Entity {
@@ -74,45 +64,57 @@ async fn ingest_entity(
         kind: EntityKind::Blob,
         label: label.clone(),
         lang_canonical: "en".to_string(),
-        metadata: {
-            let mut m = HashMap::new();
-            m.insert("source_path".to_string(), serde_json::Value::String(immutable_path));
-            m
-        },
+        metadata: HashMap::new(),
         deleted_at: None,
     };
 
     st.db.save_entity(entity).await?;
     st.db.save_blob_trait(blob_trait).await?;
 
-    st.bus.on_event("entity.created".to_string(), 1, ulid.clone()).await;
+    st.bus
+        .on_event("entity.created".to_string(), 1, ulid.clone())
+        .await;
 
-    app.emit("entity-updated", serde_json::json!({
-        "topic": "entity.created",
-        "ulid": ulid,
-        "label": label,
-    })).map_err(|e| e.to_string())?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({
+            "topic": "entity.created",
+            "ulid": ulid,
+            "label": label,
+        }),
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(id)
 }
 
 #[tauri::command]
-async fn list_entities(state: State<'_, Mutex<AppState>>) -> Result<Vec<serde_json::Value>, String> {
+async fn list_entities(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
     let st = state.lock().await;
-    let mut response = st.db.db.query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
-        .await.map_err(|e| e.to_string())?;
+    let mut response = st
+        .db
+        .db
+        .query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
+        .await
+        .map_err(|e| e.to_string())?;
     let records: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
     Ok(records)
 }
 
 #[tauri::command]
-async fn get_spatial_traits(state: State<'_, Mutex<AppState>>) -> Result<Vec<SpatialTrait>, String> {
+async fn get_spatial_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<SpatialTrait>, String> {
     let st = state.lock().await;
     st.db.get_spatial_traits().await
 }
 
 #[tauri::command]
-async fn get_blob_traits(state: State<'_, Mutex<AppState>>) -> Result<Vec<core_engine::models::BlobTrait>, String> {
+async fn get_blob_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<core_engine::models::BlobTrait>, String> {
     let st = state.lock().await;
     let result = st.db.get_blob_traits().await;
     if let Ok(ref traits) = result {
@@ -163,13 +165,33 @@ async fn get_presigned_url(
 
 #[tauri::command]
 async fn save_blob_content(
-    storage_id: String,
+    owner: String,
     content: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    use core_engine::ports::BlobStorageProvider;
-    st.blob.save_content(&storage_id, content.into_bytes()).await
+    let mut blob_trait = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == owner)
+        .ok_or_else(|| format!("No blob trait attached to {}", owner))?;
+    let entity = st.db.get_entity(&owner).await?;
+
+    let ext = core_engine::blob::extension_from_storage_id(&blob_trait.storage_id);
+    let stored = st
+        .blob
+        .store_bytes(content.into_bytes(), ext.clone(), Some(entity.label.clone()))
+        .await?;
+    blob_trait.filename =
+        core_engine::blob::blob_filename_for_label(Some(entity.label.as_str()), ext.as_deref());
+    blob_trait.storage_id = stored.storage_id.clone();
+    blob_trait.hash = stored.hash;
+    blob_trait.size = stored.size;
+    st.db.save_blob_trait(blob_trait).await?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -197,17 +219,23 @@ async fn get_entity_neighborhood(
     let st = state.lock().await;
     let (entities, edges) = st.db.get_entity_neighborhood(&entity_id, hops).await?;
     // Serialize entities the same way list_entities does (id as string)
-    let entities_json: Vec<serde_json::Value> = entities.iter().map(|e| {
-        serde_json::json!({
-            "id": e.id,
-            "kind": e.kind,
-            "label": e.label,
-            "lang_canonical": e.lang_canonical,
-            "metadata": e.metadata,
-            "deleted_at": e.deleted_at,
+    let entities_json: Vec<serde_json::Value> = entities
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "kind": e.kind,
+                "label": e.label,
+                "lang_canonical": e.lang_canonical,
+                "metadata": e.metadata,
+                "deleted_at": e.deleted_at,
+            })
         })
-    }).collect();
-    Ok(NeighborhoodResult { entities: entities_json, edges })
+        .collect();
+    Ok(NeighborhoodResult {
+        entities: entities_json,
+        edges,
+    })
 }
 
 // Phase 44: Execute SurrealQL and return matching entity IDs as strings
@@ -228,17 +256,23 @@ async fn search_entities(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let st = state.lock().await;
-    let entities = st.db.search_entities_by_label(&query, lang.as_deref()).await?;
-    let result = entities.iter().map(|e| {
-        serde_json::json!({
-            "id": e.id,
-            "kind": e.kind,
-            "label": e.label,
-            "lang_canonical": e.lang_canonical,
-            "metadata": e.metadata,
-            "deleted_at": e.deleted_at,
+    let entities = st
+        .db
+        .search_entities_by_label(&query, lang.as_deref())
+        .await?;
+    let result = entities
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "kind": e.kind,
+                "label": e.label,
+                "lang_canonical": e.lang_canonical,
+                "metadata": e.metadata,
+                "deleted_at": e.deleted_at,
+            })
         })
-    }).collect();
+        .collect();
     Ok(result)
 }
 
@@ -252,8 +286,11 @@ async fn add_edge(
 ) -> Result<(), String> {
     let st = state.lock().await;
     st.db.add_edge(&from_id, &to_id, &label).await?;
-    app.emit("graph-updated", serde_json::json!({"from": from_id, "to": to_id, "label": label}))
-        .map_err(|e| e.to_string())?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": from_id, "to": to_id, "label": label}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -269,9 +306,14 @@ async fn add_edge_with_payload(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    st.db.add_edge_with_payload(&from_id, &to_id, &label, strength, latency, metadata).await?;
-    app.emit("graph-updated", serde_json::json!({"from": from_id, "to": to_id, "label": label}))
-        .map_err(|e| e.to_string())?;
+    st.db
+        .add_edge_with_payload(&from_id, &to_id, &label, strength, latency, metadata)
+        .await?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": from_id, "to": to_id, "label": label}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -282,11 +324,18 @@ async fn get_edges(state: State<'_, Mutex<AppState>>) -> Result<Vec<EdgeRecord>,
 }
 
 #[tauri::command]
-async fn run_prolog_query(query: String, state: State<'_, Mutex<AppState>>) -> Result<Vec<String>, String> {
+async fn run_prolog_query(
+    query: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<String>, String> {
     let st = state.lock().await;
     let (tx, rx) = oneshot::channel();
-    st.query_tx.send((query, tx)).await.map_err(|_| "Inference engine thread died".to_string())?;
-    rx.await.map_err(|_| "Failed to recv response".to_string())?
+    st.query_tx
+        .send((query, tx))
+        .await
+        .map_err(|_| "Inference engine thread died".to_string())?;
+    rx.await
+        .map_err(|_| "Failed to recv response".to_string())?
 }
 
 #[tauri::command]
@@ -309,12 +358,12 @@ async fn create_entity(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
     let kind_enum = match kind.as_str() {
-        "physical"  => EntityKind::Physical,
-        "digital"   => EntityKind::Digital,
-        "abstract"  => EntityKind::Abstract,
-        "agent"     => EntityKind::Agent,
-        "blob"      => EntityKind::Blob,
-        "temporal"  => EntityKind::Temporal,
+        "physical" => EntityKind::Physical,
+        "digital" => EntityKind::Digital,
+        "abstract" => EntityKind::Abstract,
+        "agent" => EntityKind::Agent,
+        "blob" => EntityKind::Blob,
+        "temporal" => EntityKind::Temporal,
         _ => return Err(format!("Unknown entity kind: {}", kind)),
     };
     let ulid = Ulid::new().to_string();
@@ -329,9 +378,14 @@ async fn create_entity(
     };
     let st = state.lock().await;
     st.db.save_entity(entity).await?;
-    st.bus.on_event("entity.created".to_string(), 1, ulid.clone()).await;
-    app.emit("entity-updated", serde_json::json!({"topic": "entity.created", "ulid": ulid, "label": label}))
-        .map_err(|e| e.to_string())?;
+    st.bus
+        .on_event("entity.created".to_string(), 1, ulid.clone())
+        .await;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.created", "ulid": ulid, "label": label}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -344,11 +398,16 @@ async fn update_metadata(
 ) -> Result<(), String> {
     let st = state.lock().await;
     let mut entity = st.db.get_entity(&id).await?;
-    let map = metadata.as_object().ok_or("metadata must be a JSON object".to_string())?;
+    let map = metadata
+        .as_object()
+        .ok_or("metadata must be a JSON object".to_string())?;
     entity.metadata = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     st.db.save_entity(entity).await?;
-    app.emit("entity-updated", serde_json::json!({"topic": "entity.updated", "ulid": id}))
-        .map_err(|e| e.to_string())?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": id}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -360,8 +419,11 @@ async fn delete_entity(
 ) -> Result<(), String> {
     let st = state.lock().await;
     st.db.soft_delete(&id).await?;
-    app.emit("entity-updated", serde_json::json!({"topic": "entity.deleted", "ulid": id}))
-        .map_err(|e| e.to_string())?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.deleted", "ulid": id}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -395,8 +457,11 @@ async fn tag_entity(
         }
     };
     st.db.add_edge(&target_id, &tag_id, "tagged_as").await?;
-    app.emit("graph-updated", serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}))
-        .map_err(|e| e.to_string())?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -408,11 +473,19 @@ async fn untag_entity(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    let tag_id = st.db.resolve_label(&tag_label).await?
+    let tag_id = st
+        .db
+        .resolve_label(&tag_label)
+        .await?
         .ok_or_else(|| format!("No entity found for tag '{}'", tag_label))?;
-    st.db.delete_edge(&target_id, &tag_id, Some("tagged_as")).await?;
-    app.emit("graph-updated", serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}))
-        .map_err(|e| e.to_string())?;
+    st.db
+        .delete_edge(&target_id, &tag_id, Some("tagged_as"))
+        .await?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": target_id, "to": tag_id, "label": "tagged_as"}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -425,9 +498,14 @@ async fn remove_edge(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    st.db.delete_edge(&from_id, &to_id, label.as_deref()).await?;
-    app.emit("graph-updated", serde_json::json!({"from": from_id, "to": to_id}))
-        .map_err(|e| e.to_string())?;
+    st.db
+        .delete_edge(&from_id, &to_id, label.as_deref())
+        .await?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": from_id, "to": to_id}),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -439,7 +517,10 @@ async fn get_entity_edges(
     let st = state.lock().await;
     let all_edges = st.db.get_edges().await?;
     let short_id = entity_id.replace("entity:", "");
-    Ok(all_edges.into_iter().filter(|e| e.from == short_id || e.to == short_id).collect())
+    Ok(all_edges
+        .into_iter()
+        .filter(|e| e.from == short_id || e.to == short_id)
+        .collect())
 }
 
 #[tauri::command]
@@ -496,7 +577,7 @@ async fn spawn_terminal(
     let pty = PtyHost::spawn(app.clone(), session_id.clone(), command)?;
     let on_exit = pty.on_exit.clone();
     sessions.insert(session_id.clone(), pty);
-    
+
     // Monitor exit to cleanup the map
     let app_c = app.clone();
     let sid_c = session_id;
@@ -560,12 +641,27 @@ async fn edit_entity_in_terminal(
 ) -> Result<(), String> {
     use std::io::Write;
     let st = state.lock().await;
-    
+
     // 1. Fetch Composite
     let entity = st.db.get_entity(&entity_id).await?;
-    let spatial = st.db.get_spatial_traits().await?.into_iter().find(|t| t.owner == entity_id);
-    let blob = st.db.get_blob_traits().await?.into_iter().find(|t| t.owner == entity_id);
-    let temporal = st.db.get_temporal_traits().await?.into_iter().find(|t| t.owner == entity_id);
+    let spatial = st
+        .db
+        .get_spatial_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id);
+    let blob = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id);
+    let temporal = st
+        .db
+        .get_temporal_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id);
 
     let composite = core_engine::formats::CompositeEntity {
         entity,
@@ -592,9 +688,10 @@ async fn edit_entity_in_terminal(
         .suffix(&format!(".{}", ext))
         .tempfile()
         .map_err(|e| e.to_string())?;
-    
+
     // Write contents to the tempfile before keeping it
-    temp.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    temp.write_all(content.as_bytes())
+        .map_err(|e| e.to_string())?;
     let (_, temp_path) = temp.keep().map_err(|e| e.to_string())?;
 
     // 4. Editor Command
@@ -605,83 +702,105 @@ async fn edit_entity_in_terminal(
     let session_id = format!("edit-{}", entity_id);
     let pty = PtyHost::spawn(app.clone(), session_id.clone(), Some(cmd))?;
     let on_exit = pty.on_exit.clone();
-    
+
     // Store it so we can write to it
-    st.pty_sessions.lock().unwrap().insert(session_id.clone(), pty);
+    st.pty_sessions
+        .lock()
+        .unwrap()
+        .insert(session_id.clone(), pty);
 
     // 6. Monitor Exit and Sync
     let entity_id_c = entity_id.clone();
     let format_c = format.clone();
     let app_c = app.clone();
     let session_id_c = session_id.clone();
-    
+
     tokio::spawn(async move {
         on_exit.notified().await;
-        
+
         // 7. Read back from temp file
         match std::fs::read_to_string(&temp_path) {
             Ok(new_content) => {
-                let result: Result<core_engine::formats::CompositeEntity, String> = match format_c.as_str() {
-                    "json" => core_engine::formats::from_json(&new_content),
-                    "markdown" => core_engine::formats::from_markdown(&new_content),
-                    _ => core_engine::formats::from_yaml(&new_content),
-                };
+                let result: Result<core_engine::formats::CompositeEntity, String> =
+                    match format_c.as_str() {
+                        "json" => core_engine::formats::from_json(&new_content),
+                        "markdown" => core_engine::formats::from_markdown(&new_content),
+                        _ => core_engine::formats::from_yaml(&new_content),
+                    };
 
                 if let Ok(updated) = result {
-                println!("[TERM_EDIT] Syncing back {} (format: {})", entity_id_c, format_c);
-                let state = app_c.state::<Mutex<AppState>>();
-                let st = state.lock().await;
+                    println!(
+                        "[TERM_EDIT] Syncing back {} (format: {})",
+                        entity_id_c, format_c
+                    );
+                    let state = app_c.state::<Mutex<AppState>>();
+                    let st = state.lock().await;
 
-                // Ensure the ID matches (don't allow identity theft via editor)
-                let mut entity_to_save = updated.entity;
-                entity_to_save.id = entity_id_c.clone();
+                    // Ensure the ID matches (don't allow identity theft via editor)
+                    let mut entity_to_save = updated.entity;
+                    entity_to_save.id = entity_id_c.clone();
 
-                // Update database (UPSERT)
-                match st.db.save_entity(entity_to_save).await {
-                    Ok(_) => println!("[TERM_EDIT] Successfully saved entity {}", entity_id_c),
-                    Err(e) => {
-                        eprintln!("[TERM_EDIT] Failed to save entity: {}", e);
-                        let _ = app_c.emit("term-edit-error", format!("DB save failed: {}", e));
+                    // Update database (UPSERT)
+                    match st.db.save_entity(entity_to_save).await {
+                        Ok(_) => println!("[TERM_EDIT] Successfully saved entity {}", entity_id_c),
+                        Err(e) => {
+                            eprintln!("[TERM_EDIT] Failed to save entity: {}", e);
+                            let _ = app_c.emit("term-edit-error", format!("DB save failed: {}", e));
+                        }
                     }
+
+                    if let Some(s) = updated.spatial {
+                        let mut s = s;
+                        s.owner = entity_id_c.clone();
+                        let _ = st.db.save_spatial_trait(s).await;
+                    }
+                    if let Some(b) = updated.blob {
+                        let mut b = b;
+                        b.owner = entity_id_c.clone();
+                        let _ = st.db.save_blob_trait(b).await;
+                    }
+                    if let Some(t) = updated.temporal {
+                        let mut t = t;
+                        t.owner = entity_id_c.clone();
+                        let _ = st.db.save_temporal_trait(t).await;
+                    }
+
+                    // Trigger bus event for real-time reactivity
+                    let ulid = entity_id_c.replace("entity:", "");
+                    st.bus
+                        .on_event("entity.updated".to_string(), 0, ulid.clone())
+                        .await;
+
+                    // Also trigger a refresh on the frontend for everything
+                    let _ = app_c.emit(
+                        "entity-updated",
+                        serde_json::json!({
+                            "topic": "entity.updated",
+                            "ulid": ulid,
+                            "id": entity_id_c
+                        }),
+                    );
+                } else if let Err(e) = result {
+                    eprintln!(
+                        "[TERM_EDIT] Failed to parse {} editor content: {}",
+                        format_c, e
+                    );
+                    let _ = app_c.emit("term-edit-error", format!("Parse failed: {}", e));
                 }
-                
-                if let Some(s) = updated.spatial { 
-                    let mut s = s; s.owner = entity_id_c.clone();
-                    let _ = st.db.save_spatial_trait(s).await; 
-                }
-                if let Some(b) = updated.blob { 
-                    let mut b = b; b.owner = entity_id_c.clone();
-                    let _ = st.db.save_blob_trait(b).await; 
-                }
-                if let Some(t) = updated.temporal { 
-                    let mut t = t; t.owner = entity_id_c.clone();
-                    let _ = st.db.save_temporal_trait(t).await; 
-                }
-                
-                // Trigger bus event for real-time reactivity
-                let ulid = entity_id_c.replace("entity:", "");
-                st.bus.on_event("entity.updated".to_string(), 0, ulid.clone()).await;
-                
-                // Also trigger a refresh on the frontend for everything
-                let _ = app_c.emit("entity-updated", serde_json::json!({
-                    "topic": "entity.updated",
-                    "ulid": ulid,
-                    "id": entity_id_c
-                }));
-            } else if let Err(e) = result {
-                eprintln!("[TERM_EDIT] Failed to parse {} editor content: {}", format_c, e);
-                let _ = app_c.emit("term-edit-error", format!("Parse failed: {}", e));
+            }
+            Err(e) => {
+                eprintln!(
+                    "[TERM_EDIT] Failed to read temp file {}: {}",
+                    temp_path.display(),
+                    e
+                );
+                let _ = app_c.emit("term-edit-error", format!("Read failed: {}", e));
             }
         }
-        Err(e) => {
-            eprintln!("[TERM_EDIT] Failed to read temp file {}: {}", temp_path.display(), e);
-            let _ = app_c.emit("term-edit-error", format!("Read failed: {}", e));
-        }
-        }
-        
+
         // Delete temp file manually now
         let _ = std::fs::remove_file(&temp_path);
-        
+
         // 8. Cleanup session
         let state = app_c.state::<Mutex<AppState>>();
         let st = state.lock().await;
@@ -705,7 +824,15 @@ async fn save_relationship_type(
 ) -> Result<(), String> {
     let st = state.lock().await;
     let record_id = id.unwrap_or_else(|| format!("relationship_type:{}", ulid::Ulid::new()));
-    st.db.save_relationship_type(RelationshipType { id: record_id, label, transitive, symmetric, inherits_traits }).await
+    st.db
+        .save_relationship_type(RelationshipType {
+            id: record_id,
+            label,
+            transitive,
+            symmetric,
+            inherits_traits,
+        })
+        .await
 }
 
 #[tauri::command]
@@ -745,7 +872,14 @@ async fn save_label_trait(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    st.db.save_label_trait(LabelTrait { id, owner, lang, text }).await
+    st.db
+        .save_label_trait(LabelTrait {
+            id,
+            owner,
+            lang,
+            text,
+        })
+        .await
 }
 
 #[tauri::command]
@@ -766,10 +900,7 @@ async fn get_all_label_traits(
 }
 
 #[tauri::command]
-async fn delete_label_trait(
-    id: String,
-    state: State<'_, Mutex<AppState>>,
-) -> Result<(), String> {
+async fn delete_label_trait(id: String, state: State<'_, Mutex<AppState>>) -> Result<(), String> {
     let st = state.lock().await;
     st.db.delete_label_trait(&id).await
 }
@@ -838,7 +969,9 @@ pub fn run() {
             // app.manage() is called after block_on returns, guaranteeing the state is
             // registered before any frontend command can fire.
             let (db, bus, blob, query_tx) = tauri::async_runtime::block_on(async {
-                let db = SurrealDbAdapter::new().await.expect("SurrealDB init failed");
+                let db = SurrealDbAdapter::new()
+                    .await
+                    .expect("SurrealDB init failed");
                 let bus = EventBus::new();
                 let blob_dir = core_engine::db::store_path().join("blobs");
                 let blob = LocalBlobAdapter::new(blob_dir);
@@ -852,30 +985,45 @@ pub fn run() {
                 let ah = app_handle.clone();
                 tokio::spawn(async move {
                     while let Ok(event) = rx.recv().await {
-                        let _ = ah.emit("entity-updated", serde_json::json!({
-                            "topic": event.topic,
-                            "ulid": event.ulid,
-                            "revision": event.revision,
-                        }));
+                        let _ = ah.emit(
+                            "entity-updated",
+                            serde_json::json!({
+                                "topic": event.topic,
+                                "ulid": event.ulid,
+                                "revision": event.revision,
+                            }),
+                        );
                     }
                 });
 
                 // Prolog Machine in its own dedicated thread
-                let (query_tx, mut query_rx) = mpsc::channel::<(String, oneshot::Sender<Result<Vec<String>, String>>)>(32);
+                let (query_tx, mut query_rx) =
+                    mpsc::channel::<(String, oneshot::Sender<Result<Vec<String>, String>>)>(32);
                 let db_p = db.clone();
                 let bus_p = bus.clone();
 
                 std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
                     let local = tokio::task::LocalSet::new();
 
                     local.block_on(&rt, async move {
                         let machine = Arc::new(prolog_engine::ScryerMachine::new());
-                        if let Err(e) = prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(&machine, &db_p).await {
+                        if let Err(e) =
+                            prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(
+                                &machine, &db_p,
+                            )
+                            .await
+                        {
                             eprintln!("Failed to load facts into Prolog Engine: {}", e);
                         }
 
-                        let sync_task = prolog_engine::synchronizer::StateSynchronizerTask::new(machine.clone(), db_p.clone());
+                        let sync_task = prolog_engine::synchronizer::StateSynchronizerTask::new(
+                            machine.clone(),
+                            db_p.clone(),
+                        );
                         let sync_rx = bus_p.sender.subscribe();
 
                         tokio::task::spawn_local(async move {

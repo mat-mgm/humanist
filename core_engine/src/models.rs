@@ -53,6 +53,7 @@ pub struct SpatialTrait {
 pub struct BlobTrait {
     pub id: String,
     pub owner: String,
+    pub filename: String,
     pub storage_id: String,
     pub bucket: String,
     pub mime: String,

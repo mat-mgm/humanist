@@ -39,6 +39,7 @@ result
 result-*
 # Agent directory
 .agent/
+.codex
 # Editors / OS
 **/.vscode/
 .idea

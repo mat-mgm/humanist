@@ -51,11 +51,11 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
 ## Architecture
 * Structure: Monorepo Cargo Workspace adopting Hexagonal Architecture.
 * Components / assets:
-  - **`core_engine` (Library)**: The embedded database logic using SurrealDB, blob storage via `aws-sdk-s3`, background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
+  - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
   - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
-* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). Context entities emit semantic edges.
+* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
 * **Temporal Causal Context Tracking**: Entities of the `temporal` kind can be associated with a `Temporal Trait` (supporting points, spans, and recurring events). The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where Selecting a node in any view highlights its temporal position.
 * **Unified Semantic Relationships (Graph Edges & Tags)**: 
   - To achieve a true "Git for Data" mental model, all relationships (1:1 and Many:1) are merged into a single generic **Edge** mechanism. 
@@ -721,7 +721,7 @@ Refactor the GUI from a fixed tabbed-viewport model to a fully flexible panel sy
 - [✓] Layout state survives an app restart (localStorage)
 - [✓] `npm run build` passes with zero TypeScript errors
 
-### Phase 47: Activity Bar Layout, Side Panel & Lucide Icons
+### Phase 46: Activity Bar Layout, Side Panel & Lucide Icons
 **Description**
 Redesigned the application shell from a top-menu DWM interface to a VS Code-style activity bar layout. A 48 px left rail (`ActivityBar`) holds three primary canvas buttons (Knowledge Graph, Causal, Terminal) and a Settings button at the bottom. Clicking the active icon collapses/expands the left side panel (VS Code behavior). The remaining width is the primary canvas. An optional resizable right panel with a panel picker can be opened via `Ctrl+\`. The left side panel is also user-resizable. Globe, Timeline, and Calendar are merged into a single **CausalPanel** (resizable split; Globe top, Timeline/Calendar tabbed bottom). Entities and Relationships are merged into a **EntityKnowledgePanel** (tabbed, scrollable). All emoji replaced with `lucide-react` icons. The DWM tiling layout is preserved and opt-in via Settings.
 
@@ -804,7 +804,36 @@ Redesigned the application shell from a top-menu DWM interface to a VS Code-styl
 - [✓] No emoji characters remain in any panel component.
 - [✓] `npm run build` passes with zero TypeScript errors.
 
-### Phase 46: UI Utilities & UX Hardening
+### Phase 47: Proper Local Content-Addressed Blob Store
+**Description**
+Refactor the current local blob storage into a true immutable content-addressed store. All externally accessible content files, including Markdown notes and Prolog source files, are stored as local plain files under deterministic hash-derived paths. The database remains the semantic index and points to the active blob via `BlobTrait`, but blob content itself is no longer mutated in place.
+
+**Tasks**
+- [✓] **Real Hash Addressing**: Replace ULID-based blob paths with deterministic content-hash-based `storage_id` values and store the real digest in `BlobTrait.hash`.
+- [✓] **Immutable Local CAS**: Refactor `LocalBlobAdapter` so writes are content-addressed and idempotent. If content already exists for a hash, reuse it instead of duplicating it.
+- [✓] **External File Accessibility**: Ensure local blobs remain directly accessible as plain filesystem files so external editors and tools can open them without any projection layer.
+- [✓] **Blob Update by Replacement**: Replace in-place blob mutation with “write new blob, update `BlobTrait` pointer” semantics for edited text content.
+- [✓] **Canonical Text-as-Blob**: Make Markdown, Prolog, and other text content canonical in the blob store via `BlobTrait`, rather than duplicating file paths or note bodies in generic entity metadata.
+- [✓] **Reference-Safe GC**: Update garbage collection so only blobs no longer referenced by any live entity/trait are eligible for removal.
+
+**Checks**
+- [✓] Ingesting the same file content twice results in one reused blob object with the same content hash.
+- [✓] Editing a Markdown note creates a new blob path/hash while preserving the old blob as historical content.
+- [✓] A stored Markdown or Prolog blob can be opened directly from its local filesystem path by an external tool.
+- [✓] `cargo check --workspace` passes after the CAS refactor.
+
+**Design decisions**
+- Decision: Use direct local CAS files with no workspace/projection layer.  
+  Rationale: Keeps the system minimal, externally accessible, immutable, and free of duplicate editable mirrors.  
+  Alternatives: Stable workspace projection or DB-canonical text fields.  
+  Trade-offs: External paths are hash-based and therefore not stable across content edits.
+
+**Notes / Risks / Resources**
+- Prolog loading behavior is intentionally out of scope for this phase and should be handled in a later phase once CAS semantics are stable.
+- `BlobTrait.mime` remains the dispatch key for viewers and processors, but MIME dispatch should build on top of the new CAS substrate rather than define it.
+- New blobs do not write `import_path` or `source_path` into generic entity metadata; CLI and GUI resolve file access through `BlobTrait` fields instead.
+
+### Phase 48: UI Utilities & UX Hardening
 **Description**
 Enhance the user experience with native integration for file management and quick identifier access.
 
@@ -818,7 +847,7 @@ Enhance the user experience with native integration for file management and quic
 - [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 
-### Phase 45: Semantic Metadata Enforcement
+### Phase 49: Semantic Metadata Enforcement
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 
@@ -830,24 +859,6 @@ Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. T
 **Checks**
 - [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
 - [ ] The Inspector highlights missing but required fields in red.
-
-### Phase 46: Universal Content Trait & Unified Logic Integration
-**Description**
-Consolidate all external content (Text, Markdown, YAML, Logic Rules, Blobs) into the unified `BlobTrait`. Instead of specialized traits, the system utilizes the `mime` field as the semantic discriminator. The `LogicTrait` is eliminated; logic rules are now stored as content-addressed blobs within the CAS.
-
-**Tasks**
-- [ ] **Trait Consolidation**: Remove `LogicTrait` and any "TextTrait" drafts. Update `BlobTrait` to ensure the `mime` type is strictly enforced as the primary metadata field.
-- [ ] **Logic-as-a-Blob**: Refactor the `InferenceEngine` (Prolog) to fetch rules by subscribing to `BlobTrait` events where `mime == "application/x-prolog"`.
-- [ ] **MIME-Driven Dispatch**: Implement a centralized `ContentDispatcher` in the GUI that automatically selects the correct viewer (Text Editor, Markdown Preview, 3D Renderer) based on the `BlobTrait` MIME type.
-- [ ] **CAS Consistency**: Ensure that all text-based content (including logic) is stored in the CAS and referenced by its hash via the `BlobTrait`, bringing automatic deduplication and versioning to the system rules.
-
-**Checks**
-- [ ] Prolog rules stored in the CAS are successfully loaded and executed by the `prolog_engine`.
-- [ ] The `PreviewPanel` correctly switches between a 3D view (for `.gltf`) and a Text Editor (for `.md` or `.pl`) using only the `BlobTrait` data.
-- [ ] `cargo check --workspace` passes without any reference to the deprecated `LogicTrait`.
-
-**Current Blockers**:
-- [ ] **Prolog execution trigger**: Decide how prolog should interface with the rest of the system i.e. core, gui, cli and what should trigger prolog blob loading or inference.
 
 ---
 

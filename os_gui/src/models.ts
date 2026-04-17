@@ -31,6 +31,7 @@ export interface SpatialTrait {
 export interface BlobTrait {
   id: string;
   owner: string;
+  filename: string;
   storage_id: string;
   bucket: string;
   mime: string;

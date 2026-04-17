@@ -1,10 +1,119 @@
-use async_trait::async_trait;
-use aws_sdk_s3::Client;
-use aws_config::meta::region::RegionProviderChain;
-use std::time::Duration;
-use std::path::{PathBuf};
-use std::fs;
 use crate::ports::BlobStorageProvider;
+use async_trait::async_trait;
+use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_s3::Client;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::PathBuf;
+use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub struct StoredBlob {
+    pub storage_id: String,
+    pub hash: String,
+    pub size: i64,
+}
+
+fn content_hash(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn normalize_extension(ext: Option<&str>) -> Option<String> {
+    ext.map(|raw| raw.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| {
+            ext.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|ext| !ext.is_empty())
+}
+
+fn sanitize_label(label: Option<&str>) -> Option<String> {
+    label
+        .map(|raw| raw.trim().to_ascii_lowercase())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            let mut out = String::with_capacity(raw.len());
+            let mut last_dash = false;
+            for ch in raw.chars() {
+                if ch.is_ascii_alphanumeric() {
+                    out.push(ch);
+                    last_dash = false;
+                } else if !last_dash {
+                    out.push('-');
+                    last_dash = true;
+                }
+            }
+            out.trim_matches('-').to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .map(|mut s| {
+            if s.len() > 64 {
+                s.truncate(64);
+                s.truncate(s.trim_end_matches('-').len());
+            }
+            s
+        })
+}
+
+pub fn blob_filename_for_label(label: Option<&str>, extension: Option<&str>) -> String {
+    let stem = sanitize_label(label).unwrap_or_else(|| "blob".to_string());
+    let ext_suffix = normalize_extension(extension)
+        .map(|ext| format!(".{}", ext))
+        .unwrap_or_default();
+    format!("{}{}", stem, ext_suffix)
+}
+
+pub fn storage_id_for_hash(hash: &str, extension: Option<&str>, label: Option<&str>) -> String {
+    let ext_suffix = normalize_extension(extension)
+        .map(|ext| format!(".{}", ext))
+        .unwrap_or_default();
+    let label_suffix = sanitize_label(label)
+        .map(|label| format!("-{}", label))
+        .unwrap_or_default();
+    format!("sha256/{}/{}{}{}", &hash[..2], &hash[2..], label_suffix, ext_suffix)
+}
+
+pub fn extension_from_storage_id(storage_id: &str) -> Option<String> {
+    let filename = std::path::Path::new(storage_id).file_name()?.to_str()?;
+    let dot = filename.rfind('.')?;
+    if dot == 0 || dot + 1 >= filename.len() {
+        return None;
+    }
+    normalize_extension(Some(&filename[dot + 1..]))
+}
+
+pub fn infer_mime_from_path(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "image/png".to_string()
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".to_string()
+    } else if lower.ends_with(".gif") {
+        "image/gif".to_string()
+    } else if lower.ends_with(".pdf") {
+        "application/pdf".to_string()
+    } else if lower.ends_with(".glb") {
+        "model/gltf-binary".to_string()
+    } else if lower.ends_with(".gltf") {
+        "model/gltf+json".to_string()
+    } else if lower.ends_with(".md") || lower.ends_with(".markdown") {
+        "text/markdown".to_string()
+    } else if lower.ends_with(".txt") {
+        "text/plain".to_string()
+    } else if lower.ends_with(".json") {
+        "application/json".to_string()
+    } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+        "application/yaml".to_string()
+    } else if lower.ends_with(".pl") || lower.ends_with(".pro") {
+        "application/x-prolog".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
+}
 
 #[derive(Clone)]
 pub struct S3BlobAdapter {
@@ -23,46 +132,76 @@ impl S3BlobAdapter {
             bucket: bucket.to_string(),
         }
     }
-    
+
     // Test dummy
     pub fn dummy() -> Self {
-        let config = aws_sdk_s3::Config::builder().behavior_version_latest().build();
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version_latest()
+            .build();
         let client = Client::from_conf(config);
-        Self { client, bucket: "dummy".to_string() }
+        Self {
+            client,
+            bucket: "dummy".to_string(),
+        }
     }
 }
 
 #[async_trait]
 impl BlobStorageProvider for S3BlobAdapter {
-    async fn upload(&self, local_path: &str, storage_id: &str) -> Result<(), String> {
-        // Dummy implementation for now
-        let _path = local_path;
-        let _id = storage_id;
-        Ok(())
+    async fn store_file(
+        &self,
+        local_path: &str,
+        label_hint: Option<String>,
+    ) -> Result<StoredBlob, String> {
+        let content = fs::read(local_path).map_err(|e| e.to_string())?;
+        let extension = PathBuf::from(local_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_string());
+        let inferred_label = label_hint.or_else(|| {
+            PathBuf::from(local_path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem.to_string())
+        });
+        self.store_bytes(content, extension, inferred_label).await
+    }
+
+    async fn store_bytes(
+        &self,
+        content: Vec<u8>,
+        extension_hint: Option<String>,
+        label_hint: Option<String>,
+    ) -> Result<StoredBlob, String> {
+        let hash = content_hash(&content);
+        let storage_id = storage_id_for_hash(&hash, extension_hint.as_deref(), label_hint.as_deref());
+        let _id = &storage_id;
+        let _content = content;
+        Ok(StoredBlob {
+            storage_id,
+            hash,
+            size: _content.len() as i64,
+        })
     }
 
     async fn presign_url(&self, storage_id: &str) -> Result<String, String> {
         let expires_in = Duration::from_secs(3600);
         let config = aws_sdk_s3::presigning::PresigningConfig::expires_in(expires_in)
             .map_err(|e| e.to_string())?;
-            
-        let req = self.client.get_object()
+
+        let req = self
+            .client
+            .get_object()
             .bucket(&self.bucket)
             .key(storage_id)
             .presigned(config)
             .await
             .map_err(|e| e.to_string())?;
-            
+
         Ok(req.uri().to_string())
     }
 
     async fn delete(&self, _storage_id: &str) -> Result<(), String> {
-        Ok(())
-    }
-
-    async fn save_content(&self, storage_id: &str, content: Vec<u8>) -> Result<(), String> {
-        let _id = storage_id;
-        let _c = content;
         Ok(())
     }
 }
@@ -75,21 +214,97 @@ pub struct LocalBlobAdapter {
 impl LocalBlobAdapter {
     pub fn new(base_dir: PathBuf) -> Self {
         if !base_dir.exists() {
-            fs::create_dir_all(&base_dir).unwrap_or_else(|_| eprintln!("Failed to create local blob storage directory: {:?}", base_dir));
+            fs::create_dir_all(&base_dir).unwrap_or_else(|_| {
+                eprintln!(
+                    "Failed to create local blob storage directory: {:?}",
+                    base_dir
+                )
+            });
         }
         Self { base_dir }
+    }
+
+    fn existing_storage_id_for_hash(&self, hash: &str) -> Result<Option<String>, String> {
+        let shard_dir = self.base_dir.join("sha256").join(&hash[..2]);
+        if !shard_dir.exists() {
+            return Ok(None);
+        }
+        let prefix = &hash[2..];
+        let mut matches: Vec<String> = fs::read_dir(&shard_dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let file_name = entry.file_name();
+                let file_name = file_name.to_str()?;
+                if file_name.starts_with(prefix) {
+                    Some(format!("sha256/{}/{}", &hash[..2], file_name))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        matches.sort();
+        Ok(matches.into_iter().next())
+    }
+
+    fn persist(
+        &self,
+        content: Vec<u8>,
+        extension_hint: Option<String>,
+        label_hint: Option<String>,
+    ) -> Result<StoredBlob, String> {
+        let hash = content_hash(&content);
+        if let Some(storage_id) = self.existing_storage_id_for_hash(&hash)? {
+            return Ok(StoredBlob {
+                storage_id,
+                hash,
+                size: content.len() as i64,
+            });
+        }
+        let storage_id = storage_id_for_hash(&hash, extension_hint.as_deref(), label_hint.as_deref());
+        let dest = self.base_dir.join(&storage_id);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if !dest.exists() {
+            fs::write(&dest, &content).map_err(|e| e.to_string())?;
+        }
+        Ok(StoredBlob {
+            storage_id,
+            hash,
+            size: content.len() as i64,
+        })
     }
 }
 
 #[async_trait]
 impl BlobStorageProvider for LocalBlobAdapter {
-    async fn upload(&self, local_path: &str, storage_id: &str) -> Result<(), String> {
-        let dest = self.base_dir.join(storage_id);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        fs::copy(local_path, &dest).map_err(|e| e.to_string())?;
-        Ok(())
+    async fn store_file(
+        &self,
+        local_path: &str,
+        label_hint: Option<String>,
+    ) -> Result<StoredBlob, String> {
+        let content = fs::read(local_path).map_err(|e| e.to_string())?;
+        let extension = PathBuf::from(local_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_string());
+        let inferred_label = label_hint.or_else(|| {
+            PathBuf::from(local_path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem.to_string())
+        });
+        self.persist(content, extension, inferred_label)
+    }
+
+    async fn store_bytes(
+        &self,
+        content: Vec<u8>,
+        extension_hint: Option<String>,
+        label_hint: Option<String>,
+    ) -> Result<StoredBlob, String> {
+        self.persist(content, extension_hint, label_hint)
     }
 
     async fn presign_url(&self, storage_id: &str) -> Result<String, String> {
@@ -107,13 +322,103 @@ impl BlobStorageProvider for LocalBlobAdapter {
         }
         Ok(())
     }
+}
 
-    async fn save_content(&self, storage_id: &str, content: Vec<u8>) -> Result<(), String> {
-        let dest = self.base_dir.join(storage_id);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        fs::write(dest, content).map_err(|e| e.to_string())?;
-        Ok(())
+#[cfg(test)]
+mod tests {
+    use super::{
+        blob_filename_for_label, extension_from_storage_id, storage_id_for_hash, LocalBlobAdapter,
+    };
+    use crate::ports::BlobStorageProvider;
+    use std::fs;
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("spatial-os-blob-test-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[tokio::test]
+    async fn reuses_same_hash_for_same_content() {
+        let dir = temp_dir();
+        let adapter = LocalBlobAdapter::new(dir.clone());
+
+        let first = adapter
+            .store_bytes(
+                b"hello world".to_vec(),
+                Some("md".to_string()),
+                Some("hello note".to_string()),
+            )
+            .await
+            .unwrap();
+        let second = adapter
+            .store_bytes(
+                b"hello world".to_vec(),
+                Some("md".to_string()),
+                Some("different label".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first.hash, second.hash);
+        assert_eq!(first.storage_id, second.storage_id);
+        assert!(dir.join(&first.storage_id).exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn changing_content_creates_new_blob_path() {
+        let dir = temp_dir();
+        let adapter = LocalBlobAdapter::new(dir.clone());
+
+        let first = adapter
+            .store_bytes(
+                b"v1".to_vec(),
+                Some("md".to_string()),
+                Some("first note".to_string()),
+            )
+            .await
+            .unwrap();
+        let second = adapter
+            .store_bytes(
+                b"v2".to_vec(),
+                Some("md".to_string()),
+                Some("first note".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(first.hash, second.hash);
+        assert_ne!(first.storage_id, second.storage_id);
+        assert_eq!(
+            extension_from_storage_id(&first.storage_id).as_deref(),
+            Some("md")
+        );
+        assert!(dir.join(&first.storage_id).exists());
+        assert!(dir.join(&second.storage_id).exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn storage_ids_include_sanitized_labels() {
+        let storage_id = storage_id_for_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            Some("md"),
+            Some("Project Plan v1"),
+        );
+        assert!(storage_id.ends_with(
+            "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-project-plan-v1.md"
+        ));
+    }
+
+    #[test]
+    fn blob_filename_defaults_to_sanitized_label() {
+        assert_eq!(
+            blob_filename_for_label(Some("Project Plan v1"), Some("md")),
+            "project-plan-v1.md"
+        );
+        assert_eq!(blob_filename_for_label(None, Some("txt")), "blob.txt");
     }
 }

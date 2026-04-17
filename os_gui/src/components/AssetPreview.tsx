@@ -17,7 +17,12 @@ export const AssetPreview = memo(function AssetPreview() {
   const isImage = blobTrait && blobTrait.mime.startsWith('image/');
   const isPdf   = blobTrait && blobTrait.mime === 'application/pdf';
   const isCad   = blobTrait && (blobTrait.mime === 'model/gltf-binary' || blobTrait.mime === 'model/gltf+json');
-  const isText  = blobTrait && (blobTrait.mime.startsWith('text/') || blobTrait.mime === 'application/json');
+  const isText  = blobTrait && (
+    blobTrait.mime.startsWith('text/')
+    || blobTrait.mime === 'application/json'
+    || blobTrait.mime === 'application/yaml'
+    || blobTrait.mime === 'application/x-prolog'
+  );
   const imageSrc = blobTrait?.localUrl ? convertFileSrc(blobTrait.localUrl) : null;
 
   const [textContent, setTextContent]   = useState<string | null>(null);
@@ -58,7 +63,7 @@ export const AssetPreview = memo(function AssetPreview() {
 
   const onSave = async () => {
     if (!blobTrait) return;
-    try { await saveBlobContent(blobTrait.storage_id, editedContent); setTextContent(editedContent); setIsEditing(false); }
+    try { await saveBlobContent(blobTrait.owner, editedContent); setTextContent(editedContent); setIsEditing(false); }
     catch (e) { console.error('Failed to save blob:', e); }
   };
 
