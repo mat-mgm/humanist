@@ -1,8 +1,8 @@
-export type EntityKind = "physical" | "digital" | "abstract" | "agent" | "blob" | "temporal";
+export type EntityKind = "physical" | "digital" | "abstract" | "persona";
 
 export interface Entity {
   id: string;
-  kind: EntityKind;
+  category: EntityKind;
   label: string;
   lang_canonical: string;
   metadata: Record<string, any>;
@@ -92,7 +92,7 @@ export interface EdgeRecord {
 export interface EntitySnapshot {
   id: string;
   entity_id: string;
-  kind: EntityKind;
+  category: EntityKind;
   label: string;
   metadata: Record<string, any>;
   deleted_at: string | null;

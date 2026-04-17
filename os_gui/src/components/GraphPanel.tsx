@@ -14,7 +14,7 @@ import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/gra
 interface GNode {
   id: string;
   label: string;
-  kind: string;
+  category: string;
   x?: number;
   y?: number;
   vx?: number;
@@ -30,11 +30,9 @@ interface GNode {
 
 const KIND_COLORS: Record<string, string> = {
   physical: '#6de096',
-  digital: '#7eb0ff',
+  digital:  '#7eb0ff',
   abstract: '#f5d060',
-  agent: '#d680ff',
-  blob: '#ff9f43',
-  temporal: '#ff7eb3',
+  persona:  '#d680ff',
 };
 
 const selectEntities = (s: any) => s.entities;
@@ -344,7 +342,7 @@ export const GraphPanel = memo(function GraphPanel() {
             ctx.beginPath();
             ctx.rect(n.x - w / 2, n.y - h / 2, w, h);
             ctx.lineWidth = 1.5 / globalScale;
-            ctx.strokeStyle = KIND_COLORS[n.kind] ?? '#8b91a8';
+            ctx.strokeStyle = KIND_COLORS[n.category] ?? '#8b91a8';
             ctx.stroke();
           }
         }
@@ -352,7 +350,7 @@ export const GraphPanel = memo(function GraphPanel() {
         if (!isImageReady) {
           ctx.beginPath();
           ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI, false);
-          ctx.fillStyle = KIND_COLORS[n.kind] ?? '#8b91a8';
+          ctx.fillStyle = KIND_COLORS[n.category] ?? '#8b91a8';
           ctx.fill();
 
           // Path glow ring
@@ -723,7 +721,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const filteredData = useMemo(() => {
     const isFiltered = filterKinds.length > 0;
     const kindNodes = isFiltered
-      ? entities.filter((e: any) => filterKinds.includes(e.kind))
+      ? entities.filter((e: any) => filterKinds.includes(e.category))
       : entities;
 
     const nodeIds = new Set(kindNodes.map((e: any) => e.id.replace('entity:', '')));
@@ -760,14 +758,14 @@ export const GraphPanel = memo(function GraphPanel() {
       const displayLabel = resolvedLabel(entity, allLabelTraits, activeLocale);
       if (live) {
         live.label = displayLabel;
-        live.kind = entity.kind;
+        live.category = entity.category;
         live.metadata = entity.metadata;
         nextNodes.push(live);
       } else {
         nextNodes.push({
           id: strippedId,
           label: displayLabel,
-          kind: entity.kind,
+          category: entity.category,
           metadata: entity.metadata,
           x: saved?.x,
           y: saved?.y

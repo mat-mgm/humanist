@@ -618,14 +618,9 @@ body,
   color: #f5d060;
 }
 
-.kind-agent {
+.kind-persona {
   background: rgba(200, 100, 255, 0.15);
   color: #d680ff;
-}
-
-.kind-blob {
-  background: rgba(255, 159, 67, 0.15);
-  color: #ff9f43;
 }
 
 /* ── Terminal Overlay ────────────────────────────────────────── */

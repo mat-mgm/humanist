@@ -56,7 +56,8 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
   - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
-* **Temporal Causal Context Tracking**: Entities of the `temporal` kind can be associated with a `Temporal Trait` (supporting points, spans, and recurring events). The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where Selecting a node in any view highlights its temporal position.
+* **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
+* **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
 * **Unified Semantic Relationships (Graph Edges & Tags)**: 
   - To achieve a true "Git for Data" mental model, all relationships (1:1 and Many:1) are merged into a single generic **Edge** mechanism. 
   - **Relational Tagging**: Tags are no longer static string arrays inside an entity's record. Instead, they are independent `Abstract` entities. 
@@ -833,7 +834,107 @@ Refactor the current local blob storage into a true immutable content-addressed 
 - `BlobTrait.mime` remains the dispatch key for viewers and processors, but MIME dispatch should build on top of the new CAS substrate rather than define it.
 - New blobs do not write `import_path` or `source_path` into generic entity metadata; CLI and GUI resolve file access through `BlobTrait` fields instead.
 
-### Phase 48: UI Utilities & UX Hardening
+### Phase 48: Ontological Model Refactor — Category, Persona, and Trait Separation
+**Description**
+Rename the `kind` field to `category` across the entire stack (Rust models, SurrealDB schema, Tauri IPC, TypeScript interfaces, and all frontend components) to better express its ontological role. Simultaneously rename the `Agent` variant to `Persona`. Remove the `Blob` and `Temporal` variants from `EntityKind`: both were redundant with `BlobTrait` and `TemporalTrait`, which are orthogonal capability layers any entity can carry regardless of category. `EntityKind` is reduced to four pure ontological classifiers: `Physical`, `Digital`, `Abstract`, `Persona`. Fix resulting graph rendering and data-loading bugs introduced by the schema migration.
+
+**Tasks**
+- [✓] **Rust models**: Rename `Entity.kind` → `Entity.category` and `EntitySnapshot.kind` → `EntitySnapshot.category` in `core_engine/src/models.rs`.
+- [✓] **Enum variant**: Rename `EntityKind::Agent` → `EntityKind::Persona`; update `#[serde(rename_all = "lowercase")]` serialization.
+- [✓] **Remove Blob/Temporal variants**: Drop `EntityKind::Blob` and `EntityKind::Temporal`; add `#[serde(alias = "kind")]` to `Entity.category` for backward-compat deserialization of legacy DB records.
+- [✓] **SurrealDB schema**: Update `DEFINE FIELD category` allow-list to `['physical', 'digital', 'abstract', 'persona']` in `core_engine/src/db.rs`; remove `blob` and `temporal` entries.
+- [✓] **Tauri IPC**: Rename `create_entity(kind)` → `create_entity(category)`; remap blob ingest to `EntityKind::Digital`; remap tag creation to `EntityKind::Abstract`; normalize raw SQL result JSON (`"kind"` key → `"category"`) in `list_entities` for backward compat with pre-migration DB records.
+- [✓] **CLI**: Rename `EntitySub::Add { kind }` → `EntitySub::Add { category }`; remove `"temporal"` arm; update `blob ls` to filter by `BlobTrait` presence instead of category.
+- [✓] **TypeScript models**: Update `EntityKind` union to `"physical" | "digital" | "abstract" | "persona"` and rename `.kind` → `.category` in `models.ts`.
+- [✓] **Frontend store**: Update `invoke('create_entity', { category })` in `store.ts`.
+- [✓] **Components**: Replace all `.kind` → `.category` accesses; update `KIND_COLORS` and `ENTITY_KINDS` to 4 variants; remove `blob` and `temporal` options from `CreateEntityDialog`; remove `.kind-blob` CSS rule; rename `.kind-agent` → `.kind-persona`.
+- [✓] **UI label**: Update "Kind:" → "Category:" in the EntityInspector history snapshot view.
+- [✓] **Seed script**: Update `test/seed_db.sh` — all `kind:` → `category:`, `'agent'` → `'persona'`, `exhibition_2024` and `meeting_q2` changed from `category: 'temporal'` to `category: 'abstract'`.
+
+**Checks**
+- [✓] No `EntityKind::Agent`, `EntityKind::Blob`, `EntityKind::Temporal`, `.kind`, or `"agent"` references remain in any `.rs`, `.ts`, or `.tsx` file.
+- [✓] `cargo check` passes with zero warnings on `core_engine`, `os_cli`, `prolog_engine`.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] Graph nodes render with correct category colours after migration (gray-node regression fixed via JSON normalization in `list_entities`).
+- [✓] "Load Full" button works after migration (raw-SQL path + normalization avoids typed deserialization failure on pre-migration records).
+
+**Design decisions**
+- Decision: Rename `kind` → `category` rather than `type`.  
+  Rationale: `type` is a reserved keyword in both Rust (`r#type`) and TypeScript, and collides with SurrealDB's `TYPE` schema keyword.
+- Decision: Rename `Agent` → `Persona`.  
+  Rationale: `Persona` more accurately denotes an acting subject (person, process, system with agency) without implying automated software agent semantics.
+- Decision: Remove `Blob` and `Temporal` from `EntityKind`.  
+  Rationale: `category` answers "what is this thing ontologically"; `BlobTrait` and `TemporalTrait` answer "what data does it carry". A physical place can be temporal (an event); a digital resource can carry a blob attachment. Conflating capability with identity produced contradictions (a blob is also digital/abstract/etc.). Traits are the correct abstraction layer for cross-cutting capabilities.
+
+### Phase 49: Structured Logging Standard
+**Description**
+Establish a consistent, minimal logging system across all Rust crates and the Tauri IPC layer.
+All modules emit events through the `tracing` facade. A single initializer in `core_engine` wires
+up dual output: human-readable colored stdout and a rotating JSON-lines log file under the
+platform app-log directory. Logs are boundary-scoped: one line per subsystem startup and one line
+per key operation (blob store, GC, DB connect). Nothing fires inside loops or on every IPC call.
+
+**Tasks**
+
+*Dependencies*
+- [ ] Add `tracing`, `tracing-subscriber` (features: `env-filter`, `fmt`, `json`) to `core_engine/Cargo.toml`.
+- [ ] Add `tracing-appender` to `core_engine/Cargo.toml` for rolling file output.
+- [ ] Add `tracing` (facade only, no subscriber) to `prolog_engine/Cargo.toml` and `os_cli/Cargo.toml`.
+
+*Core Initializer*
+- [ ] Define `LogConfig { level: LevelFilter, log_dir: Option<PathBuf> }` in `core_engine/src/logging.rs`.
+- [ ] Implement `logging::init(config: LogConfig)` — sets up a `tracing-subscriber` registry with:
+  - Fmt layer (stdout, ANSI color, compact format).
+  - Optional daily-rolling JSON-lines file layer via `tracing-appender` (keep last 7 files).
+  - `EnvFilter` seeded from `RUST_LOG`, falling back to `config.level`.
+- [ ] Store the `tracing-appender` non-blocking guard in a `static` or return it from `init` so it is held for the process lifetime (dropping it silently stops file writes).
+- [ ] Call `logging::init` exactly once: from `os_cli::main` and from the Tauri `setup` hook in `os_gui/src-tauri/src/lib.rs`. Libraries (`core_engine`, `prolog_engine`) must not initialize a subscriber.
+
+*CLI Verbosity*
+- [ ] Add `-v / --verbose` flag (maps to `DEBUG`) and `-q / --quiet` flag (maps to `ERROR`) to the top-level `os_cli` `Cli` struct in `main.rs`.
+- [ ] Pass resolved level through `LogConfig` into `logging::init`.
+
+*Instrumentation — `core_engine`*
+- [ ] Emit `tracing::info!("db connected")` once after SurrealDB initializes in `db.rs`.
+- [ ] Emit `tracing::info!("event bus ready")` once when the `EventBus` starts.
+- [ ] Emit `tracing::info!(blobs_removed = N, "gc sweep")` at the end of each GC pass.
+- [ ] Emit `tracing::info!(hash = %hash, bytes = size, "blob stored")` in the CAS write path.
+- [ ] Replace any remaining `eprintln!` / `println!` debug calls with `tracing::error!` or delete them.
+
+*Instrumentation — `prolog_engine`*
+- [ ] Emit `tracing::info!("prolog engine ready")` once after `ScryerMachine` initializes.
+- [ ] Emit `tracing::warn!` on query failures (not on every query entry).
+
+*Instrumentation — `os_gui` Tauri backend*
+- [ ] Emit `tracing::info!("backend ready")` once in the Tauri `setup` hook.
+- [ ] Emit `tracing::error!` in command handlers only on unrecoverable failures — not on every call.
+- [ ] Add a `log_frontend` Tauri IPC command: `log_frontend(level: String, message: String)` that emits a `tracing` event tagged with `source = "frontend"`.
+
+*Frontend — TypeScript*
+- [ ] Add `logFrontend(level: 'warn' | 'error', message: string)` helper in `src/lib/log.ts` calling `invoke('log_frontend', { level, message })`.
+- [ ] Replace `console.error` calls in IPC error paths (store actions) with `logFrontend('error', ...)`.
+
+**Checks**
+- [ ] Booting the app and running a full session (create entity, ingest file, run Prolog query) produces fewer than 15 `INFO` lines — each names the component and confirms a boundary was crossed.
+- [ ] No log line appears inside a loop or on every IPC call under normal operation.
+- [ ] Running `RUST_LOG=debug cargo run -p os_cli -- entity ls` emits structured debug output for DB calls.
+- [ ] Running `cargo run -p os_cli -- -q entity ls` suppresses everything below `ERROR`.
+- [ ] A JSON log file exists under the platform app-log directory after any GUI session.
+- [ ] `grep -rn 'eprintln!\|println!' core_engine/src prolog_engine/src` returns zero matches (excluding `#[cfg(test)]` blocks).
+- [ ] `cargo check --workspace` passes with zero warnings.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+**Design decisions**
+- Decision: Log at system boundaries only (init, connect, sweep, ingest) — not per-operation.  
+  Rationale: Verbose per-call logging masks real signals. A healthy run should produce a handful of `INFO` lines confirming each subsystem started and key operations completed. `DEBUG` is reserved for active development and is never on by default.
+- Decision: Use `tracing` (not `log`) as the logging facade.  
+  Rationale: The runtime is Tokio-based; `tracing` instruments async spans natively without the overhead of a bolt-on adapter.
+- Decision: Initializer lives in `core_engine/src/logging.rs`, called only from binary entry points.  
+  Rationale: Libraries must not own a global subscriber — only binaries (`os_cli`, `os_gui`) initialize one. This is a hard `tracing` contract.
+- Decision: Frontend errors route through `log_frontend` IPC only for warnings and errors.  
+  Rationale: Routine React renders and hover events belong in browser DevTools, not the system log.
+
+### Phase 50: UI Utilities & UX Hardening
 **Description**
 Enhance the user experience with native integration for file management and quick identifier access.
 
@@ -841,13 +942,15 @@ Enhance the user experience with native integration for file management and quic
 - [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
 - [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
 - [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
+- [ ] **Entity list spacing**: Make the list items more compact, since now items are too high an contain empty space.
+- [ ] **Right side bar selector order**: Place the Properties, Entities and relationships and Preview before any other panel.
 
 **Checks**
 - [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
 - [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 
-### Phase 49: Semantic Metadata Enforcement
+### Phase 45: Semantic Metadata Enforcement
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 

@@ -7,15 +7,13 @@ pub enum EntityKind {
     Physical,
     Digital,
     Abstract,
-    Agent,
-    Blob,
-    Temporal,
+    Persona,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub id: String,
-    pub kind: EntityKind,
+    pub category: EntityKind,
     pub label: String,
     #[serde(default = "default_lang_canonical")]
     pub lang_canonical: String,
@@ -132,7 +130,7 @@ pub struct EdgeRecord {
 pub struct EntitySnapshot {
     pub id: String,
     pub entity_id: String,
-    pub kind: EntityKind,
+    pub category: EntityKind,
     pub label: String,
     pub metadata: HashMap<String, serde_json::Value>,
     pub deleted_at: Option<String>,

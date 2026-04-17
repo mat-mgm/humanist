@@ -499,7 +499,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   // ── Write actions ────────────────────────────────────────────────────────
 
   createEntity: async (kind, label) => {
-    const id = await invoke<string>('create_entity', { kind, label });
+    const id = await invoke<string>('create_entity', { category: kind, label });
     await get().fetchEntities();
     return id;
   },

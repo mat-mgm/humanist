@@ -26,7 +26,7 @@ const EntityRow = memo(function EntityRow({
       className={isSelected ? 'row-selected' : isContext ? 'row-context' : ''}
     >
       <td title={entity.id}>{displayLabel}</td>
-      <td><span className={`kind-badge kind-${entity.kind}`}>{entity.kind}</span></td>
+      <td><span className={`kind-badge kind-${entity.category}`}>{entity.category}</span></td>
       <td>{isSelected ? '◉' : isContext ? '◎' : ''}</td>
     </tr>
   );

@@ -99,7 +99,7 @@ const SelectionPanel = memo(function SelectionPanel() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
         {selectedEntities.map(e => (
           <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <span className={`kind-badge kind-${e.kind}`}>{e.kind}</span>
+            <span className={`kind-badge kind-${e.category}`}>{e.category}</span>
             <span style={{ color: 'var(--text-primary)', flex: 1 }}>{e.label}</span>
           </div>
         ))}
@@ -110,7 +110,7 @@ const SelectionPanel = memo(function SelectionPanel() {
         <SearchableDropdown
           value={tagInput} onChange={setTagInput}
           onSelect={(opt) => { setTagInput(''); tagEntities(selectedIds, opt.label); }}
-          options={entities.filter((e: any) => e.kind === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
+          options={entities.filter((e: any) => e.category === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
           placeholder="Tag name…" style={{ flex: 1 }}
         />
         <button onClick={handleBulkTag}
@@ -373,7 +373,7 @@ const SingleInspector = memo(function SingleInspector() {
     <div className="properties-view" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <span className={`kind-badge kind-${selected.kind}`}>{selected.kind}</span>
+        <span className={`kind-badge kind-${selected.category}`}>{selected.category}</span>
         <span style={{ fontWeight: 700, fontSize: 14, flex: 1, color: 'var(--text-primary)', wordBreak: 'break-all' }}>{selectedDisplayLabel}</span>
         {!confirmDelete ? (
           <button onClick={() => setConfirmDelete(true)}
@@ -411,7 +411,7 @@ const SingleInspector = memo(function SingleInspector() {
             try { await tagEntity(selected.id, opt.label); }
             catch (e: any) { setTagError(String(e)); }
           }}
-          options={entities.filter((e: any) => e.kind === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
+          options={entities.filter((e: any) => e.category === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
           placeholder="Add tag…" style={{ flex: 1 }}
         />
         <button onClick={addTag}
@@ -692,7 +692,7 @@ const SingleInspector = memo(function SingleInspector() {
                   onMouseLeave={e => (e.currentTarget.style.background = snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent')}>
                   <span style={{ color: 'var(--text-hint)', fontFamily: 'monospace', flexShrink: 0 }}>{new Date(snap.changed_at).toLocaleString()}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{snap.label}</span>
-                  <span className={`kind-badge kind-${snap.kind}`}>{snap.kind}</span>
+                  <span className={`kind-badge kind-${snap.category}`}>{snap.category}</span>
                 </div>
               ))
             }
@@ -703,7 +703,7 @@ const SingleInspector = memo(function SingleInspector() {
                   <button onClick={clearSnapshot} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 12, padding: 0 }}>✕</button>
                 </div>
                 <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Label: </span><span style={{ color: 'var(--text-primary)' }}>{snapshot.label}</span></div>
-                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Kind: </span><span className={`kind-badge kind-${snapshot.kind}`}>{snapshot.kind}</span></div>
+                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Category: </span><span className={`kind-badge kind-${snapshot.category}`}>{snapshot.category}</span></div>
                 <div style={{ fontSize: 11 }}>
                   <span style={{ color: 'var(--text-hint)' }}>Recorded: </span>
                   <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{new Date(snapshot.changed_at).toLocaleString()}</span>

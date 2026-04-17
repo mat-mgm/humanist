@@ -32,7 +32,7 @@ impl SurrealDbAdapter {
 
         let schema_ql = r#"
             DEFINE TABLE entity SCHEMAFULL;
-            DEFINE FIELD kind ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
+            DEFINE FIELD category ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'persona'];
             DEFINE FIELD label ON entity TYPE string;
             DEFINE FIELD IF NOT EXISTS lang_canonical ON entity TYPE string DEFAULT 'en';
             DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;

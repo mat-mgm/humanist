@@ -8,12 +8,10 @@ const KIND_COLORS: Record<string, string> = {
   physical: '#6de096',
   digital:  '#7eb0ff',
   abstract: '#f5d060',
-  agent:    '#d680ff',
-  blob:     '#ff9f43',
-  temporal: '#ff7eb3',
+  persona:  '#d680ff',
 };
 
-const ENTITY_KINDS = ['physical', 'digital', 'abstract', 'agent', 'blob', 'temporal'];
+const ENTITY_KINDS = ['physical', 'digital', 'abstract', 'persona'];
 
 export const GraphSidePanel = memo(function GraphSidePanel() {
   const entities        = useOsStore(s => s.entities);
@@ -55,8 +53,8 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
     if (/^select\s/i.test(q)) return [];
     return allEntities.filter((e: any) => {
       if (q.length === 0) return true;
-      if (ENTITY_KINDS.includes(q)) return e.kind === q;
-      if ((e.kind as string).startsWith(q)) return true;
+      if (ENTITY_KINDS.includes(q)) return e.category === q;
+      if ((e.category as string).startsWith(q)) return true;
       const label = resolvedLabel(e, allLabelTraits, activeLocale).toLowerCase();
       if (label.includes(q)) return true;
       return allLabelTraits.some((t: any) => t.owner === e.id && t.text.toLowerCase().includes(q));
@@ -66,7 +64,7 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
   // Derived counts for badges
   const filteredNodes = useMemo(() => {
     if (filterKinds.length === 0) return entities;
-    return entities.filter((e: any) => filterKinds.includes(e.kind));
+    return entities.filter((e: any) => filterKinds.includes(e.category));
   }, [entities, filterKinds]);
 
   const filteredEdges = useMemo(() => {
@@ -174,7 +172,7 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
                     onMouseEnter={el => (el.currentTarget.style.background = 'var(--bg-primary)')}
                     onMouseLeave={el => (el.currentTarget.style.background = 'transparent')}
                   >
-                    <span style={{ color: KIND_COLORS[e.kind] ?? 'var(--text-hint)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>{e.kind}</span>
+                    <span style={{ color: KIND_COLORS[e.category] ?? 'var(--text-hint)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>{e.category}</span>
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
                     {matchingTrait && matchingTrait.lang !== activeLocale && (
                       <span style={{ fontSize: 9, color: 'var(--text-hint)' }}>{matchingTrait.lang}</span>

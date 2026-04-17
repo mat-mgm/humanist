@@ -31,7 +31,7 @@ mod tests {
 
         let entity = Entity {
             id: id_str.clone(),
-            kind: EntityKind::Physical,
+            category: EntityKind::Physical,
             label: "Test Entity".to_string(),
             lang_canonical: "en".to_string(),
             metadata: HashMap::new(),

@@ -78,7 +78,7 @@ enum DbSub {
 #[derive(Subcommand)]
 enum EntitySub {
     /// Create a new generic entity
-    Add { kind: String, label: String },
+    Add { category: String, label: String },
     /// Remove an entity
     Rm { term: String },
     /// List all active entities
@@ -203,7 +203,7 @@ async fn handle_blob(
 
             let entity = Entity {
                 id: id.clone(),
-                kind: EntityKind::Blob,
+                category: EntityKind::Digital,
                 label: label.clone(),
                 lang_canonical: "en".to_string(),
                 metadata: HashMap::new(),
@@ -227,7 +227,7 @@ async fn handle_blob(
             let blob_traits = db.get_blob_traits().await?;
             for e in entities
                 .iter()
-                .filter(|e| matches!(e.kind, core_engine::models::EntityKind::Blob))
+                .filter(|e| blob_traits.iter().any(|b| b.owner == e.id))
             {
                 let blob_trait = blob_traits.iter().find(|b| b.owner == e.id);
                 let path = match blob_trait {
@@ -341,16 +341,15 @@ async fn handle_entity(
     sub: EntitySub,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match sub {
-        EntitySub::Add { kind, label } => {
-            let kind_enum = match kind.to_lowercase().as_str() {
+        EntitySub::Add { category, label } => {
+            let category_enum = match category.to_lowercase().as_str() {
                 "physical" => EntityKind::Physical,
                 "digital" => EntityKind::Digital,
                 "abstract" => EntityKind::Abstract,
-                "agent" => EntityKind::Agent,
-                "temporal" => EntityKind::Temporal,
+                "persona" => EntityKind::Persona,
                 _ => {
                     return Err(
-                        "Invalid kind. Use physical, digital, abstract, agent, or temporal.".into(),
+                        "Invalid category. Use physical, digital, abstract, or persona.".into(),
                     )
                 }
             };
@@ -358,7 +357,7 @@ async fn handle_entity(
             let id = format!("entity:{}", ulid);
             let entity = Entity {
                 id: id.clone(),
-                kind: kind_enum,
+                category: category_enum,
                 label: label.clone(),
                 lang_canonical: "en".to_string(),
                 metadata: HashMap::new(),
@@ -367,7 +366,7 @@ async fn handle_entity(
             db.save_entity(entity).await?;
             bus.on_event("entity.created".to_string(), 1, ulid.clone())
                 .await;
-            println!("✅ Created {} entity: {} ({})", kind, label, id);
+            println!("✅ Created {} entity: {} ({})", category, label, id);
         }
         EntitySub::Rm { term } => {
             let id = if term.starts_with("entity:") {
@@ -389,7 +388,7 @@ async fn handle_entity(
                     .resolve_display_label(&e.id, &lang)
                     .await
                     .unwrap_or_else(|_| e.label.clone());
-                println!("- {:?} | {} ({})", e.kind, display, e.id);
+                println!("- {:?} | {} ({})", e.category, display, e.id);
             }
         }
         EntitySub::Search { term } => {
@@ -456,7 +455,7 @@ async fn handle_entity(
                     let id = format!("entity:{}", ulid);
                     let mut entity = Entity {
                         id: id.clone(),
-                        kind: EntityKind::Abstract,
+                        category: EntityKind::Abstract,
                         label: tag.clone(),
                         lang_canonical: "en".to_string(),
                         metadata: HashMap::new(),

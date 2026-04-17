@@ -24,7 +24,7 @@ const EntityRow = memo(function EntityRow({ entity, isSelected, isContext, onSel
       className={isSelected ? 'row-selected' : isContext ? 'row-context' : ''}
     >
       <td title={entity.id}>{entity.label}</td>
-      <td><span className={`kind-badge kind-${entity.kind}`}>{entity.kind}</span></td>
+      <td><span className={`kind-badge kind-${entity.category}`}>{entity.category}</span></td>
       <td>{isSelected ? '◉' : isContext ? '◎' : ''}</td>
       <td style={{ position: 'relative' }}>
         {menu && (

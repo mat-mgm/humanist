@@ -132,7 +132,7 @@ export const RelateDialog = memo(function RelateDialog({ sourceEntityId, sourceL
                   onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
                   onMouseLeave={ev => (ev.currentTarget.style.background = '')}
                 >
-                  <span className={`kind-badge kind-${e.kind}`}>{e.kind}</span>
+                  <span className={`kind-badge kind-${e.category}`}>{e.category}</span>
                   {e.label}
                 </div>
               ))}

@@ -72,9 +72,7 @@ export const CreateEntityDialog = memo(function CreateEntityDialog({ onClose }: 
             <option value="physical">Physical</option>
             <option value="digital">Digital</option>
             <option value="abstract">Abstract</option>
-            <option value="agent">Agent</option>
-            <option value="blob">Blob</option>
-            <option value="temporal">Temporal</option>
+            <option value="persona">Persona</option>
           </select>
         </label>
 

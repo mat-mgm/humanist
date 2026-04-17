@@ -61,7 +61,7 @@ async fn ingest_entity(
 
     let entity = Entity {
         id: id.clone(),
-        kind: EntityKind::Blob,
+        category: EntityKind::Digital,
         label: label.clone(),
         lang_canonical: "en".to_string(),
         metadata: HashMap::new(),
@@ -224,7 +224,7 @@ async fn get_entity_neighborhood(
         .map(|e| {
             serde_json::json!({
                 "id": e.id,
-                "kind": e.kind,
+                "category": e.category,
                 "label": e.label,
                 "lang_canonical": e.lang_canonical,
                 "metadata": e.metadata,
@@ -265,7 +265,7 @@ async fn search_entities(
         .map(|e| {
             serde_json::json!({
                 "id": e.id,
-                "kind": e.kind,
+                "category": e.category,
                 "label": e.label,
                 "lang_canonical": e.lang_canonical,
                 "metadata": e.metadata,
@@ -352,25 +352,23 @@ fn exit_app(app: AppHandle) {
 
 #[tauri::command]
 async fn create_entity(
-    kind: String,
+    category: String,
     label: String,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
-    let kind_enum = match kind.as_str() {
+    let category_enum = match category.as_str() {
         "physical" => EntityKind::Physical,
         "digital" => EntityKind::Digital,
         "abstract" => EntityKind::Abstract,
-        "agent" => EntityKind::Agent,
-        "blob" => EntityKind::Blob,
-        "temporal" => EntityKind::Temporal,
-        _ => return Err(format!("Unknown entity kind: {}", kind)),
+        "persona" => EntityKind::Persona,
+        _ => return Err(format!("Unknown entity category: {}", category)),
     };
     let ulid = Ulid::new().to_string();
     let id = format!("entity:{}", ulid);
     let entity = Entity {
         id: id.clone(),
-        kind: kind_enum,
+        category: category_enum,
         label: label.clone(),
         lang_canonical: "en".to_string(),
         metadata: HashMap::new(),
@@ -445,7 +443,7 @@ async fn tag_entity(
             meta.insert("is_tag".to_string(), serde_json::Value::Bool(true));
             let tag_entity = Entity {
                 id: id.clone(),
-                kind: EntityKind::Abstract,
+                category: EntityKind::Abstract,
                 label: tag_label.clone(),
                 lang_canonical: "en".to_string(),
                 metadata: meta,
