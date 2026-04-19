@@ -12,6 +12,12 @@ use ulid::Ulid;
 #[command(name = "spatial-os")]
 #[command(about = "Spatial-Analytical Knowledge OS — CLI Interface")]
 struct Cli {
+    /// Enable debug-level log output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+    /// Suppress all output below ERROR level
+    #[arg(short, long, global = true)]
+    quiet: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -126,6 +132,15 @@ enum PrologSub {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    let log_level = if cli.verbose {
+        tracing::Level::DEBUG
+    } else if cli.quiet {
+        tracing::Level::ERROR
+    } else {
+        tracing::Level::INFO
+    };
+    core_engine::logging::init(core_engine::logging::LogConfig { level: log_level, log_dir: None });
 
     // Initialize core_engine subsystems
     let db = SurrealDbAdapter::new().await?;

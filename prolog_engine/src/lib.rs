@@ -10,6 +10,7 @@ pub struct ScryerMachine {
 impl ScryerMachine {
     pub fn new() -> Self {
         let machine = Machine::new_lib();
+        tracing::info!("prolog engine ready");
         Self {
             machine: Arc::new(Mutex::new(machine)),
         }

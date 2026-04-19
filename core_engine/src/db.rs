@@ -94,6 +94,7 @@ impl SurrealDbAdapter {
 
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
 
+        tracing::info!("db connected");
         Ok(Self { db: Arc::new(db) })
     }
 }

@@ -116,16 +116,7 @@ async fn get_blob_traits(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<core_engine::models::BlobTrait>, String> {
     let st = state.lock().await;
-    let result = st.db.get_blob_traits().await;
-    if let Ok(ref traits) = result {
-        eprintln!("[DEBUG] get_blob_traits returned {} records", traits.len());
-        for t in traits {
-            eprintln!("  blob id={} owner={} mime={}", t.id, t.owner, t.mime);
-        }
-    } else {
-        eprintln!("[DEBUG] get_blob_traits error: {:?}", result);
-    }
-    result
+    st.db.get_blob_traits().await
 }
 
 #[tauri::command]
@@ -727,10 +718,6 @@ async fn edit_entity_in_terminal(
                     };
 
                 if let Ok(updated) = result {
-                    println!(
-                        "[TERM_EDIT] Syncing back {} (format: {})",
-                        entity_id_c, format_c
-                    );
                     let state = app_c.state::<Mutex<AppState>>();
                     let st = state.lock().await;
 
@@ -740,9 +727,9 @@ async fn edit_entity_in_terminal(
 
                     // Update database (UPSERT)
                     match st.db.save_entity(entity_to_save).await {
-                        Ok(_) => println!("[TERM_EDIT] Successfully saved entity {}", entity_id_c),
+                        Ok(_) => {}
                         Err(e) => {
-                            eprintln!("[TERM_EDIT] Failed to save entity: {}", e);
+                            tracing::error!(error = %e, "term-edit: db save failed");
                             let _ = app_c.emit("term-edit-error", format!("DB save failed: {}", e));
                         }
                     }
@@ -779,19 +766,12 @@ async fn edit_entity_in_terminal(
                         }),
                     );
                 } else if let Err(e) = result {
-                    eprintln!(
-                        "[TERM_EDIT] Failed to parse {} editor content: {}",
-                        format_c, e
-                    );
+                    tracing::error!(format = %format_c, error = %e, "term-edit: parse failed");
                     let _ = app_c.emit("term-edit-error", format!("Parse failed: {}", e));
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "[TERM_EDIT] Failed to read temp file {}: {}",
-                    temp_path.display(),
-                    e
-                );
+                tracing::error!(error = %e, "term-edit: read temp file failed");
                 let _ = app_c.emit("term-edit-error", format!("Read failed: {}", e));
             }
         }
@@ -944,8 +924,16 @@ async fn get_trait_history(
 }
 
 #[tauri::command]
+async fn log_frontend(level: String, message: String) {
+    match level.as_str() {
+        "error" => tracing::error!(source = "frontend", "{}", message),
+        "warn" => tracing::warn!(source = "frontend", "{}", message),
+        _ => {}
+    }
+}
+
+#[tauri::command]
 async fn open_external_path(path: String) -> Result<(), String> {
-    println!("[OPENER] Attempting to open: {}", path);
     opener::open(&path).map_err(|e: opener::OpenError| e.to_string())
 }
 
@@ -957,6 +945,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let log_dir = core_engine::db::store_path().join("logs");
+            core_engine::logging::init(core_engine::logging::LogConfig {
+                level: tracing::Level::INFO,
+                log_dir: Some(log_dir),
+            });
+
             let app_handle = app.handle().clone();
 
             // Everything that calls tokio::spawn (GC, bus listener) must run inside a
@@ -1015,7 +1009,7 @@ pub fn run() {
                             )
                             .await
                         {
-                            eprintln!("Failed to load facts into Prolog Engine: {}", e);
+                            tracing::error!(error = %e, "prolog: fact load failed");
                         }
 
                         let sync_task = prolog_engine::synchronizer::StateSynchronizerTask::new(
@@ -1052,11 +1046,13 @@ pub fn run() {
             // Tell the frontend the backend is fully ready.  The webview may have
             // already mounted and tried to invoke commands while block_on was running;
             // this event lets it know it is now safe to call anything.
+            tracing::info!("backend ready");
             let _ = app.handle().emit("backend-ready", ());
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            log_frontend,
             open_external_path,
             ingest_entity,
             list_entities,

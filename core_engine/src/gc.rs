@@ -17,6 +17,8 @@ pub fn start_garbage_collection<B: BlobStorageProvider + Send + Sync + 'static>(
                 SELECT id FROM entity WHERE deleted_at != NONE AND deleted_at < time::now() - 1d;
             "#;
 
+            let mut blobs_removed: usize = 0;
+
             if let Ok(mut response) = db.db.query(select_query).await {
                 if let Ok(records) = response.take::<Vec<serde_json::Value>>(0) {
                     let expired_owners: HashSet<String> = records
@@ -43,7 +45,9 @@ pub fn start_garbage_collection<B: BlobStorageProvider + Send + Sync + 'static>(
                             let id_str = id_val.to_string();
                             for b in blob_traits.iter().filter(|b| b.owner == id_str) {
                                 if !referenced_storage.contains_key(&b.storage_id) {
-                                    let _ = blob.delete(&b.storage_id).await;
+                                    if blob.delete(&b.storage_id).await.is_ok() {
+                                        blobs_removed += 1;
+                                    }
                                 }
                                 let _ = db.db.query(format!("DELETE {};", b.id)).await;
                             }
@@ -58,8 +62,10 @@ pub fn start_garbage_collection<B: BlobStorageProvider + Send + Sync + 'static>(
             "#;
 
             if let Err(e) = db.db.query(sweep_query).await {
-                eprintln!("GC Error sweeping DB: {}", e);
+                tracing::error!(error = %e, "gc sweep db error");
             }
+
+            tracing::info!(blobs_removed, "gc sweep");
         }
     });
 }

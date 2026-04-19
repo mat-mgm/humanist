@@ -23,6 +23,7 @@ pub struct EventBus {
 impl EventBus {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(100);
+        tracing::info!("event bus ready");
         Self { sender }
     }
 

@@ -215,10 +215,7 @@ impl LocalBlobAdapter {
     pub fn new(base_dir: PathBuf) -> Self {
         if !base_dir.exists() {
             fs::create_dir_all(&base_dir).unwrap_or_else(|_| {
-                eprintln!(
-                    "Failed to create local blob storage directory: {:?}",
-                    base_dir
-                )
+                tracing::error!(path = ?base_dir, "failed to create blob storage directory");
             });
         }
         Self { base_dir }
@@ -269,6 +266,7 @@ impl LocalBlobAdapter {
         if !dest.exists() {
             fs::write(&dest, &content).map_err(|e| e.to_string())?;
         }
+        tracing::info!(hash = %hash, bytes = content.len(), "blob stored");
         Ok(StoredBlob {
             storage_id,
             hash,

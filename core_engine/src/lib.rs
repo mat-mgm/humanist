@@ -3,6 +3,7 @@ pub mod bus;
 pub mod db;
 pub mod formats;
 pub mod gc;
+pub mod logging;
 pub mod models;
 pub mod ports;
 

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
+import { logFrontend } from './lib/log';
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -249,7 +250,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const records = await invoke<Entity[]>('list_entities');
       set({ entities: records, isLoading: false });
     } catch (e) {
-      console.error('fetchEntities error:', e);
+      logFrontend('error', 'fetchEntities error: ' + String(e));
       set({ isLoading: false });
     }
   },
@@ -259,7 +260,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const traits = await invoke<SpatialTrait[]>('get_spatial_traits');
       set({ spatialTraits: traits });
     } catch (e) {
-      console.error('fetchSpatialTraits error:', e);
+      logFrontend('error', 'fetchSpatialTraits error: ' + String(e));
     }
   },
 
@@ -276,7 +277,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       }));
       set({ blobTraits: traitsWithUrls });
     } catch (e) {
-      console.error('fetchBlobTraits error:', e);
+      logFrontend('error', 'fetchBlobTraits error: ' + String(e));
     }
   },
 
@@ -285,7 +286,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const traits = await invoke<TemporalTrait[]>('get_temporal_traits');
       set({ temporalTraits: traits });
     } catch (e) {
-      console.error('fetchTemporalTraits error:', e);
+      logFrontend('error', 'fetchTemporalTraits error: ' + String(e));
     }
   },
 
@@ -302,7 +303,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       });
       await get().fetchTemporalTraits();
     } catch (e) {
-      console.error('saveTemporalTrait error:', e);
+      logFrontend('error', 'saveTemporalTrait error: ' + String(e));
       throw e;
     }
   },
@@ -320,7 +321,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       });
       await get().fetchSpatialTraits();
     } catch (e) {
-      console.error('saveSpatialTrait error:', e);
+      logFrontend('error', 'saveSpatialTrait error: ' + String(e));
       throw e;
     }
   },
@@ -330,7 +331,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const edges = await invoke<GraphEdge[]>('get_edges');
       set({ edges });
     } catch (e) {
-      console.error('fetchEdges error:', e);
+      logFrontend('error', 'fetchEdges error: ' + String(e));
     }
   },
 
@@ -374,7 +375,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const related = await invoke<Entity[]>('query_context', { contextId });
       set({ contextEntities: related });
     } catch (e) {
-      console.error('queryContext error:', e);
+      logFrontend('error', 'queryContext error: ' + String(e));
     }
   },
 
@@ -401,7 +402,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         };
       });
     } catch (e) {
-      console.error('expandContext error:', e);
+      logFrontend('error', 'expandContext error: ' + String(e));
     }
   },
 
@@ -418,7 +419,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         if (attempt < 34) await new Promise(r => setTimeout(r, 300));
       }
     }
-    console.error('fetchAllEntities: backend did not become ready within timeout');
+    logFrontend('error', 'fetchAllEntities: backend did not become ready within timeout');
   },
 
   loadExactIds: async (ids: string[]) => {
@@ -431,7 +432,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const idSet = new Set(ids);
       fetchedEntities = all.filter(e => idSet.has(e.id));
     } catch (e) {
-      console.error('loadExactIds list_entities error:', e);
+      logFrontend('error', 'loadExactIds list_entities error: ' + String(e));
     }
     // Fetch only the edges that connect entities within the result set.
     let crossEdges: GraphEdge[] = [];
@@ -468,7 +469,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       ]);
       set({ entities, edges, isLoading: false });
     } catch (e: any) {
-      console.error('loadFullGraph failed:', e);
+      logFrontend('error', 'loadFullGraph failed: ' + String(e));
       set({ isLoading: false });
     }
   },
@@ -482,7 +483,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         lang: lang ?? null,
       });
     } catch (e) {
-      console.error('searchEntities error:', e);
+      logFrontend('error', 'searchEntities error: ' + String(e));
       return [];
     }
   },
@@ -492,7 +493,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const edges = await invoke<GraphEdge[]>('get_entity_edges', { entityId });
       set({ selectedEntityEdges: edges });
     } catch (e) {
-      console.error('fetchEntityEdges error:', e);
+      logFrontend('error', 'fetchEntityEdges error: ' + String(e));
     }
   },
 
@@ -614,7 +615,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const traits = await invoke<LabelTrait[]>('get_all_label_traits');
       set({ allLabelTraits: traits });
     } catch (e) {
-      console.error('fetchAllLabelTraits error:', e);
+      logFrontend('error', 'fetchAllLabelTraits error: ' + String(e));
     }
   },
 
@@ -623,7 +624,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const traits = await invoke<LabelTrait[]>('get_label_traits', { entityId });
       set({ labelTraits: traits });
     } catch (e) {
-      console.error('fetchLabelTraits error:', e);
+      logFrontend('error', 'fetchLabelTraits error: ' + String(e));
       set({ labelTraits: [] });
     }
   },
@@ -653,7 +654,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const types = await invoke<RelationshipType[]>('list_relationship_types');
       set({ relationshipTypes: types });
     } catch (e) {
-      console.error('fetchRelationshipTypes error:', e);
+      logFrontend('error', 'fetchRelationshipTypes error: ' + String(e));
     }
   },
 
@@ -677,7 +678,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
     try {
       return await invoke<SpatialTrait | null>('get_effective_spatial_trait', { entityId });
     } catch (e) {
-      console.error('getEffectiveSpatialTrait error:', e);
+      logFrontend('error', 'getEffectiveSpatialTrait error: ' + String(e));
       return null;
     }
   },
@@ -689,7 +690,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const snaps = await invoke<EntitySnapshot[]>('get_entity_history', { entityId });
       set({ entityHistory: snaps });
     } catch (e) {
-      console.error('fetchEntityHistory error:', e);
+      logFrontend('error', 'fetchEntityHistory error: ' + String(e));
       set({ entityHistory: [] });
     }
   },
@@ -699,7 +700,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       const snaps = await invoke<TraitSnapshot[]>('get_trait_history', { entityId });
       set({ traitHistory: snaps });
     } catch (e) {
-      console.error('fetchTraitHistory error:', e);
+      logFrontend('error', 'fetchTraitHistory error: ' + String(e));
       set({ traitHistory: [] });
     }
   },
@@ -708,7 +709,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
     try {
       return await invoke<EntitySnapshot | null>('get_entity_as_of', { entityId, timestamp });
     } catch (e) {
-      console.error('getEntityAsOf error:', e);
+      logFrontend('error', 'getEntityAsOf error: ' + String(e));
       return null;
     }
   },

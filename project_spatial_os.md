@@ -877,52 +877,52 @@ per key operation (blob store, GC, DB connect). Nothing fires inside loops or on
 **Tasks**
 
 *Dependencies*
-- [ ] Add `tracing`, `tracing-subscriber` (features: `env-filter`, `fmt`, `json`) to `core_engine/Cargo.toml`.
-- [ ] Add `tracing-appender` to `core_engine/Cargo.toml` for rolling file output.
-- [ ] Add `tracing` (facade only, no subscriber) to `prolog_engine/Cargo.toml` and `os_cli/Cargo.toml`.
+- [✓] Add `tracing`, `tracing-subscriber` (features: `env-filter`, `fmt`, `json`) to `core_engine/Cargo.toml`.
+- [✓] Add `tracing-appender` to `core_engine/Cargo.toml` for rolling file output.
+- [✓] Add `tracing` (facade only, no subscriber) to `prolog_engine/Cargo.toml` and `os_cli/Cargo.toml`.
 
 *Core Initializer*
-- [ ] Define `LogConfig { level: LevelFilter, log_dir: Option<PathBuf> }` in `core_engine/src/logging.rs`.
-- [ ] Implement `logging::init(config: LogConfig)` — sets up a `tracing-subscriber` registry with:
+- [✓] Define `LogConfig { level: LevelFilter, log_dir: Option<PathBuf> }` in `core_engine/src/logging.rs`.
+- [✓] Implement `logging::init(config: LogConfig)` — sets up a `tracing-subscriber` registry with:
   - Fmt layer (stdout, ANSI color, compact format).
   - Optional daily-rolling JSON-lines file layer via `tracing-appender` (keep last 7 files).
   - `EnvFilter` seeded from `RUST_LOG`, falling back to `config.level`.
-- [ ] Store the `tracing-appender` non-blocking guard in a `static` or return it from `init` so it is held for the process lifetime (dropping it silently stops file writes).
-- [ ] Call `logging::init` exactly once: from `os_cli::main` and from the Tauri `setup` hook in `os_gui/src-tauri/src/lib.rs`. Libraries (`core_engine`, `prolog_engine`) must not initialize a subscriber.
+- [✓] Store the `tracing-appender` non-blocking guard in a `static` or return it from `init` so it is held for the process lifetime (dropping it silently stops file writes).
+- [✓] Call `logging::init` exactly once: from `os_cli::main` and from the Tauri `setup` hook in `os_gui/src-tauri/src/lib.rs`. Libraries (`core_engine`, `prolog_engine`) must not initialize a subscriber.
 
 *CLI Verbosity*
-- [ ] Add `-v / --verbose` flag (maps to `DEBUG`) and `-q / --quiet` flag (maps to `ERROR`) to the top-level `os_cli` `Cli` struct in `main.rs`.
-- [ ] Pass resolved level through `LogConfig` into `logging::init`.
+- [✓] Add `-v / --verbose` flag (maps to `DEBUG`) and `-q / --quiet` flag (maps to `ERROR`) to the top-level `os_cli` `Cli` struct in `main.rs`.
+- [✓] Pass resolved level through `LogConfig` into `logging::init`.
 
 *Instrumentation — `core_engine`*
-- [ ] Emit `tracing::info!("db connected")` once after SurrealDB initializes in `db.rs`.
-- [ ] Emit `tracing::info!("event bus ready")` once when the `EventBus` starts.
-- [ ] Emit `tracing::info!(blobs_removed = N, "gc sweep")` at the end of each GC pass.
-- [ ] Emit `tracing::info!(hash = %hash, bytes = size, "blob stored")` in the CAS write path.
-- [ ] Replace any remaining `eprintln!` / `println!` debug calls with `tracing::error!` or delete them.
+- [✓] Emit `tracing::info!("db connected")` once after SurrealDB initializes in `db.rs`.
+- [✓] Emit `tracing::info!("event bus ready")` once when the `EventBus` starts.
+- [✓] Emit `tracing::info!(blobs_removed = N, "gc sweep")` at the end of each GC pass.
+- [✓] Emit `tracing::info!(hash = %hash, bytes = size, "blob stored")` in the CAS write path.
+- [✓] Replace any remaining `eprintln!` / `println!` debug calls with `tracing::error!` or delete them.
 
 *Instrumentation — `prolog_engine`*
-- [ ] Emit `tracing::info!("prolog engine ready")` once after `ScryerMachine` initializes.
-- [ ] Emit `tracing::warn!` on query failures (not on every query entry).
+- [✓] Emit `tracing::info!("prolog engine ready")` once after `ScryerMachine` initializes.
+- [✓] Emit `tracing::warn!` on query failures (not on every query entry).
 
 *Instrumentation — `os_gui` Tauri backend*
-- [ ] Emit `tracing::info!("backend ready")` once in the Tauri `setup` hook.
-- [ ] Emit `tracing::error!` in command handlers only on unrecoverable failures — not on every call.
-- [ ] Add a `log_frontend` Tauri IPC command: `log_frontend(level: String, message: String)` that emits a `tracing` event tagged with `source = "frontend"`.
+- [✓] Emit `tracing::info!("backend ready")` once in the Tauri `setup` hook.
+- [✓] Emit `tracing::error!` in command handlers only on unrecoverable failures — not on every call.
+- [✓] Add a `log_frontend` Tauri IPC command: `log_frontend(level: String, message: String)` that emits a `tracing` event tagged with `source = "frontend"`.
 
 *Frontend — TypeScript*
-- [ ] Add `logFrontend(level: 'warn' | 'error', message: string)` helper in `src/lib/log.ts` calling `invoke('log_frontend', { level, message })`.
-- [ ] Replace `console.error` calls in IPC error paths (store actions) with `logFrontend('error', ...)`.
+- [✓] Add `logFrontend(level: 'warn' | 'error', message: string)` helper in `src/lib/log.ts` calling `invoke('log_frontend', { level, message })`.
+- [✓] Replace `console.error` calls in IPC error paths (store actions) with `logFrontend('error', ...)`.
 
 **Checks**
-- [ ] Booting the app and running a full session (create entity, ingest file, run Prolog query) produces fewer than 15 `INFO` lines — each names the component and confirms a boundary was crossed.
-- [ ] No log line appears inside a loop or on every IPC call under normal operation.
-- [ ] Running `RUST_LOG=debug cargo run -p os_cli -- entity ls` emits structured debug output for DB calls.
-- [ ] Running `cargo run -p os_cli -- -q entity ls` suppresses everything below `ERROR`.
-- [ ] A JSON log file exists under the platform app-log directory after any GUI session.
-- [ ] `grep -rn 'eprintln!\|println!' core_engine/src prolog_engine/src` returns zero matches (excluding `#[cfg(test)]` blocks).
-- [ ] `cargo check --workspace` passes with zero warnings.
-- [ ] `npm run build` passes with zero TypeScript errors.
+- [✓] Booting the app and running a full session (create entity, ingest file, run Prolog query) produces fewer than 15 `INFO` lines — each names the component and confirms a boundary was crossed.
+- [✓] No log line appears inside a loop or on every IPC call under normal operation.
+- [✓] Running `RUST_LOG=debug cargo run -p os_cli -- entity ls` emits structured debug output for DB calls.
+- [✓] Running `cargo run -p os_cli -- -q entity ls` suppresses everything below `ERROR`.
+- [✓] A JSON log file exists under the platform app-log directory after any GUI session.
+- [✓] `grep -rn 'eprintln!\|println!' core_engine/src prolog_engine/src` returns zero matches (excluding `#[cfg(test)]` blocks).
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `npm run build` passes with zero TypeScript errors.
 
 **Design decisions**
 - Decision: Log at system boundaries only (init, connect, sweep, ingest) — not per-operation.  
