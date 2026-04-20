@@ -1119,6 +1119,15 @@ body,
   color: var(--accent);
 }
 
+.spin {
+  animation: app-spin 1s linear infinite;
+}
+
+@keyframes app-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Primary canvas */
 .primary-canvas {
   flex: 1;
@@ -1171,6 +1180,20 @@ body,
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.canvas-body > * {
+  min-height: 0;
+}
+
+.canvas-body--framed {
+  padding: 14px;
+  background: var(--bg-secondary);
+}
+
+.canvas-body--framed > * {
+  border-radius: 12px;
+  background: var(--bg-panel);
 }
 
 /* Right panel */

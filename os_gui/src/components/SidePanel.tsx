@@ -5,6 +5,7 @@ import { EntityInspectorPanel } from './EntityInspector';
 import { EntityKnowledgePanel } from './EntityKnowledgePanel';
 import { AssetPreview } from './AssetPreview';
 import { ErrorBoundary } from './ErrorBoundary';
+import { InputsSidePanel } from './InputsSidePanel';
 
 type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night'
   | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
@@ -17,6 +18,7 @@ interface SidePanelProps {
 }
 
 const PANEL_TITLES: Record<string, string> = {
+  inputs:    'Inputs',
   graph:     'Knowledge Graph',
   causal:    'Causal Panel',
   terminal:  'Terminal',
@@ -33,6 +35,7 @@ function SidePanelContent({ activity, themeSearch, onThemeChange, onThemeSearchC
   onThemeSearchChange: (s: string) => void;
 }) {
   switch (activity) {
+    case 'inputs':    return <InputsSidePanel />;
     case 'graph':     return <GraphSidePanel />;
     case 'causal':    return (
       <div style={{ padding: 12, fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.5 }}>

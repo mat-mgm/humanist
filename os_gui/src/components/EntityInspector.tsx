@@ -45,7 +45,9 @@ const TagChip = memo(function TagChip({ label, onRemove }: { label: string; onRe
 const SelectionPanel = memo(function SelectionPanel() {
   const selectedIds = useOsStore(selectSelectedIds);
   const entities    = useOsStore(selectEntities);
-  const { tagEntities, addEdgeAction, deleteEntities } = useOsStore();
+  const tagEntities = useOsStore(s => s.tagEntities);
+  const addEdgeAction = useOsStore(s => s.addEdgeAction);
+  const deleteEntities = useOsStore(s => s.deleteEntities);
 
   const [tagInput, setTagInput]       = useState('');
   const [relLabel, setRelLabel]       = useState('');
@@ -152,9 +154,19 @@ const SingleInspector = memo(function SingleInspector() {
   const allLabelTraits   = useOsStore(s => s.allLabelTraits);
   const blobTraits       = useOsStore(s => s.blobTraits);
 
-  const { updateMetadata, deleteEntity, tagEntity, untagEntity, removeEdge,
-          saveTemporalTrait, saveSpatialTrait, fetchEntityHistory, getEntityAsOf,
-          fetchLabelTraits, saveLabelTrait, deleteLabelTrait, getEffectiveSpatialTrait } = useOsStore();
+  const updateMetadata = useOsStore(s => s.updateMetadata);
+  const deleteEntity = useOsStore(s => s.deleteEntity);
+  const tagEntity = useOsStore(s => s.tagEntity);
+  const untagEntity = useOsStore(s => s.untagEntity);
+  const removeEdge = useOsStore(s => s.removeEdge);
+  const saveTemporalTrait = useOsStore(s => s.saveTemporalTrait);
+  const saveSpatialTrait = useOsStore(s => s.saveSpatialTrait);
+  const fetchEntityHistory = useOsStore(s => s.fetchEntityHistory);
+  const getEntityAsOf = useOsStore(s => s.getEntityAsOf);
+  const fetchLabelTraits = useOsStore(s => s.fetchLabelTraits);
+  const saveLabelTrait = useOsStore(s => s.saveLabelTrait);
+  const deleteLabelTrait = useOsStore(s => s.deleteLabelTrait);
+  const getEffectiveSpatialTrait = useOsStore(s => s.getEffectiveSpatialTrait);
 
   // Terminal editor state (owned here since inspector is now standalone)
   const [editFormat, setEditFormat] = useState<'yaml' | 'json' | 'markdown'>('yaml');

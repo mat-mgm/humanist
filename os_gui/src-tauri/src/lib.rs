@@ -9,7 +9,8 @@ use core_engine::{
     },
     ports::{BlobStorageProvider, GraphDatabase, StateObserver},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
+use tauri::async_runtime;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use ulid::Ulid;
@@ -25,6 +26,357 @@ pub struct AppState {
     pub blob: LocalBlobAdapter,
     pub query_tx: mpsc::Sender<(String, oneshot::Sender<Result<Vec<String>, String>>)>,
     pub pty_sessions: std::sync::Mutex<HashMap<String, PtyHost>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ImportJobProgress {
+    job_id: String,
+    stage: String,
+    message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ImportJobFinished {
+    job_id: String,
+    entity_id: Option<String>,
+    stage: String,
+    message: String,
+    error: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct StorageHealth {
+    live_entity_count: usize,
+    soft_deleted_entity_count: usize,
+    edge_count: usize,
+    blob_trait_count: usize,
+    unique_blob_count: usize,
+    referenced_blob_bytes: i64,
+    blob_store_file_count: usize,
+    blob_store_bytes: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportSourceDraft {
+    source_path: String,
+    file_name: String,
+    label: String,
+    tag_labels: Vec<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PathCompletion {
+    path: String,
+    display: String,
+    is_dir: bool,
+}
+
+fn emit_import_progress(app: &AppHandle, job_id: &str, stage: &str, message: &str) {
+    let _ = app.emit(
+        "input-job-progress",
+        ImportJobProgress {
+            job_id: job_id.to_string(),
+            stage: stage.to_string(),
+            message: message.to_string(),
+        },
+    );
+}
+
+fn emit_import_finished(
+    app: &AppHandle,
+    job_id: &str,
+    entity_id: Option<String>,
+    stage: &str,
+    message: &str,
+    error: Option<String>,
+) {
+    let _ = app.emit(
+        "input-job-finished",
+        ImportJobFinished {
+            job_id: job_id.to_string(),
+            entity_id,
+            stage: stage.to_string(),
+            message: message.to_string(),
+            error,
+        },
+    );
+}
+
+fn count_blob_store(path: &std::path::Path) -> Result<(usize, u64), String> {
+    if !path.exists() {
+        return Ok((0, 0));
+    }
+    let mut stack = vec![path.to_path_buf()];
+    let mut file_count = 0usize;
+    let mut total_bytes = 0u64;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let meta = entry.metadata().map_err(|e| e.to_string())?;
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                file_count += 1;
+                total_bytes += meta.len();
+            }
+        }
+    }
+    Ok((file_count, total_bytes))
+}
+
+async fn query_count(db: &SurrealDbAdapter, query: &str) -> Result<usize, String> {
+    let mut response = db.db.query(query).await.map_err(|e| e.to_string())?;
+    let rows: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
+    let count = rows
+        .first()
+        .and_then(|row| row.get("count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    Ok(count as usize)
+}
+
+async fn compute_storage_health(
+    db: &SurrealDbAdapter,
+    blob: &LocalBlobAdapter,
+) -> Result<StorageHealth, String> {
+    let live_entity_count =
+        query_count(db, "SELECT count() AS count FROM entity WHERE deleted_at = NONE GROUP ALL;")
+            .await?;
+    let soft_deleted_entity_count = query_count(
+        db,
+        "SELECT count() AS count FROM entity WHERE deleted_at != NONE GROUP ALL;",
+    )
+    .await?;
+    let edge_count = db.get_edges().await?.len();
+    let blob_traits = db.get_blob_traits().await?;
+    let mut unique_storage: HashMap<String, i64> = HashMap::new();
+    for trait_ in &blob_traits {
+        unique_storage
+            .entry(trait_.storage_id.clone())
+            .or_insert(trait_.size);
+    }
+    let (blob_store_file_count, blob_store_bytes) = count_blob_store(&blob.base_dir)?;
+    Ok(StorageHealth {
+        live_entity_count,
+        soft_deleted_entity_count,
+        edge_count,
+        blob_trait_count: blob_traits.len(),
+        unique_blob_count: unique_storage.len(),
+        referenced_blob_bytes: unique_storage.values().sum(),
+        blob_store_file_count,
+        blob_store_bytes,
+    })
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| path.to_string());
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    path.to_string()
+}
+
+fn resolve_user_path(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    let expanded = expand_tilde(trimmed);
+    let raw = PathBuf::from(expanded);
+    if raw.is_absolute() {
+        Ok(raw)
+    } else {
+        Ok(std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join(raw))
+    }
+}
+
+fn display_path_for_mode(original: &str, resolved: &Path) -> String {
+    let expanded = expand_tilde(original);
+    if original.starts_with('~') {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Ok(stripped) = resolved.strip_prefix(&home) {
+                let suffix = stripped.to_string_lossy();
+                return if suffix.is_empty() {
+                    "~".to_string()
+                } else {
+                    format!("~/{}", suffix)
+                };
+            }
+        }
+    }
+    if Path::new(&expanded).is_absolute() {
+        return resolved.to_string_lossy().to_string();
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => resolved
+            .strip_prefix(cwd)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| resolved.to_string_lossy().to_string()),
+        Err(_) => resolved.to_string_lossy().to_string(),
+    }
+}
+
+fn file_label_from_name(file_name: &str) -> String {
+    let dot = file_name.rfind('.');
+    match dot {
+        Some(idx) if idx > 0 => file_name[..idx].to_string(),
+        _ => file_name.to_string(),
+    }
+}
+
+fn collect_import_sources(path: &Path, tag_labels: &[String]) -> Result<Vec<ImportSourceDraft>, String> {
+    if path.is_file() {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("Invalid file name: {}", path.display()))?
+            .to_string();
+        return Ok(vec![ImportSourceDraft {
+            source_path: path.to_string_lossy().to_string(),
+            label: file_label_from_name(&file_name),
+            file_name,
+            tag_labels: tag_labels.to_vec(),
+        }]);
+    }
+    if path.is_dir() {
+        let mut root_tags = tag_labels.to_vec();
+        if let Some(dir_name) = path.file_name().and_then(|name| name.to_str()) {
+            root_tags.push(dir_name.to_string());
+        }
+        let mut entries = Vec::new();
+        let mut stack = vec![(path.to_path_buf(), root_tags)];
+        while let Some((dir, inherited_tags)) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let entry_path = entry.path();
+                let meta = entry.metadata().map_err(|e| e.to_string())?;
+                if meta.is_dir() {
+                    let mut next_tags = inherited_tags.clone();
+                    if let Some(dir_name) = entry_path.file_name().and_then(|name| name.to_str()) {
+                        next_tags.push(dir_name.to_string());
+                    }
+                    stack.push((entry_path, next_tags));
+                } else if meta.is_file() {
+                    let file_name = entry_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| format!("Invalid file name: {}", entry_path.display()))?
+                        .to_string();
+                    entries.push(ImportSourceDraft {
+                        source_path: entry_path.to_string_lossy().to_string(),
+                        label: file_label_from_name(&file_name),
+                        file_name,
+                        tag_labels: inherited_tags.clone(),
+                    });
+                }
+            }
+        }
+        entries.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+        return Ok(entries);
+    }
+    Err(format!("Path does not exist: {}", path.display()))
+}
+
+#[tauri::command]
+async fn pick_native_import_files() -> Result<Vec<String>, String> {
+    let handle = async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Select files to import")
+            .pick_files()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    });
+    handle.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn pick_native_import_directory() -> Result<Option<String>, String> {
+    let handle = async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Select directory to import")
+            .pick_folder()
+            .map(|path| path.to_string_lossy().to_string())
+    });
+    handle.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn expand_import_sources(paths: Vec<String>) -> Result<Vec<ImportSourceDraft>, String> {
+    let handle = async_runtime::spawn_blocking(move || {
+        let mut all_sources = Vec::new();
+        for raw in paths {
+            let resolved = resolve_user_path(&raw)?;
+            all_sources.extend(collect_import_sources(&resolved, &[])?);
+        }
+        Ok::<Vec<ImportSourceDraft>, String>(all_sources)
+    });
+    handle.await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn complete_input_path(prefix: String) -> Result<Vec<PathCompletion>, String> {
+    let handle = async_runtime::spawn_blocking(move || {
+        let trimmed = prefix.trim();
+        let expanded = expand_tilde(trimmed);
+        let raw = PathBuf::from(&expanded);
+        let ends_with_sep = trimmed.ends_with(std::path::MAIN_SEPARATOR) || trimmed.ends_with('/');
+        let (dir_path, needle) = if ends_with_sep {
+            (raw.clone(), String::new())
+        } else {
+            let parent = raw.parent().map(|p| p.to_path_buf()).unwrap_or_else(PathBuf::new);
+            let file_part = raw
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string();
+            (parent, file_part)
+        };
+        let base_dir = if dir_path.as_os_str().is_empty() {
+            std::env::current_dir().map_err(|e| e.to_string())?
+        } else if dir_path.is_absolute() {
+            dir_path
+        } else {
+            std::env::current_dir().map_err(|e| e.to_string())?.join(dir_path)
+        };
+        if !base_dir.exists() || !base_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut completions = Vec::new();
+        for entry in std::fs::read_dir(&base_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let file_name = match entry.file_name().to_str() {
+                Some(name) => name.to_string(),
+                None => continue,
+            };
+            if !needle.is_empty() && !file_name.to_lowercase().starts_with(&needle.to_lowercase()) {
+                continue;
+            }
+            let entry_path = entry.path();
+            let is_dir = entry.metadata().map_err(|e| e.to_string())?.is_dir();
+            let display = display_path_for_mode(trimmed, &entry_path);
+            completions.push(PathCompletion {
+                path: display.clone(),
+                display: if is_dir { format!("{display}/") } else { display },
+                is_dir,
+            });
+        }
+        completions.sort_by(|a, b| a.display.cmp(&b.display));
+        Ok(completions)
+    });
+    handle.await.map_err(|e| e.to_string())?
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -86,6 +438,154 @@ async fn ingest_entity(
     .map_err(|e| e.to_string())?;
 
     Ok(id)
+}
+
+#[tauri::command]
+async fn begin_import(
+    job_id: String,
+    label: String,
+    category: String,
+    source_path: Option<String>,
+    file_name: Option<String>,
+    bytes: Option<Vec<u8>>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let category_enum = match category.as_str() {
+        "physical" => EntityKind::Physical,
+        "digital" => EntityKind::Digital,
+        "abstract" => EntityKind::Abstract,
+        "persona" => EntityKind::Persona,
+        _ => return Err(format!("Unknown entity category: {}", category)),
+    };
+
+    let st = state.lock().await;
+    let db = st.db.clone();
+    let bus = st.bus.clone();
+    let blob = st.blob.clone();
+    drop(st);
+
+    async_runtime::spawn(async move {
+        emit_import_progress(&app, &job_id, "queued", "Queued for import");
+        emit_import_progress(&app, &job_id, "inspecting", "Inspecting source");
+
+        let import_result: Result<String, String> = async {
+            let (stored, mime, extension) = if let Some(path) = source_path.clone() {
+                emit_import_progress(&app, &job_id, "storing_blob", "Writing blob into local store");
+                let stored = blob.store_file(&path, Some(label.clone())).await?;
+                let mime = core_engine::blob::infer_mime_from_path(&path);
+                let extension = std::path::Path::new(&path)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.to_string());
+                (stored, mime, extension)
+            } else if let Some(content) = bytes.clone() {
+                let name = file_name.clone().unwrap_or_else(|| label.clone());
+                let extension = std::path::Path::new(&name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.to_string());
+                let mime = core_engine::blob::infer_mime_from_path(&name);
+                emit_import_progress(&app, &job_id, "storing_blob", "Writing blob into local store");
+                let stored = blob
+                    .store_bytes(content, extension.clone(), Some(label.clone()))
+                    .await?;
+                (stored, mime, extension)
+            } else {
+                return Err("No import source was provided".to_string());
+            };
+
+            emit_import_progress(
+                &app,
+                &job_id,
+                "creating_entity",
+                "Creating entity record",
+            );
+            let ulid = Ulid::new().to_string();
+            let id = format!("entity:{}", ulid);
+            let filename = core_engine::blob::blob_filename_for_label(
+                Some(&label),
+                extension.as_deref(),
+            );
+
+            let entity = Entity {
+                id: id.clone(),
+                category: category_enum,
+                label: label.clone(),
+                lang_canonical: "en".to_string(),
+                metadata: HashMap::new(),
+                deleted_at: None,
+            };
+            db.save_entity(entity).await?;
+
+            emit_import_progress(
+                &app,
+                &job_id,
+                "attaching_blob_trait",
+                "Attaching blob metadata",
+            );
+            let blob_trait = core_engine::models::BlobTrait {
+                id: format!("blob_trait:{}", ulid),
+                owner: id.clone(),
+                filename,
+                storage_id: stored.storage_id.clone(),
+                bucket: "local".to_string(),
+                mime,
+                hash: stored.hash,
+                size: stored.size,
+            };
+            db.save_blob_trait(blob_trait).await?;
+            bus.on_event("entity.created".to_string(), 1, ulid.clone()).await;
+            app.emit(
+                "entity-updated",
+                serde_json::json!({
+                    "topic": "entity.created",
+                    "ulid": ulid,
+                    "label": label,
+                }),
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(id)
+        }
+        .await;
+
+        match import_result {
+            Ok(entity_id) => emit_import_finished(
+                &app,
+                &job_id,
+                Some(entity_id),
+                "ready",
+                "Import complete",
+                None,
+            ),
+            Err(error) => emit_import_finished(
+                &app,
+                &job_id,
+                None,
+                "error",
+                "Import failed",
+                Some(error),
+            ),
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_storage_health(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<StorageHealth, String> {
+    let st = state.lock().await;
+    compute_storage_health(&st.db, &st.blob).await
+}
+
+#[tauri::command]
+async fn run_manual_gc(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<core_engine::gc::GcSweepStats, String> {
+    let st = state.lock().await;
+    gc::run_garbage_collection(&st.db, &st.blob).await
 }
 
 #[tauri::command]
@@ -1054,6 +1554,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             log_frontend,
             open_external_path,
+            pick_native_import_files,
+            pick_native_import_directory,
+            expand_import_sources,
+            complete_input_path,
+            begin_import,
+            get_storage_health,
+            run_manual_gc,
             ingest_entity,
             list_entities,
             get_spatial_traits,

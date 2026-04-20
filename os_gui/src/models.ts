@@ -54,6 +54,9 @@ export interface TemporalTrait {
   recurrence: string | null;
 }
 
+export type DraftSpatialTrait = Omit<SpatialTrait, "id" | "owner">;
+export type DraftTemporalTrait = Omit<TemporalTrait, "id" | "owner">;
+
 export interface AnalyticsTrait {
   id: string;
   owner: string;
@@ -106,4 +109,77 @@ export interface TraitSnapshot {
   trait_type: string;
   data: Record<string, any>;
   changed_at: string;
+}
+
+export type InputJobKind = "create" | "import";
+
+export type InputJobStage =
+  | "draft"
+  | "queued"
+  | "inspecting"
+  | "storing_blob"
+  | "creating_entity"
+  | "attaching_blob_trait"
+  | "ready"
+  | "error";
+
+export interface InputDraft {
+  jobId: string;
+  kind: InputJobKind;
+  label: string;
+  category: EntityKind;
+  sourcePath?: string;
+  fileName?: string;
+  mime?: string;
+  size?: number;
+  bytes?: number[];
+  stage: InputJobStage;
+  progressMessage: string;
+  expanded: boolean;
+  entityId?: string;
+  error?: string;
+  spatialTrait: DraftSpatialTrait | null;
+  temporalTrait: DraftTemporalTrait | null;
+  blobAttachment: PickedInputFile | null;
+  tagLabels: string[];
+}
+
+export interface PickedInputFile {
+  fileName: string;
+  bytes: number[];
+  mime?: string;
+  size: number;
+  sourcePath?: string;
+}
+
+export interface ImportSourceDraft {
+  sourcePath: string;
+  fileName: string;
+  label: string;
+  tagLabels: string[];
+}
+
+export interface PathCompletion {
+  path: string;
+  display: string;
+  is_dir: boolean;
+}
+
+export interface StorageHealth {
+  live_entity_count: number;
+  soft_deleted_entity_count: number;
+  edge_count: number;
+  blob_trait_count: number;
+  unique_blob_count: number;
+  referenced_blob_bytes: number;
+  blob_store_file_count: number;
+  blob_store_bytes: number;
+}
+
+export interface GcSweepStats {
+  expired_entities: number;
+  swept_entities: number;
+  removed_blob_traits: number;
+  removed_blobs: number;
+  reclaimed_bytes: number;
 }

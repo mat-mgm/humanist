@@ -1,14 +1,14 @@
 import {
-  Search, Globe, Terminal,
+  ArrowDownToLine, Search, Globe, Terminal,
   Settings,
 } from 'lucide-react';
 import { useOsStore } from '../store';
 
 export type ActivityId =
-  | 'graph' | 'causal' | 'terminal'
+  | 'inputs' | 'graph' | 'causal' | 'terminal'
   | 'settings';
 
-const PRIMARY_CANVAS_IDS = new Set<ActivityId>(['graph', 'causal', 'terminal']);
+const PRIMARY_CANVAS_IDS = new Set<ActivityId>(['inputs', 'graph', 'causal', 'terminal']);
 
 interface ActivityItem {
   id: ActivityId;
@@ -18,6 +18,7 @@ interface ActivityItem {
 }
 
 const ACTIVITIES: ActivityItem[] = [
+  { id: 'inputs',   icon: <ArrowDownToLine size={18} />, title: 'Inputs',  group: 'primary' },
   { id: 'graph',    icon: <Search  size={18} />, title: 'Knowledge Graph', group: 'primary' },
   { id: 'causal',   icon: <Globe   size={18} />, title: 'Causal Panel',    group: 'primary' },
   { id: 'terminal', icon: <Terminal size={18} />, title: 'Terminal',        group: 'primary' },

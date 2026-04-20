@@ -1,7 +1,25 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, BlobTrait, TemporalTrait, TraitSnapshot } from './models';
+import {
+  EdgeRecord,
+  Entity,
+  EntitySnapshot,
+  LabelTrait,
+  RelationshipType,
+  SpatialTrait,
+  BlobTrait,
+  TemporalTrait,
+  DraftSpatialTrait,
+  DraftTemporalTrait,
+  TraitSnapshot,
+  InputDraft,
+  PickedInputFile,
+  ImportSourceDraft,
+  StorageHealth,
+  GcSweepStats,
+  EntityKind,
+} from './models';
 import { logFrontend } from './lib/log';
 
 // ── Event payload types ───────────────────────────────────────────────────────
@@ -17,6 +35,20 @@ interface GraphUpdateEvent {
   from: string;
   to: string;
   label: string;
+}
+
+interface InputJobProgressEvent {
+  job_id: string;
+  stage: InputDraft['stage'];
+  message: string;
+}
+
+interface InputJobFinishedEvent {
+  job_id: string;
+  entity_id?: string | null;
+  stage: InputDraft['stage'];
+  message: string;
+  error?: string | null;
 }
 
 export type GraphEdge = EdgeRecord;
@@ -86,6 +118,13 @@ interface OsStore {
   highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
   activePtySession: string;
+  inputDrafts: InputDraft[];
+  selectedInputDraftIds: string[];
+  inputPickerRequestToken: number;
+  storageHealth: StorageHealth | null;
+  storageHealthLoading: boolean;
+  gcRunning: boolean;
+  lastGcResult: GcSweepStats | null;
 
   // Phase 43: multilingual label actions
   setActiveLocale: (lang: string) => void;
@@ -150,6 +189,20 @@ interface OsStore {
   toggleFilterEdgeLabel: (label: string) => void;
   setHighlightedPath: (path: string[], edgeKeys: Set<string>) => void;
   clearHighlightedPath: () => void;
+  addCreateInputDraft: () => string;
+  addImportDraftsFromPaths: (paths: string[]) => string[];
+  addImportDraftsFromFiles: (files: PickedInputFile[]) => string[];
+  addImportDraftsFromSources: (sources: ImportSourceDraft[]) => string[];
+  updateInputDraft: (jobId: string, patch: Partial<InputDraft>) => void;
+  toggleInputDraftExpanded: (jobId: string) => void;
+  removeInputDraft: (jobId: string) => void;
+  clearInputDrafts: () => void;
+  toggleSelectedInputDraft: (jobId: string) => void;
+  setSelectedInputDraftIds: (jobIds: string[]) => void;
+  submitInputDraft: (jobId: string) => Promise<void>;
+  requestImportFilePick: () => void;
+  fetchStorageHealth: () => Promise<void>;
+  runInputGc: () => Promise<GcSweepStats | null>;
 
   // ── Activity bar / shell layout state ────────────────────────
   activeActivity: string;
@@ -208,6 +261,13 @@ export const useOsStore = create<OsStore>((set, get) => ({
   highlightedPath: [],
   highlightedEdgeKeys: new Set<string>(),
   activePtySession: 'main',
+  inputDrafts: [],
+  selectedInputDraftIds: [],
+  inputPickerRequestToken: 0,
+  storageHealth: null,
+  storageHealthLoading: false,
+  gcRunning: false,
+  lastGcResult: null,
 
   // Activity bar / shell layout
   activeActivity: 'graph',
@@ -237,6 +297,263 @@ export const useOsStore = create<OsStore>((set, get) => ({
   setGraphResetViewFn: (fn) => set({ graphResetViewFn: fn }),
 
   setActivePtySession: (sessionId) => set({ activePtySession: sessionId }),
+
+  addCreateInputDraft: () => {
+    const jobId = globalThis.crypto.randomUUID();
+    set(state => ({
+      inputDrafts: [
+        {
+          jobId,
+          kind: 'create',
+          label: '',
+          category: 'digital',
+          stage: 'draft',
+          progressMessage: 'Draft entity',
+          expanded: true,
+          spatialTrait: null,
+          temporalTrait: null,
+          blobAttachment: null,
+          tagLabels: [],
+        },
+        ...state.inputDrafts.map(d => ({ ...d, expanded: false })),
+      ],
+      selectedInputDraftIds: [...new Set([jobId, ...state.selectedInputDraftIds])],
+    }));
+    return jobId;
+  },
+
+  addImportDraftsFromPaths: (paths) => {
+    const drafts = paths.map((sourcePath) => {
+      const fileName = sourcePath.split(/[\\/]/).pop() || sourcePath;
+      const dot = fileName.lastIndexOf('.');
+      const label = dot > 0 ? fileName.slice(0, dot) : fileName;
+      return {
+        jobId: globalThis.crypto.randomUUID(),
+        kind: 'import' as const,
+        label,
+        category: 'digital' as EntityKind,
+        sourcePath,
+        fileName,
+        stage: 'draft' as const,
+        progressMessage: 'Import draft',
+        expanded: true,
+        spatialTrait: null,
+        temporalTrait: null,
+        blobAttachment: null,
+        tagLabels: [],
+      };
+    });
+    set(state => ({
+      inputDrafts: [...drafts, ...state.inputDrafts.map(d => ({ ...d, expanded: false }))],
+      selectedInputDraftIds: [...new Set([...drafts.map(d => d.jobId), ...state.selectedInputDraftIds])],
+    }));
+    return drafts.map(d => d.jobId);
+  },
+
+  addImportDraftsFromFiles: (files) => {
+    const drafts = files.map((file) => {
+      const dot = file.fileName.lastIndexOf('.');
+      const label = dot > 0 ? file.fileName.slice(0, dot) : file.fileName;
+      return {
+        jobId: globalThis.crypto.randomUUID(),
+        kind: 'import' as const,
+        label,
+        category: 'digital' as EntityKind,
+        fileName: file.fileName,
+        mime: file.mime,
+        size: file.size,
+        bytes: file.bytes,
+        stage: 'draft' as const,
+        progressMessage: 'Import draft',
+        expanded: true,
+        spatialTrait: null,
+        temporalTrait: null,
+        blobAttachment: null,
+        tagLabels: [],
+      };
+    });
+    set(state => ({
+      inputDrafts: [...drafts, ...state.inputDrafts.map(d => ({ ...d, expanded: false }))],
+      selectedInputDraftIds: [...new Set([...drafts.map(d => d.jobId), ...state.selectedInputDraftIds])],
+    }));
+    return drafts.map(d => d.jobId);
+  },
+
+  addImportDraftsFromSources: (sources: ImportSourceDraft[]) => {
+    const drafts = sources.map((source) => ({
+      jobId: globalThis.crypto.randomUUID(),
+      kind: 'import' as const,
+      label: source.label,
+      category: 'digital' as EntityKind,
+      sourcePath: source.sourcePath,
+      fileName: source.fileName,
+      stage: 'draft' as const,
+      progressMessage: 'Import draft',
+      expanded: true,
+      spatialTrait: null,
+      temporalTrait: null,
+      blobAttachment: null,
+      tagLabels: source.tagLabels,
+    }));
+    set(state => ({
+      inputDrafts: [...drafts, ...state.inputDrafts.map(d => ({ ...d, expanded: false }))],
+      selectedInputDraftIds: [...new Set([...drafts.map(d => d.jobId), ...state.selectedInputDraftIds])],
+    }));
+    return drafts.map(d => d.jobId);
+  },
+
+  updateInputDraft: (jobId, patch) => {
+    set(state => ({
+      inputDrafts: state.inputDrafts.map(d => d.jobId === jobId ? { ...d, ...patch } : d),
+    }));
+  },
+
+  toggleInputDraftExpanded: (jobId) => {
+    set(state => ({
+      inputDrafts: state.inputDrafts.map(d => d.jobId === jobId ? { ...d, expanded: !d.expanded } : d),
+    }));
+  },
+
+  removeInputDraft: (jobId) => {
+    set(state => ({
+      inputDrafts: state.inputDrafts.filter(d => d.jobId !== jobId),
+      selectedInputDraftIds: state.selectedInputDraftIds.filter(id => id !== jobId),
+    }));
+  },
+
+  clearInputDrafts: () => set({
+    inputDrafts: [],
+    selectedInputDraftIds: [],
+  }),
+
+  toggleSelectedInputDraft: (jobId) => {
+    set(state => ({
+      selectedInputDraftIds: state.selectedInputDraftIds.includes(jobId)
+        ? state.selectedInputDraftIds.filter(id => id !== jobId)
+        : [...state.selectedInputDraftIds, jobId],
+    }));
+  },
+
+  setSelectedInputDraftIds: (jobIds) => set({ selectedInputDraftIds: jobIds }),
+
+  submitInputDraft: async (jobId) => {
+    const draft = get().inputDrafts.find(d => d.jobId === jobId);
+    if (!draft) return;
+    const trimmed = draft.label.trim();
+    if (!trimmed) {
+      get().updateInputDraft(jobId, {
+        stage: 'error',
+        progressMessage: 'Label is required',
+        error: 'Label is required.',
+      });
+      return;
+    }
+
+    const hasCreateBlobSource = draft.kind === 'create'
+      && Boolean(draft.blobAttachment || draft.sourcePath || draft.fileName || draft.bytes);
+
+    if (draft.kind === 'create' && !hasCreateBlobSource) {
+      get().updateInputDraft(jobId, {
+        stage: 'creating_entity',
+        progressMessage: 'Creating entity',
+        error: undefined,
+      });
+      try {
+        const entityId = await get().createEntity(draft.category, trimmed);
+        await attachDraftTraits(entityId, draft.spatialTrait, draft.temporalTrait, get);
+        await attachDraftTags(entityId, draft.tagLabels, get);
+        get().selectEntity(entityId);
+        get().updateInputDraft(jobId, {
+          label: trimmed,
+          stage: 'ready',
+          progressMessage: 'Entity created',
+          entityId,
+          error: undefined,
+        });
+        await get().fetchStorageHealth();
+      } catch (e) {
+        get().updateInputDraft(jobId, {
+          stage: 'error',
+          progressMessage: 'Entity creation failed',
+          error: String(e),
+        });
+      }
+      return;
+    }
+
+    const sourcePath = draft.kind === 'import'
+      ? (draft.sourcePath ?? null)
+      : (draft.blobAttachment?.sourcePath ?? draft.sourcePath ?? null);
+    const fileName = draft.kind === 'import'
+      ? (draft.fileName ?? null)
+      : (draft.blobAttachment?.fileName ?? draft.fileName ?? null);
+    const bytes = draft.kind === 'import'
+      ? (draft.bytes ?? null)
+      : ((draft.blobAttachment?.sourcePath ?? draft.sourcePath) ? null : (draft.blobAttachment?.bytes ?? draft.bytes ?? null));
+
+    if (!sourcePath && !bytes) {
+      get().updateInputDraft(jobId, {
+        stage: 'error',
+        progressMessage: 'No import source provided',
+        error: 'No import source provided.',
+      });
+      return;
+    }
+
+    get().updateInputDraft(jobId, {
+      label: trimmed,
+      stage: 'queued',
+      progressMessage: 'Queued for import',
+      error: undefined,
+    });
+    try {
+      await invoke('begin_import', {
+        jobId,
+        label: trimmed,
+        category: draft.category,
+        sourcePath,
+        fileName,
+        bytes,
+      });
+    } catch (e) {
+      get().updateInputDraft(jobId, {
+        stage: 'error',
+        progressMessage: 'Import failed to start',
+        error: String(e),
+      });
+    }
+  },
+
+  requestImportFilePick: () => {
+    set(state => ({ inputPickerRequestToken: state.inputPickerRequestToken + 1 }));
+  },
+
+  fetchStorageHealth: async () => {
+    set({ storageHealthLoading: true });
+    try {
+      const storageHealth = await invoke<StorageHealth>('get_storage_health');
+      set({ storageHealth, storageHealthLoading: false });
+    } catch (e) {
+      logFrontend('error', 'fetchStorageHealth error: ' + String(e));
+      set({ storageHealthLoading: false });
+    }
+  },
+
+  runInputGc: async () => {
+    set({ gcRunning: true });
+    try {
+      const result = await invoke<GcSweepStats>('run_manual_gc');
+      set({ gcRunning: false, lastGcResult: result });
+      await get().fetchStorageHealth();
+      await get().fetchBlobTraits();
+      await get().fetchEntities();
+      return result;
+    } catch (e) {
+      logFrontend('error', 'runInputGc error: ' + String(e));
+      set({ gcRunning: false });
+      return null;
+    }
+  },
 
   updateNodePosition: (id, x, y) => {
     set(state => ({
@@ -502,6 +819,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   createEntity: async (kind, label) => {
     const id = await invoke<string>('create_entity', { category: kind, label });
     await get().fetchEntities();
+    await get().fetchStorageHealth();
     return id;
   },
 
@@ -728,6 +1046,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       store.fetchTemporalTraits();
       store.fetchAllLabelTraits();
       store.fetchAllEntities();
+      store.fetchStorageHealth();
     });
 
     const unlistenGraph = await listen<GraphUpdateEvent>('graph-updated', () => {
@@ -736,10 +1055,105 @@ export const useOsStore = create<OsStore>((set, get) => ({
       if (store.selectedEntityId) store.fetchEntityEdges(store.selectedEntityId);
     });
 
+    const unlistenInputProgress = await listen<InputJobProgressEvent>('input-job-progress', (event) => {
+      set(state => ({
+        inputDrafts: state.inputDrafts.map(d => d.jobId === event.payload.job_id
+          ? {
+              ...d,
+              stage: event.payload.stage,
+              progressMessage: event.payload.message,
+            }
+          : d),
+      }));
+    });
+
+    const unlistenInputFinished = await listen<InputJobFinishedEvent>('input-job-finished', (event) => {
+      const payload = event.payload;
+      const finishedDraft = get().inputDrafts.find(d => d.jobId === payload.job_id);
+      set(state => ({
+        inputDrafts: state.inputDrafts.map(d => d.jobId === payload.job_id
+          ? {
+            ...d,
+            stage: payload.stage,
+            progressMessage: payload.error ?? payload.message,
+            entityId: payload.entity_id ?? undefined,
+            error: payload.error ?? undefined,
+          }
+          : d),
+      }));
+      const store = useOsStore.getState();
+      if (payload.entity_id) {
+        const attachAndRefresh = async () => {
+          if (finishedDraft && payload.stage === 'ready' && !payload.error) {
+            try {
+              await attachDraftTraits(payload.entity_id!, finishedDraft.spatialTrait, finishedDraft.temporalTrait, useOsStore.getState);
+              await attachDraftTags(payload.entity_id!, finishedDraft.tagLabels, useOsStore.getState);
+            } catch (e) {
+              useOsStore.getState().updateInputDraft(payload.job_id, {
+                stage: 'error',
+                progressMessage: 'Trait attachment failed',
+                error: String(e),
+              });
+            }
+          }
+          store.selectEntity(payload.entity_id!);
+          await store.fetchStorageHealth();
+        };
+        void attachAndRefresh();
+        return;
+      }
+      void store.fetchStorageHealth();
+    });
+
     return () => {
       unlistenReady();
       unlistenEntity();
       unlistenGraph();
+      unlistenInputProgress();
+      unlistenInputFinished();
     };
   },
 }));
+
+async function attachDraftTraits(
+  owner: string,
+  spatialTrait: DraftSpatialTrait | null,
+  temporalTrait: DraftTemporalTrait | null,
+  getStore: typeof useOsStore.getState,
+) {
+  const store = getStore();
+  if (spatialTrait) {
+    await store.saveSpatialTrait({
+      owner,
+      lat: spatialTrait.lat,
+      lng: spatialTrait.lng,
+      alt: spatialTrait.alt,
+      heading: spatialTrait.heading,
+      bbox: spatialTrait.bbox,
+      projection: spatialTrait.projection,
+    });
+  }
+  if (temporalTrait) {
+    await store.saveTemporalTrait({
+      owner,
+      event_at: temporalTrait.event_at,
+      starts_at: temporalTrait.starts_at,
+      ends_at: temporalTrait.ends_at,
+      recurrence: temporalTrait.recurrence,
+    });
+  }
+}
+
+async function attachDraftTags(
+  owner: string,
+  tagLabels: string[],
+  getStore: typeof useOsStore.getState,
+) {
+  if (tagLabels.length === 0) return;
+  const store = getStore();
+  for (const tagLabel of tagLabels) {
+    const trimmed = tagLabel.trim();
+    if (!trimmed) continue;
+    await store.tagEntity(owner, trimmed);
+  }
+}

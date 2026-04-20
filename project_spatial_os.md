@@ -54,7 +54,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
 * **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
 * **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
@@ -934,19 +934,61 @@ per key operation (blob store, GC, DB connect). Nothing fires inside loops or on
 - Decision: Frontend errors route through `log_frontend` IPC only for warnings and errors.  
   Rationale: Routine React renders and hover events belong in browser DevTools, not the system log.
 
-### Phase 50: UI Utilities & UX Hardening
+### Phase 50: Unified Inputs Panel & Evented Import Pipeline
+**Description**
+Replace the modal-based `CreateEntityDialog` and `IngestDialog` with a first-class `Inputs` activity placed first in the activity bar. The new panel becomes the canonical entry point for bringing data into the system through a unified queue of draft cards. Each card can represent either plain entity creation or file import, and imported files expose a per-card stage timeline driven by Tauri event-bus progress events so the pipeline is flexible, explainable, and inspectable. The panel also includes a compact storage-health section showing the current state of the database and blob store, plus a secondary manual garbage-collection action for maintenance.
+
+**Tasks**
+- [✓] **Activity bar integration**: Add a new `inputs` activity as the first item in `ActivityBar.tsx`, preserving the current primary-canvas behavior for Graph, Causal, and Terminal.
+- [✓] **Inputs panel**: Create `InputsPanel.tsx` in the side panel layer as the replacement for both `CreateEntityDialog` and `IngestDialog`.
+- [✓] **Unified draft-card queue**: Model the panel as a single queue of input drafts, where each card is either `create` or `import`.
+- [✓] **Per-card stage timeline**: Implement expandable per-card timelines with explicit stages such as `source_selected`, `inspecting`, `storing_blob`, `creating_entity`, `attaching_blob_trait`, and `ready`.
+- [✓] **Import Architecture B**: Implement import initiation as a command plus Tauri progress events keyed by `jobId`, with the frontend updating the matching draft card in place.
+- [✓] **Native file selection**: Integrate Tauri native file picker and drag-and-drop so file imports no longer require manual path entry.
+- [✓] **Storage health summary**: Add a compact section in the Inputs panel showing database and blob-store state, including at minimum entity count, blob count, and an estimate of blob-store size or tracked bytes.
+- [✓] **Manual garbage collection**: Add a secondary `Run GC` action in the Inputs panel to trigger blob-store/database cleanup and surface a visible result summary such as removed blobs, reclaimed bytes, or a no-op outcome.
+- [✓] **Keyboard routing**: Update `Ctrl+N` to open the Inputs panel and create/focus a `New entity` draft card; update `Ctrl+I` to open the Inputs panel and create one import draft card per selected file.
+- [✓] **Success actions**: Auto-select newly created/imported entities and expose compact quick actions such as `Reveal in Graph`, `Open Preview`, and `Copy ULID`.
+- [✓] **Modal removal**: Remove the old dialog-based entity creation and ingest entry points from the GUI shell.
+
+**Checks**
+- [✓] Creating a plain entity succeeds from an Inputs draft card with no modal dialog involved.
+- [✓] Importing one file shows visible staged progress inside its card timeline and ends in a created entity with attached `BlobTrait`.
+- [✓] Importing multiple files creates one visible draft card per file, each with independent progress and result state.
+- [✓] `Ctrl+N` and `Ctrl+I` both route into the Inputs panel correctly.
+- [✓] Drag-and-drop and native file picker both produce import draft cards without manual path typing.
+- [✓] The Inputs panel shows current database/blob-store state without leaving the panel.
+- [✓] Running GC from the Inputs panel completes successfully and reports what changed.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `cargo check --workspace` passes with zero warnings.
+
+**Design decisions**
+- Decision: Use a unified draft-card queue rather than permanent `Create` / `Import` tabs.
+  Rationale: A single queue is the minimal abstraction that can scale to future input types without rebuilding the panel architecture again.
+- Decision: Use per-card stage timelines instead of a single global import log.
+  Rationale: Inspection belongs next to the unit of work. This keeps the system legible even during mixed or batched imports.
+- Decision: Use Import Architecture B (`begin_import` + progress events + finished event).
+  Rationale: It preserves Rust ownership of filesystem access while making the ingest pipeline observable in the frontend with minimal architectural weight.
+- Decision: Include storage health and manual GC inside Inputs as a secondary maintenance section.
+  Rationale: Although GC is not an ingress action, it is tightly coupled to the blob-store lifecycle and helps users understand and manage the consequences of import activity without hunting through unrelated panels.
+
+**Notes / Risks / Resources**
+- This phase intentionally overlaps the earlier “Native File Picker” utility request because file selection is a core part of the Inputs panel contract, not an isolated convenience feature.
+- The current `ingest_entity(label, file_path)` command may survive temporarily as an internal helper, but the user-facing GUI flow should be driven by evented progress from the start.
+- The maintenance section must remain visually secondary so the main reading of the panel is still “bring data in”, not “operate the database”.
+- Reference design: [docs/notes/inputs_panel_phase_options.md](/home/rs/computation/programming/rust/spatial_os/docs/notes/inputs_panel_phase_options.md)
+
+### Phase 51: UI Utilities & UX Hardening
 **Description**
 Enhance the user experience with native integration for file management and quick identifier access.
 
 **Tasks**
-- [ ] **Native File Picker**: Implement native file explorer dialog integration (via Tauri's dialog API) to allow selecting single or multiple files for ingestion, replacing manual path entry in the GUI.
 - [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
 - [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
 - [ ] **Entity list spacing**: Make the list items more compact, since now items are too high an contain empty space.
 - [ ] **Right side bar selector order**: Place the Properties, Entities and relationships and Preview before any other panel.
 
 **Checks**
-- [ ] The file picker successfully passes file paths to the `core_engine` ingestion pipeline.
 - [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 

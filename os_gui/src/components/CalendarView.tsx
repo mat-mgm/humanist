@@ -4,7 +4,9 @@ import { useOsStore } from '../store';
 const fmtYear = (jsYear: number) => jsYear > 0 ? `${jsYear} CE` : `${1 - jsYear} BCE`;
 
 export function CalendarView() {
-  const { temporalTraits, entities, setSelectedIds } = useOsStore();
+  const temporalTraits = useOsStore(s => s.temporalTraits);
+  const entities = useOsStore(s => s.entities);
+  const setSelectedIds = useOsStore(s => s.setSelectedIds);
 
   const timelineEvents = temporalTraits
     .map(t => ({ trait: t, entity: entities.find(e => e.id === t.owner) }))

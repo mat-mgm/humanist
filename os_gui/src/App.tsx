@@ -16,14 +16,13 @@ import { TimelineView } from './components/TimelineView';
 import { CalendarView } from './components/CalendarView';
 
 const GlobePanel = lazy(() => import('./components/GlobePanel').then(m => ({ default: m.GlobePanel })));
-import { IngestDialog } from './components/IngestDialog';
-import { CreateEntityDialog } from './components/CreateEntityDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TilingLayout, LayoutMode, PaneConfig, SlotNode } from './components/TilingLayout';
 import { DraggablePane } from './components/DraggablePane';
 import { CommandPalette } from './components/CommandPalette';
 import { EntityInspectorPanel } from './components/EntityInspector';
 import { AssetPreview } from './components/AssetPreview';
+import { InputsPanel } from './components/InputsPanel';
 
 const GlobeFallback = <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>;
 
@@ -65,7 +64,7 @@ function rightPickerExcluded(primaryCanvasId: string): Set<string> {
 type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night' | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
 
 // Activity IDs in order for Ctrl+Tab cycling
-const ACTIVITY_ORDER = ['graph', 'causal', 'terminal', 'settings'];
+const ACTIVITY_ORDER = ['inputs', 'graph', 'causal', 'terminal', 'settings'];
 
 // ── Default tiling layout ─────────────────────────────────────────────────────
 const DEFAULT_SLOTS: SlotNode[] = [
@@ -128,11 +127,12 @@ function removeIdFromSlots(slots: SlotNode[], id: string): SlotNode[] {
 }
 
 // Primary-canvas activities — tool/settings clicks must not affect the canvas
-const PRIMARY_CANVAS_IDS = new Set(['graph', 'causal', 'terminal']);
+const PRIMARY_CANVAS_IDS = new Set(['inputs', 'graph', 'causal', 'terminal']);
 
 // ── Primary canvas (activity bar mode) ───────────────────────────────────────
 function PrimaryCanvas({ activityId }: { activityId: string }) {
   switch (activityId) {
+    case 'inputs':   return <ErrorBoundary label="Inputs"><InputsPanel /></ErrorBoundary>;
     case 'graph':    return <ErrorBoundary label="Knowledge Graph"><GraphPanel /></ErrorBoundary>;
     case 'causal':   return <ErrorBoundary label="Causal Panel"><CausalPanel /></ErrorBoundary>;
     case 'terminal': return <ErrorBoundary label="Terminal"><TerminalPanel /></ErrorBoundary>;
@@ -142,21 +142,25 @@ function PrimaryCanvas({ activityId }: { activityId: string }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const { fetchSpatialTraits, startListening, fetchAllLabelTraits, fetchAllEntities } = useOsStore();
-
+  const fetchSpatialTraits = useOsStore(s => s.fetchSpatialTraits);
+  const startListening = useOsStore(s => s.startListening);
+  const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
+  const fetchAllEntities = useOsStore(s => s.fetchAllEntities);
+  const fetchStorageHealth = useOsStore(s => s.fetchStorageHealth);
   const activeActivity    = useOsStore(s => s.activeActivity);
   const rightPanelId      = useOsStore(s => s.rightPanelId);
   const tilingModeEnabled = useOsStore(s => s.tilingModeEnabled);
-  const { setActiveActivity, toggleSidePanel, setRightPanelId, setSidePanelOpen, setTilingModeEnabled } = useOsStore();
+  const setActiveActivity = useOsStore(s => s.setActiveActivity);
+  const toggleSidePanel = useOsStore(s => s.toggleSidePanel);
+  const setRightPanelId = useOsStore(s => s.setRightPanelId);
+  const setSidePanelOpen = useOsStore(s => s.setSidePanelOpen);
+  const setTilingModeEnabled = useOsStore(s => s.setTilingModeEnabled);
 
   // Track last primary-canvas activity so tool/settings clicks don't switch canvas
   const [primaryCanvasId, setPrimaryCanvasId] = useState('graph');
   useEffect(() => {
     if (PRIMARY_CANVAS_IDS.has(activeActivity)) setPrimaryCanvasId(activeActivity);
   }, [activeActivity]);
-
-  const [ingestVisible, setIngestVisible] = useState(false);
-  const [createVisible, setCreateVisible] = useState(false);
 
   const [theme, setTheme]           = useState<Theme>('tokyo-night');
   const [themeSearch, setThemeSearch] = useState('Tokyo Night');
@@ -224,6 +228,7 @@ export default function App() {
     useOsStore.getState().fetchTemporalTraits();
     fetchAllLabelTraits();
     fetchAllEntities();
+    fetchStorageHealth();
     let cleanup: (() => void) | undefined;
     startListening().then(fn => { cleanup = fn; });
     return () => { if (cleanup) cleanup(); };
@@ -344,8 +349,18 @@ export default function App() {
 
   // ── Keybinds ──────────────────────────────────────────────────────────────
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (KEYBINDS.ingestData(e))  { e.preventDefault(); setIngestVisible(v => !v); }
-    if (KEYBINDS.createEntity(e)) { e.preventDefault(); setCreateVisible(v => !v); }
+    if (KEYBINDS.ingestData(e))  {
+      e.preventDefault();
+      setActiveActivity('inputs');
+      setSidePanelOpen(true);
+      useOsStore.getState().requestImportFilePick();
+    }
+    if (KEYBINDS.createEntity(e)) {
+      e.preventDefault();
+      setActiveActivity('inputs');
+      setSidePanelOpen(true);
+      useOsStore.getState().addCreateInputDraft();
+    }
 
     // Activity bar mode navigation
     if (!tilingModeEnabled) {
@@ -359,13 +374,15 @@ export default function App() {
       if (KEYBINDS.cycleActivityFwd(e)) {
         e.preventDefault();
         const idx = ACTIVITY_ORDER.indexOf(activeActivity);
-        setActiveActivity(ACTIVITY_ORDER[(idx + 1) % ACTIVITY_ORDER.length]);
+        const next = ACTIVITY_ORDER[(idx + 1) % ACTIVITY_ORDER.length];
+        setActiveActivity(next);
         setSidePanelOpen(true);
       }
       if (KEYBINDS.cycleActivityBwd(e)) {
         e.preventDefault();
         const idx = ACTIVITY_ORDER.indexOf(activeActivity);
-        setActiveActivity(ACTIVITY_ORDER[(idx - 1 + ACTIVITY_ORDER.length) % ACTIVITY_ORDER.length]);
+        const next = ACTIVITY_ORDER[(idx - 1 + ACTIVITY_ORDER.length) % ACTIVITY_ORDER.length];
+        setActiveActivity(next);
         setSidePanelOpen(true);
       }
       return;
@@ -470,10 +487,10 @@ export default function App() {
                   </div>
                   {menuOpen === 'file' && (
                     <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10000, background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 4, padding: 4, minWidth: 140, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
-                      <div className="menu-action" onClick={() => { setIngestVisible(true); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
+                      <div className="menu-action" onClick={() => { setActiveActivity('inputs'); setSidePanelOpen(true); useOsStore.getState().requestImportFilePick(); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
                         <span>Ingest Data…</span><span style={{ color: 'var(--text-hint)' }}>Ctrl+I</span>
                       </div>
-                      <div className="menu-action" onClick={() => { setCreateVisible(true); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
+                      <div className="menu-action" onClick={() => { setActiveActivity('inputs'); setSidePanelOpen(true); useOsStore.getState().addCreateInputDraft(); setMenuOpen(null); }} style={{ padding: '6px 12px', cursor: 'pointer', borderRadius: 3, display: 'flex', justifyContent: 'space-between' }}>
                         <span>New Entity…</span><span style={{ color: 'var(--text-hint)' }}>Ctrl+N</span>
                       </div>
                       <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
@@ -534,7 +551,7 @@ export default function App() {
                   <SplitSquareHorizontal size={14} />
                 </button>
               </div>
-              <div className="canvas-body">
+              <div className={`canvas-body${primaryCanvasId === 'inputs' ? ' canvas-body--framed' : ''}`}>
                 <PrimaryCanvas activityId={primaryCanvasId} />
               </div>
             </div>
@@ -574,9 +591,6 @@ export default function App() {
             )}
           </div>
         )}
-
-        <IngestDialog visible={ingestVisible} onClose={() => setIngestVisible(false)} />
-        {createVisible && <CreateEntityDialog onClose={() => setCreateVisible(false)} />}
       </div>
     </DndProvider>
   );

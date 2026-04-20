@@ -40,6 +40,26 @@ const selectEdges = (s: any) => s.edges;
 const selectSelectedId = (s: any) => s.selectedEntityId;
 const selectSelectEntity = (s: any) => s.selectEntity;
 const selectBlobTraits = (s: any) => s.blobTraits;
+const selectDeleteEntity = (s: any) => s.deleteEntity;
+const selectDeleteEntities = (s: any) => s.deleteEntities;
+const selectTagEntity = (s: any) => s.tagEntity;
+const selectTagEntities = (s: any) => s.tagEntities;
+const selectShowRegions = (s: any) => s.showRegions;
+const selectUpdateNodePosition = (s: any) => s.updateNodePosition;
+const selectNodePositions = (s: any) => s.nodePositions;
+const selectFilterKinds = (s: any) => s.filterKinds;
+const selectFilterEdgeLabels = (s: any) => s.filterEdgeLabels;
+const selectHighlightedPath = (s: any) => s.highlightedPath;
+const selectHighlightedEdgeKeys = (s: any) => s.highlightedEdgeKeys;
+const selectLoadExactIds = (s: any) => s.loadExactIds;
+const selectGraphMode = (s: any) => s.graphMode;
+const selectSetGraphResetViewFn = (s: any) => s.setGraphResetViewFn;
+const selectAllLabelTraits = (s: any) => s.allLabelTraits;
+const selectActiveLocale = (s: any) => s.activeLocale;
+const selectGraphExploreQuery = (s: any) => s.graphExploreQuery;
+const selectGraphShowGrid = (s: any) => s.graphShowGrid;
+const selectSetGraphExploreQuery = (s: any) => s.setGraphExploreQuery;
+const selectSetGraphExploreStatus = (s: any) => s.setGraphExploreStatus;
 
 /**
  * Visual configuration for Tag Regions
@@ -71,15 +91,28 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
-  const { deleteEntity, deleteEntities, tagEntity, tagEntities, showRegions, updateNodePosition, nodePositions, filterKinds, filterEdgeLabels, highlightedPath, highlightedEdgeKeys, loadExactIds, graphMode, setGraphResetViewFn } = useOsStore();
-  const allLabelTraits = useOsStore((s: any) => s.allLabelTraits);
-  const activeLocale = useOsStore((s: any) => s.activeLocale);
+  const deleteEntity = useOsStore(selectDeleteEntity);
+  const deleteEntities = useOsStore(selectDeleteEntities);
+  const tagEntity = useOsStore(selectTagEntity);
+  const tagEntities = useOsStore(selectTagEntities);
+  const showRegions = useOsStore(selectShowRegions);
+  const updateNodePosition = useOsStore(selectUpdateNodePosition);
+  const nodePositions = useOsStore(selectNodePositions);
+  const filterKinds = useOsStore(selectFilterKinds);
+  const filterEdgeLabels = useOsStore(selectFilterEdgeLabels);
+  const highlightedPath = useOsStore(selectHighlightedPath);
+  const highlightedEdgeKeys = useOsStore(selectHighlightedEdgeKeys);
+  const loadExactIds = useOsStore(selectLoadExactIds);
+  const graphMode = useOsStore(selectGraphMode);
+  const setGraphResetViewFn = useOsStore(selectSetGraphResetViewFn);
+  const allLabelTraits = useOsStore(selectAllLabelTraits);
+  const activeLocale = useOsStore(selectActiveLocale);
 
   // Toolbar state — now lives in the store so GraphSidePanel can share it
-  const exploreQuery     = useOsStore((s: any) => s.graphExploreQuery);
-  const showGrid         = useOsStore((s: any) => s.graphShowGrid);
-  const setExploreQuery  = useOsStore((s: any) => s.setGraphExploreQuery);
-  const setExploreStatus = useOsStore((s: any) => s.setGraphExploreStatus);
+  const exploreQuery     = useOsStore(selectGraphExploreQuery);
+  const showGrid         = useOsStore(selectGraphShowGrid);
+  const setExploreQuery  = useOsStore(selectSetGraphExploreQuery);
+  const setExploreStatus = useOsStore(selectSetGraphExploreStatus);
 
   const exploreDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

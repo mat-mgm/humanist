@@ -1,6 +1,5 @@
 import { memo, useState, useMemo, useCallback, useRef } from 'react';
 import { useOsStore } from '../store';
-import { CreateEntityDialog } from './CreateEntityDialog';
 import { RelateDialog } from './RelateDialog';
 
 // ── Row ───────────────────────────────────────────────────────────────────────
@@ -56,10 +55,14 @@ export const EntityRegistry = memo(function EntityRegistry() {
   const entities        = useOsStore(s => s.entities);
   const selectedEntityId = useOsStore(s => s.selectedEntityId);
   const contextEntities = useOsStore(s => s.contextEntities);
-  const { selectEntity, deleteEntity, tagEntity } = useOsStore();
+  const selectEntity = useOsStore(s => s.selectEntity);
+  const deleteEntity = useOsStore(s => s.deleteEntity);
+  const tagEntity = useOsStore(s => s.tagEntity);
+  const setActiveActivity = useOsStore(s => s.setActiveActivity);
+  const setSidePanelOpen = useOsStore(s => s.setSidePanelOpen);
+  const addCreateInputDraft = useOsStore(s => s.addCreateInputDraft);
 
   const [search, setSearch]             = useState('');
-  const [showCreate, setShowCreate]     = useState(false);
   const [quickTagId, setQuickTagId]     = useState<string | null>(null);
   const [quickTagLabel, setQuickTagLabel] = useState('');
   const [quickTagInput, setQuickTagInput] = useState('');
@@ -75,7 +78,7 @@ export const EntityRegistry = memo(function EntityRegistry() {
       <div style={{ display: 'flex', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-header)', flexShrink: 0 }}>
         <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…"
           style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }} />
-        <button onClick={() => setShowCreate(true)} title="New entity (Alt+N)"
+        <button onClick={() => { setActiveActivity('inputs'); setSidePanelOpen(true); addCreateInputDraft(); }} title="New entity (Ctrl+N)"
           style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
           + New
         </button>
@@ -84,7 +87,7 @@ export const EntityRegistry = memo(function EntityRegistry() {
       {filtered.length === 0 ? (
         <div className="empty-state" style={{ padding: 16 }}>
           <p>No entities found.</p>
-          <p className="hint">Use Alt+N or click [+ New] to create one.</p>
+          <p className="hint">Use Ctrl+N or click [+ New] to create one.</p>
         </div>
       ) : (
         <table className="entity-table" style={{ flex: 1 }}>
@@ -103,9 +106,6 @@ export const EntityRegistry = memo(function EntityRegistry() {
           </tbody>
         </table>
       )}
-
-      {showCreate && <CreateEntityDialog onClose={() => setShowCreate(false)} />}
-
       {showRelateFor && (
         <RelateDialog sourceEntityId={showRelateFor.id} sourceLabel={showRelateFor.label} onClose={() => setShowRelateFor(null)} />
       )}

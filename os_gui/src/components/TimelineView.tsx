@@ -29,7 +29,10 @@ const MS = {
 const MS_SORTED = Object.entries(MS).sort((a, b) => a[1] - b[1]);
 
 export function TimelineView() {
-  const { temporalTraits, entities, selectedIds, setSelectedIds } = useOsStore();
+  const temporalTraits = useOsStore(s => s.temporalTraits);
+  const entities = useOsStore(s => s.entities);
+  const selectedIds = useOsStore(s => s.selectedIds);
+  const setSelectedIds = useOsStore(s => s.setSelectedIds);
 
   const [zoom, setZoom]           = useState(INIT_ZOOM);
   const [centerTime, setCenterTime] = useState(INIT_CENTER);

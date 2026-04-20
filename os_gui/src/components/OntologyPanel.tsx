@@ -3,7 +3,9 @@ import { X } from 'lucide-react';
 import { useOsStore } from '../store';
 
 export const OntologyPanel = memo(function OntologyPanel() {
-  const { fetchRelationshipTypes, saveRelationshipType, deleteRelationshipType } = useOsStore();
+  const fetchRelationshipTypes = useOsStore(s => s.fetchRelationshipTypes);
+  const saveRelationshipType = useOsStore(s => s.saveRelationshipType);
+  const deleteRelationshipType = useOsStore(s => s.deleteRelationshipType);
   const relationshipTypes = useOsStore(s => s.relationshipTypes);
 
   useEffect(() => { fetchRelationshipTypes(); }, [fetchRelationshipTypes]);
