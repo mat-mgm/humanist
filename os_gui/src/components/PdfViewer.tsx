@@ -8,7 +8,7 @@ interface PdfViewerProps {
   url: string;
 }
 
-function PdfPage({ pdfDoc, pageNum, scale }: { pdfDoc: pdfjsLib.PDFDocumentProxy, pageNum: number, scale: number }) {
+function PdfPage({ pdfDoc, pageNum, scale, useThemeColors }: { pdfDoc: pdfjsLib.PDFDocumentProxy, pageNum: number, scale: number, useThemeColors: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,7 +40,7 @@ function PdfPage({ pdfDoc, pageNum, scale }: { pdfDoc: pdfjsLib.PDFDocumentProxy
 
           // Clear previous
           context.clearRect(0, 0, canvas.width, canvas.height);
-          
+
           canvas.height = viewport.height;
           canvas.width = viewport.width;
 
@@ -49,10 +49,10 @@ function PdfPage({ pdfDoc, pageNum, scale }: { pdfDoc: pdfjsLib.PDFDocumentProxy
             viewport: viewport
           };
           page.render(renderContext as any).promise.then(() => {
-            // Pixel-level Theme Color Injection
+            if (!useThemeColors) return;
             const temp = document.createElement('div');
             document.body.appendChild(temp);
-            
+
             const getRgb = (varName: string) => {
               temp.style.color = `var(${varName})`;
               const colorString = getComputedStyle(temp).color;
@@ -70,11 +70,8 @@ function PdfPage({ pdfDoc, pageNum, scale }: { pdfDoc: pdfjsLib.PDFDocumentProxy
             const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
             const data = imageData.data;
             for (let i = 0; i < data.length; i += 4) {
-              // Convert actual color to luminance/lightness scale (0 to 1) 
-              // White pixels become bgTone, Black pixels become textTone
               const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
-              if (a === 0) continue; // Skip fully transparent
-              
+              if (a === 0) continue;
               const lightness = (r + g + b) / (3 * 255);
               data[i] = textTone[0] * (1 - lightness) + bgTone[0] * lightness;
               data[i+1] = textTone[1] * (1 - lightness) + bgTone[1] * lightness;
@@ -86,28 +83,28 @@ function PdfPage({ pdfDoc, pageNum, scale }: { pdfDoc: pdfjsLib.PDFDocumentProxy
       }, 50);
       return () => clearTimeout(t);
     }
-  }, [pdfDoc, pageNum, scale, isVisible]);
+  }, [pdfDoc, pageNum, scale, isVisible, useThemeColors]);
 
   // Estimate aspect ratio to prevent layout shift before load (standard paper is 1:1.414 or 8.5x11)
   return (
-    <div 
-      ref={containerRef} 
-      style={{ 
-        width: '100%', 
-        display: 'flex', 
-        justifyContent: 'center', 
-        marginBottom: '20px' 
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        display: 'flex',
+        justifyContent: 'center',
+        marginBottom: '20px'
       }}
     >
-      <canvas 
-        ref={canvasRef} 
-        style={{ 
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', 
-          maxWidth: '100%', 
-          height: 'auto', 
+      <canvas
+        ref={canvasRef}
+        style={{
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          maxWidth: '100%',
+          height: 'auto',
           background: 'none',
           borderRadius: 4
-        }} 
+        }}
       />
     </div>
   );
@@ -117,6 +114,7 @@ export function PdfViewer({ url }: PdfViewerProps) {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1.5);
+  const [useThemeColors, setUseThemeColors] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -137,7 +135,7 @@ export function PdfViewer({ url }: PdfViewerProps) {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    
+
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
@@ -145,7 +143,7 @@ export function PdfViewer({ url }: PdfViewerProps) {
         setScale(s => Math.max(0.3, Math.min(5.0, s + scDelta)));
       }
     };
-    
+
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
@@ -155,20 +153,20 @@ export function PdfViewer({ url }: PdfViewerProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden', background: 'var(--bg-primary)', borderRadius: '4px' }}>
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        padding: '8px 12px', 
-        background: 'var(--bg-panel-header)', 
-        borderBottom: '1px solid var(--border)' 
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 12px',
+        background: 'var(--bg-panel-header)',
+        borderBottom: '1px solid var(--border)'
       }}>
         <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-hint)' }}>
           {numPages > 0 ? `${numPages} Pages` : 'Loading...'}
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button 
-            onClick={onZoomOut} 
+          <button
+            onClick={onZoomOut}
             style={{ padding: '4px 8px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer' }}
           >
             -
@@ -176,26 +174,42 @@ export function PdfViewer({ url }: PdfViewerProps) {
           <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', color: 'var(--text-primary)', width: '35px', justifyContent: 'center' }}>
             {Math.round(scale * 100)}%
           </span>
-          <button 
-            onClick={onZoomIn} 
+          <button
+            onClick={onZoomIn}
             style={{ padding: '4px 8px', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer' }}
           >
             +
           </button>
+          <button
+            onClick={() => setUseThemeColors(v => !v)}
+            title={useThemeColors ? 'Switch to natural colors' : 'Switch to theme colors'}
+            style={{
+              padding: '4px 8px',
+              background: useThemeColors ? 'var(--accent, #7aa2f7)' : 'var(--bg-secondary)',
+              color: useThemeColors ? '#fff' : 'var(--text-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            Theme
+          </button>
         </div>
       </div>
-      <div 
+      <div
         ref={scrollRef}
-        style={{ 
-          flex: 1, 
-          overflowY: 'auto', 
+        style={{
+          flex: 1,
+          overflowY: 'auto',
           overflowX: 'hidden',
           padding: '20px',
           background: 'none'
         }}
       >
         {pdfDoc && Array.from({ length: numPages }).map((_, i) => (
-          <PdfPage key={i} pdfDoc={pdfDoc} pageNum={i + 1} scale={scale} />
+          <PdfPage key={i} pdfDoc={pdfDoc} pageNum={i + 1} scale={scale} useThemeColors={useThemeColors} />
         ))}
       </div>
     </div>

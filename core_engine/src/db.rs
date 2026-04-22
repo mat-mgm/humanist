@@ -213,11 +213,24 @@ impl GraphDatabase for SurrealDbAdapter {
         Ok(())
     }
 
+    async fn delete_blob_trait(&self, blob_trait_id: &str) -> Result<(), String> {
+        let id_cleaned = blob_trait_id.replace("blob_trait:", "");
+        let qs = format!("DELETE blob_trait:{};", id_cleaned);
+        self.db
+            .query(qs)
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     async fn get_blob_traits(&self) -> Result<Vec<crate::models::BlobTrait>, String> {
         let mut response = self
             .db
             .query(
-                "SELECT *, type::string(id) AS id, type::string(owner) AS owner FROM blob_trait;",
+                "SELECT type::string(id) AS id, type::string(owner) AS owner, \
+                 filename, storage_id, bucket, mime, hash, size FROM blob_trait;",
             )
             .await
             .map_err(|e| e.to_string())?;

@@ -1122,6 +1122,19 @@ async fn resize_terminal(
 }
 
 #[tauri::command]
+async fn get_terminal_snapshot(
+    session_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<u8>, String> {
+    let st = state.lock().await;
+    let sessions = st.pty_sessions.lock().unwrap();
+    if let Some(pty) = sessions.get(&session_id) {
+        return pty.snapshot();
+    }
+    Ok(Vec::new())
+}
+
+#[tauri::command]
 async fn edit_entity_in_terminal(
     entity_id: String,
     format: String, // "yaml", "json", "markdown"
@@ -1131,6 +1144,12 @@ async fn edit_entity_in_terminal(
     use std::io::Write;
     let st = state.lock().await;
 
+    // Return early if the editor session is already running for this entity
+    let session_id = format!("edit-{}", entity_id);
+    if st.pty_sessions.lock().unwrap().contains_key(&session_id) {
+        return Ok(());
+    }
+
     // 1. Fetch Composite
     let entity = st.db.get_entity(&entity_id).await?;
     let spatial = st
@@ -1139,12 +1158,13 @@ async fn edit_entity_in_terminal(
         .await?
         .into_iter()
         .find(|t| t.owner == entity_id);
-    let blob = st
+    let blobs: Vec<_> = st
         .db
         .get_blob_traits()
         .await?
         .into_iter()
-        .find(|t| t.owner == entity_id);
+        .filter(|t| t.owner == entity_id)
+        .collect();
     let temporal = st
         .db
         .get_temporal_traits()
@@ -1155,7 +1175,7 @@ async fn edit_entity_in_terminal(
     let composite = core_engine::formats::CompositeEntity {
         entity,
         spatial,
-        blob,
+        blobs,
         temporal,
     };
 
@@ -1188,7 +1208,6 @@ async fn edit_entity_in_terminal(
     let cmd = format!("{} {}", editor, temp_path.to_string_lossy());
 
     // 5. Spawn PTY for this editor
-    let session_id = format!("edit-{}", entity_id);
     let pty = PtyHost::spawn(app.clone(), session_id.clone(), Some(cmd))?;
     let on_exit = pty.on_exit.clone();
 
@@ -1239,8 +1258,7 @@ async fn edit_entity_in_terminal(
                         s.owner = entity_id_c.clone();
                         let _ = st.db.save_spatial_trait(s).await;
                     }
-                    if let Some(b) = updated.blob {
-                        let mut b = b;
+                    for mut b in updated.blobs {
                         b.owner = entity_id_c.clone();
                         let _ = st.db.save_blob_trait(b).await;
                     }
@@ -1265,6 +1283,9 @@ async fn edit_entity_in_terminal(
                             "id": entity_id_c
                         }),
                     );
+                    // Print green "Saved" in the PTY canvas
+                    let saved_bytes = b"\r\n\x1b[1;32m\xe2\x9c\x93 Saved\x1b[0m\r\n".to_vec();
+                    let _ = app_c.emit("pty-data", (session_id_c.clone(), saved_bytes));
                 } else if let Err(e) = result {
                     tracing::error!(format = %format_c, error = %e, "term-edit: parse failed");
                     let _ = app_c.emit("term-edit-error", format!("Parse failed: {}", e));
@@ -1337,6 +1358,296 @@ async fn get_effective_spatial_trait(
 ) -> Result<Option<SpatialTrait>, String> {
     let st = state.lock().await;
     st.db.get_effective_spatial_trait(&entity_id).await
+}
+
+// ── Phase 52: Edition Panel commands ─────────────────────────────────────────
+
+fn is_text_mime(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || mime == "application/json"
+        || mime == "application/yaml"
+        || mime == "application/x-yaml"
+        || mime == "application/x-prolog"
+}
+
+fn to_snake_case(s: &str) -> String {
+    let raw: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    raw.split('_')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Read the raw text content of a blob by its trait ID.
+#[tauri::command]
+async fn read_blob_content(
+    blob_trait_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let st = state.lock().await;
+    let trait_ = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == blob_trait_id)
+        .ok_or_else(|| format!("Blob trait not found: {}", blob_trait_id))?;
+    if !is_text_mime(&trait_.mime) {
+        return Err(format!("Blob {} is not a text file (mime: {})", blob_trait_id, trait_.mime));
+    }
+    let path = st.blob.base_dir.join(&trait_.storage_id);
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Write new text content for a blob (CAS replacement: new hash, updated pointer).
+#[tauri::command]
+async fn write_blob_content_by_id(
+    blob_trait_id: String,
+    content: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let blob_traits = st.db.get_blob_traits().await?;
+    let mut trait_ = blob_traits
+        .into_iter()
+        .find(|t| t.id == blob_trait_id)
+        .ok_or_else(|| format!("Blob trait not found: {}", blob_trait_id))?;
+    let ext = core_engine::blob::extension_from_storage_id(&trait_.storage_id);
+    let stored = st
+        .blob
+        .store_bytes(content.into_bytes(), ext, None)
+        .await?;
+    trait_.storage_id = stored.storage_id;
+    trait_.hash = stored.hash;
+    trait_.size = stored.size;
+    let owner = trait_.owner.clone();
+    st.db.save_blob_trait(trait_).await?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": owner}),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Open a text blob directly in $EDITOR via an embedded PTY session.
+#[tauri::command]
+async fn edit_blob_in_terminal(
+    blob_trait_id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let session_id = format!("edit-blob-{}", blob_trait_id.replace(':', "-"));
+    if st.pty_sessions.lock().unwrap().contains_key(&session_id) {
+        return Ok(());
+    }
+    let trait_ = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == blob_trait_id)
+        .ok_or_else(|| format!("Blob trait not found: {}", blob_trait_id))?;
+    if !is_text_mime(&trait_.mime) {
+        return Err(format!("Blob {} is not a text file (mime: {})", blob_trait_id, trait_.mime));
+    }
+    let path = st.blob.base_dir.join(&trait_.storage_id);
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let cmd = format!("{} {}", editor, path.to_string_lossy());
+    let pty = PtyHost::spawn(app.clone(), session_id.clone(), Some(cmd))?;
+    let on_exit = pty.on_exit.clone();
+    st.pty_sessions.lock().unwrap().insert(session_id.clone(), pty);
+
+    // Clean up session when editor exits, then print green "Saved"
+    let app_c = app.clone();
+    let sid_c  = session_id.clone();
+    tokio::spawn(async move {
+        on_exit.notified().await;
+        let saved_bytes = b"\r\n\x1b[1;32m\xe2\x9c\x93 Saved\x1b[0m\r\n".to_vec();
+        let _ = app_c.emit("pty-data", (sid_c.clone(), saved_bytes));
+        let state = app_c.state::<Mutex<AppState>>();
+        let st = state.lock().await;
+        st.pty_sessions.lock().unwrap().remove(&sid_c);
+    });
+
+    Ok(())
+}
+
+/// Delete a blob trait and its underlying CAS blob.
+#[tauri::command]
+async fn delete_blob_trait(
+    blob_trait_id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let trait_ = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == blob_trait_id)
+        .ok_or_else(|| format!("Blob trait not found: {}", blob_trait_id))?;
+    let owner = trait_.owner.clone();
+    // Remove the blob trait record
+    st.db.delete_blob_trait(&blob_trait_id).await?;
+    // Best-effort: delete the underlying CAS file (unreferenced anyway after GC)
+    let path = st.blob.base_dir.join(&trait_.storage_id);
+    let _ = std::fs::remove_file(path);
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": owner}),
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Rename a blob trait (filename only — does not move the CAS file).
+#[tauri::command]
+async fn rename_blob_trait(
+    blob_trait_id: String,
+    new_filename: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let mut trait_ = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == blob_trait_id)
+        .ok_or_else(|| format!("Blob trait not found: {}", blob_trait_id))?;
+    let owner = trait_.owner.clone();
+    trait_.filename = new_filename;
+    st.db.save_blob_trait(trait_).await?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": owner}),
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Serialize an entity + its traits to text (YAML or JSON) for the web editor.
+#[tauri::command]
+async fn get_entity_text(
+    entity_id: String,
+    format: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let st = state.lock().await;
+    let entity = st.db.get_entity(&entity_id).await?;
+    let spatial = st
+        .db
+        .get_spatial_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id);
+    let blobs: Vec<_> = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .filter(|t| t.owner == entity_id)
+        .collect();
+    let temporal = st
+        .db
+        .get_temporal_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id);
+    let composite = core_engine::formats::CompositeEntity { entity, spatial, blobs, temporal };
+    match format.as_str() {
+        "json" => core_engine::formats::to_json(&composite),
+        _ => core_engine::formats::to_yaml(&composite),
+    }
+}
+
+/// Parse a YAML/JSON text representation and write the entity + traits back.
+#[tauri::command]
+async fn apply_entity_text(
+    entity_id: String,
+    content: String,
+    format: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let result: core_engine::formats::CompositeEntity = match format.as_str() {
+        "json" => core_engine::formats::from_json(&content)?,
+        _ => core_engine::formats::from_yaml(&content)?,
+    };
+    let st = state.lock().await;
+    let mut entity = result.entity;
+    entity.id = entity_id.clone();
+    st.db.save_entity(entity).await?;
+    if let Some(mut sp) = result.spatial {
+        sp.owner = entity_id.clone();
+        st.db.save_spatial_trait(sp).await?;
+    }
+    if let Some(mut tmp) = result.temporal {
+        tmp.owner = entity_id.clone();
+        st.db.save_temporal_trait(tmp).await?;
+    }
+    for mut b in result.blobs {
+        b.owner = entity_id.clone();
+        st.db.save_blob_trait(b).await?;
+    }
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": entity_id}),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Create a notes blob for an entity.
+/// If `filename` is None the default `{snake_label}.md` is used.
+/// Idempotent per filename: returns the existing blob if the name is already taken.
+#[tauri::command]
+async fn create_entity_notes(
+    entity_id: String,
+    filename: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<core_engine::models::BlobTrait, String> {
+    let st = state.lock().await;
+    let entity = st.db.get_entity(&entity_id).await?;
+    let filename = filename.unwrap_or_else(|| format!("{}.md", to_snake_case(&entity.label)));
+    // Idempotent per filename
+    if let Some(existing) = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id && t.filename == filename)
+    {
+        return Ok(existing);
+    }
+    let ulid = Ulid::new().to_string();
+    // Each notes blob gets its own unique file (no CAS deduplication for empty content)
+    let stored = st.blob.alloc_empty(&ulid, "md")?;
+    let trait_ = core_engine::models::BlobTrait {
+        id: format!("blob_trait:{}", ulid),
+        owner: entity_id.clone(),
+        filename,
+        storage_id: stored.storage_id,
+        bucket: "local".to_string(),
+        mime: "text/markdown".to_string(),
+        hash: stored.hash,
+        size: stored.size,
+    };
+    st.db.save_blob_trait(trait_.clone()).await?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": entity_id}),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(trait_)
 }
 
 // ── Phase 43: Multilingual label commands ─────────────────────────────────────
@@ -1576,6 +1887,7 @@ pub fn run() {
             kill_terminal,
             write_to_terminal,
             resize_terminal,
+            get_terminal_snapshot,
             edit_entity_in_terminal,
             add_edge,
             get_edges,
@@ -1604,6 +1916,14 @@ pub fn run() {
             get_all_label_traits,
             delete_label_trait,
             resolve_display_label,
+            read_blob_content,
+            write_blob_content_by_id,
+            edit_blob_in_terminal,
+            get_entity_text,
+            apply_entity_text,
+            create_entity_notes,
+            delete_blob_trait,
+            rename_blob_trait,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

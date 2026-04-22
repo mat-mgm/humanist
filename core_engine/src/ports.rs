@@ -40,6 +40,7 @@ pub trait GraphDatabase {
     // Phase 4: Blob traits
     async fn save_blob_trait(&self, trait_: crate::models::BlobTrait) -> Result<(), String>;
     async fn get_blob_traits(&self) -> Result<Vec<crate::models::BlobTrait>, String>;
+    async fn delete_blob_trait(&self, blob_trait_id: &str) -> Result<(), String>;
 
     // Phase 35: Temporal traits
     async fn save_temporal_trait(&self, trait_: TemporalTrait) -> Result<(), String>;

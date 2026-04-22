@@ -148,7 +148,7 @@ export function ThreeViewer({ url }: { url: string }) {
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div
         ref={mountRef}
-        style={{ width: '100%', height: '100%', borderRadius: 4, overflow: 'hidden', background: 'var(--bg-secondary, #16171e)' }}
+        style={{ width: '100%', height: '100%', borderRadius: 4, overflow: 'hidden', background: 'radial-gradient(ellipse at 50% 40%, var(--bg-panel, #2e3040) 0%, var(--bg-secondary, #1a1b26) 45%, var(--bg-primary, #0d0e14) 100%)' }}
       />
       <button
         onClick={resetView}

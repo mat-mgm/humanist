@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } fro
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { DndProvider } from 'react-dnd';
-import { Minus, Square, X, SplitSquareHorizontal, Search, Globe, Clock, Calendar, Terminal, Info, Database, Eye } from 'lucide-react';
+import { Minus, Square, X, SplitSquareHorizontal, Search, Globe, Clock, Calendar, Terminal, Info, Database, PencilLine } from 'lucide-react';
 import './App.css';
 
 import { useOsStore } from './store';
@@ -21,8 +21,8 @@ import { TilingLayout, LayoutMode, PaneConfig, SlotNode } from './components/Til
 import { DraggablePane } from './components/DraggablePane';
 import { CommandPalette } from './components/CommandPalette';
 import { EntityInspectorPanel } from './components/EntityInspector';
-import { AssetPreview } from './components/AssetPreview';
 import { InputsPanel } from './components/InputsPanel';
+import { EditionPanel } from './components/EditionPanel';
 
 const GlobeFallback = <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>;
 
@@ -36,7 +36,7 @@ const ALL_PANES: PaneConfig[] = [
   { id: 'terminal',  label: 'Terminal',             icon: 'terminal',  content: <ErrorBoundary label="Terminal"><TerminalPanel /></ErrorBoundary> },
   { id: 'inspector', label: 'Properties',           icon: 'inspector', content: <ErrorBoundary label="Properties"><EntityInspectorPanel /></ErrorBoundary> },
   { id: 'registry',  label: 'Entities & Relations', icon: 'registry',  content: <ErrorBoundary label="Entities & Relations"><EntityKnowledgePanel /></ErrorBoundary> },
-  { id: 'preview',   label: 'Preview',              icon: 'preview',   content: <ErrorBoundary label="Preview"><AssetPreview /></ErrorBoundary> },
+  { id: 'edition',   label: 'Edition',              icon: 'edition',   content: <ErrorBoundary label="Edition"><EditionPanel /></ErrorBoundary> },
 ];
 
 // Globe/Timeline/Calendar appear separately in the right panel picker even though
@@ -47,9 +47,9 @@ const RIGHT_PANEL_PICKER = [
   { id: 'timeline',  icon: <Clock    size={13} />, title: 'Timeline' },
   { id: 'calendar',  icon: <Calendar size={13} />, title: 'Calendar' },
   { id: 'terminal',  icon: <Terminal size={13} />, title: 'Terminal' },
-  { id: 'inspector', icon: <Info     size={13} />, title: 'Properties' },
-  { id: 'registry',  icon: <Database size={13} />, title: 'Entities & Relations' },
-  { id: 'preview',   icon: <Eye      size={13} />, title: 'Preview' },
+  { id: 'inspector', icon: <Info      size={13} />, title: 'Properties' },
+  { id: 'registry',  icon: <Database  size={13} />, title: 'Entities & Relations' },
+  { id: 'edition',   icon: <PencilLine size={13} />, title: 'Edition' },
 ];
 
 // When causal is in the canvas, globe/timeline/calendar are already visible there
@@ -64,21 +64,39 @@ function rightPickerExcluded(primaryCanvasId: string): Set<string> {
 type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night' | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
 
 // Activity IDs in order for Ctrl+Tab cycling
-const ACTIVITY_ORDER = ['inputs', 'graph', 'causal', 'terminal', 'settings'];
+const ACTIVITY_ORDER = ['inputs', 'edition', 'graph', 'causal', 'terminal', 'settings'];
 
 // ── Default tiling layout ─────────────────────────────────────────────────────
 const DEFAULT_SLOTS: SlotNode[] = [
   { type: 'pane', id: 'graph' },
-  { type: 'tabgroup', ids: ['inspector', 'registry', 'preview'], active: 'inspector' },
+  { type: 'tabgroup', ids: ['inspector', 'registry'], active: 'inspector' },
 ];
 
 const STORAGE_KEY = 'spatial-os:layout';
+
+const REMOVED_PANE_IDS = new Set(['preview']);
 
 function loadLayout(): { tiledSlots: SlotNode[]; floatingPaneIds: string[]; layoutMode: LayoutMode } | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Purge removed panes from saved layout
+    if (parsed.tiledSlots) {
+      parsed.tiledSlots = parsed.tiledSlots
+        .map((s: SlotNode) => s.type === 'tabgroup'
+          ? { ...s, ids: s.ids.filter((id: string) => !REMOVED_PANE_IDS.has(id)) }
+          : s)
+        .filter((s: SlotNode) => s.type !== 'tabgroup' || (s as any).ids.length > 0)
+        .map((s: SlotNode) => s.type === 'tabgroup' && (s as any).ids.length === 1
+          ? { type: 'pane', id: (s as any).ids[0] }
+          : s)
+        .filter((s: SlotNode) => s.type !== 'pane' || !REMOVED_PANE_IDS.has((s as any).id));
+    }
+    if (parsed.floatingPaneIds) {
+      parsed.floatingPaneIds = parsed.floatingPaneIds.filter((id: string) => !REMOVED_PANE_IDS.has(id));
+    }
+    return parsed;
   } catch { return null; }
 }
 
@@ -127,12 +145,13 @@ function removeIdFromSlots(slots: SlotNode[], id: string): SlotNode[] {
 }
 
 // Primary-canvas activities — tool/settings clicks must not affect the canvas
-const PRIMARY_CANVAS_IDS = new Set(['inputs', 'graph', 'causal', 'terminal']);
+const PRIMARY_CANVAS_IDS = new Set(['inputs', 'edition', 'graph', 'causal', 'terminal']);
 
 // ── Primary canvas (activity bar mode) ───────────────────────────────────────
 function PrimaryCanvas({ activityId }: { activityId: string }) {
   switch (activityId) {
     case 'inputs':   return <ErrorBoundary label="Inputs"><InputsPanel /></ErrorBoundary>;
+    case 'edition':  return <ErrorBoundary label="Edition"><EditionPanel /></ErrorBoundary>;
     case 'graph':    return <ErrorBoundary label="Knowledge Graph"><GraphPanel /></ErrorBoundary>;
     case 'causal':   return <ErrorBoundary label="Causal Panel"><CausalPanel /></ErrorBoundary>;
     case 'terminal': return <ErrorBoundary label="Terminal"><TerminalPanel /></ErrorBoundary>;

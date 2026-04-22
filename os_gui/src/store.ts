@@ -350,6 +350,23 @@ interface OsStore {
   setGraphPathError: (err: string | null) => void;
   graphResetViewFn: (() => void) | null;
   setGraphResetViewFn: (fn: (() => void) | null) => void;
+
+  // ── Edition Panel state ───────────────────────────────────────
+  editionEntityId: string | null;
+  editionDocKey: string | null; // "entity" | blobTraitId
+  editionMode: 'web' | 'terminal';
+  editionFormat: 'yaml' | 'json';
+  setEditionEntity: (id: string | null) => void;
+  setEditionDoc: (key: string | null) => void;
+  setEditionMode: (mode: 'web' | 'terminal') => void;
+  setEditionFormat: (fmt: 'yaml' | 'json') => void;
+  readBlobContent: (blobTraitId: string) => Promise<string>;
+  writeBlobContentById: (blobTraitId: string, content: string) => Promise<void>;
+  getEntityText: (entityId: string, format: 'yaml' | 'json') => Promise<string>;
+  applyEntityText: (entityId: string, content: string, format: 'yaml' | 'json') => Promise<void>;
+  createEntityNotes: (entityId: string, filename?: string) => Promise<BlobTrait | null>;
+  deleteBlobTrait: (blobTraitId: string) => Promise<void>;
+  renameBlobTrait: (blobTraitId: string, newFilename: string) => Promise<void>;
 }
 
 export const useOsStore = create<OsStore>((set, get) => ({
@@ -417,6 +434,49 @@ export const useOsStore = create<OsStore>((set, get) => ({
   setGraphPathError: (err) => set({ graphPathError: err }),
   graphResetViewFn: null,
   setGraphResetViewFn: (fn) => set({ graphResetViewFn: fn }),
+
+  // ── Edition Panel ─────────────────────────────────────────────
+  editionEntityId: null,
+  editionDocKey: null,
+  editionMode: 'web' as const,
+  editionFormat: 'yaml' as const,
+  setEditionEntity: (id) => set({ editionEntityId: id, editionDocKey: 'entity' }),
+  setEditionDoc: (key) => set({ editionDocKey: key ?? null }),
+  setEditionMode: (mode) => set({ editionMode: mode }),
+  setEditionFormat: (fmt) => set({ editionFormat: fmt }),
+  readBlobContent: async (blobTraitId) => {
+    return invoke<string>('read_blob_content', { blobTraitId });
+  },
+  writeBlobContentById: async (blobTraitId, content) => {
+    await invoke('write_blob_content_by_id', { blobTraitId, content });
+    await get().fetchBlobTraits();
+  },
+  getEntityText: async (entityId, format) => {
+    return invoke<string>('get_entity_text', { entityId, format });
+  },
+  applyEntityText: async (entityId, content, format) => {
+    await invoke('apply_entity_text', { entityId, content, format });
+    await get().fetchEntities();
+    await get().fetchSpatialTraits();
+    await get().fetchTemporalTraits();
+  },
+  createEntityNotes: async (entityId, filename?) => {
+    const trait = await invoke<BlobTrait>('create_entity_notes', { entityId, filename: filename ?? null });
+    await get().fetchBlobTraits();
+    return trait;
+  },
+  deleteBlobTrait: async (blobTraitId) => {
+    await invoke('delete_blob_trait', { blobTraitId });
+    const s = get();
+    if (s.editionDocKey === blobTraitId) {
+      set({ editionDocKey: 'entity' });
+    }
+    await get().fetchBlobTraits();
+  },
+  renameBlobTrait: async (blobTraitId, newFilename) => {
+    await invoke('rename_blob_trait', { blobTraitId, newFilename });
+    await get().fetchBlobTraits();
+  },
 
   setActivePtySession: (sessionId) => set({ activePtySession: sessionId }),
   ensureTerminalWorkbench: async () => {
@@ -1027,6 +1087,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   createEntity: async (kind, label) => {
     const id = await invoke<string>('create_entity', { category: kind, label });
+    // Auto-create canonical notes file for every new entity
+    invoke('create_entity_notes', { entityId: id }).catch(() => {});
     await get().fetchEntities();
     await get().fetchStorageHealth();
     return id;

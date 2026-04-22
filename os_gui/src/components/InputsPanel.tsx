@@ -244,7 +244,6 @@ function InputDraftCard({
   const submitInputDraft = useOsStore(s => s.submitInputDraft);
   const setActiveActivity = useOsStore(s => s.setActiveActivity);
   const setSidePanelOpen = useOsStore(s => s.setSidePanelOpen);
-  const setRightPanelId = useOsStore(s => s.setRightPanelId);
   const selectEntity = useOsStore(s => s.selectEntity);
   const [copied, setCopied] = useState(false);
 
@@ -687,8 +686,9 @@ function InputDraftCard({
               </button>
               <button
                 onClick={() => {
-                  selectEntity(draft.entityId!);
-                  setRightPanelId('preview');
+                  const { setEditionEntity, setActiveActivity } = useOsStore.getState();
+                  setEditionEntity(draft.entityId!);
+                  setActiveActivity('edition');
                 }}
                 style={{
                   background: 'none',
@@ -700,7 +700,7 @@ function InputDraftCard({
                   cursor: 'pointer',
                 }}
               >
-                Open Preview
+                Open in Editor
               </button>
               <button
                 onClick={async () => {

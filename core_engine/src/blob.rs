@@ -88,28 +88,108 @@ pub fn extension_from_storage_id(storage_id: &str) -> Option<String> {
 
 pub fn infer_mime_from_path(path: &str) -> String {
     let lower = path.to_ascii_lowercase();
+    let fname = std::path::Path::new(&lower)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    // Images
     if lower.ends_with(".png") {
         "image/png".to_string()
     } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
         "image/jpeg".to_string()
     } else if lower.ends_with(".gif") {
         "image/gif".to_string()
+    } else if lower.ends_with(".webp") {
+        "image/webp".to_string()
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    // Documents
     } else if lower.ends_with(".pdf") {
         "application/pdf".to_string()
+    // 3D models
     } else if lower.ends_with(".glb") {
         "model/gltf-binary".to_string()
     } else if lower.ends_with(".gltf") {
         "model/gltf+json".to_string()
+    // Markup / prose
     } else if lower.ends_with(".md") || lower.ends_with(".markdown") {
         "text/markdown".to_string()
-    } else if lower.ends_with(".txt") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".text") {
         "text/plain".to_string()
-    } else if lower.ends_with(".json") {
+    } else if lower.ends_with(".html") || lower.ends_with(".htm") {
+        "text/html".to_string()
+    } else if lower.ends_with(".xml") {
+        "text/xml".to_string()
+    } else if lower.ends_with(".csv") {
+        "text/csv".to_string()
+    // Data / config
+    } else if lower.ends_with(".json") || lower.ends_with(".jsonc") {
         "application/json".to_string()
     } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
         "application/yaml".to_string()
+    } else if lower.ends_with(".toml") {
+        "application/toml".to_string()
+    // Programming languages
+    } else if lower.ends_with(".rs") {
+        "text/x-rust".to_string()
+    } else if lower.ends_with(".py") || lower.ends_with(".pyw") {
+        "text/x-python".to_string()
+    } else if lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs") {
+        "text/javascript".to_string()
+    } else if lower.ends_with(".ts") || lower.ends_with(".mts") || lower.ends_with(".cts") {
+        "text/typescript".to_string()
+    } else if lower.ends_with(".tsx") {
+        "text/typescript-tsx".to_string()
+    } else if lower.ends_with(".jsx") {
+        "text/javascript-jsx".to_string()
+    } else if lower.ends_with(".c") || lower.ends_with(".h") {
+        "text/x-c".to_string()
+    } else if lower.ends_with(".cpp") || lower.ends_with(".cc") || lower.ends_with(".cxx")
+        || lower.ends_with(".hpp") || lower.ends_with(".hxx") || lower.ends_with(".hh")
+    {
+        "text/x-c++".to_string()
+    } else if lower.ends_with(".cs") {
+        "text/x-csharp".to_string()
+    } else if lower.ends_with(".java") {
+        "text/x-java".to_string()
+    } else if lower.ends_with(".go") {
+        "text/x-go".to_string()
+    } else if lower.ends_with(".rb") {
+        "text/x-ruby".to_string()
+    } else if lower.ends_with(".sh") || lower.ends_with(".bash") || lower.ends_with(".zsh") {
+        "text/x-sh".to_string()
+    } else if lower.ends_with(".css") {
+        "text/css".to_string()
+    } else if lower.ends_with(".scss") || lower.ends_with(".sass") {
+        "text/x-scss".to_string()
+    } else if lower.ends_with(".nix") {
+        "text/x-nix".to_string()
+    } else if lower.ends_with(".lua") {
+        "text/x-lua".to_string()
     } else if lower.ends_with(".pl") || lower.ends_with(".pro") {
         "application/x-prolog".to_string()
+    } else if lower.ends_with(".sql") {
+        "text/x-sql".to_string()
+    } else if lower.ends_with(".r") {
+        "text/x-r".to_string()
+    } else if lower.ends_with(".swift") {
+        "text/x-swift".to_string()
+    } else if lower.ends_with(".kt") || lower.ends_with(".kts") {
+        "text/x-kotlin".to_string()
+    } else if lower.ends_with(".zig") {
+        "text/x-zig".to_string()
+    } else if lower.ends_with(".tex") || lower.ends_with(".latex") || lower.ends_with(".sty") || lower.ends_with(".cls") {
+        "text/x-tex".to_string()
+    // Well-known dotfiles / config files with no or atypical extensions
+    } else if matches!(
+        fname,
+        ".gitignore" | ".gitattributes" | ".env" | ".envrc" | ".editorconfig"
+            | ".prettierrc" | ".eslintrc" | ".babelrc" | ".npmrc" | ".nvmrc"
+            | "dockerfile" | "makefile" | "gemfile" | "rakefile" | "procfile"
+            | "cargo.toml" | "cargo.lock" | "flake.nix" | "flake.lock"
+            | "justfile" | "taskfile"
+    ) {
+        "text/plain".to_string()
     } else {
         "application/octet-stream".to_string()
     }
@@ -272,6 +352,23 @@ impl LocalBlobAdapter {
             hash,
             size: content.len() as i64,
         })
+    }
+}
+
+impl LocalBlobAdapter {
+    /// Create a new empty blob with a unique path (no CAS deduplication).
+    /// Used when creating notes files so each entity gets its own independent file.
+    pub fn alloc_empty(&self, unique_id: &str, extension: &str) -> Result<StoredBlob, String> {
+        let ext = normalize_extension(Some(extension)).unwrap_or_else(|| extension.to_string());
+        let storage_id = format!("notes/{}.{}", unique_id, ext);
+        let dest = self.base_dir.join(&storage_id);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&dest, b"").map_err(|e| e.to_string())?;
+        // Empty content hash is constant; size is 0
+        let hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string();
+        Ok(StoredBlob { storage_id, hash, size: 0 })
     }
 }
 

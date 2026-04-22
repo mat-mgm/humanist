@@ -9,7 +9,7 @@ A spatial operating system interface and backend.
 ## Status
 Current status: in-progress
 Start date: 
-Last updated: 
+Last updated: 2026-04-22
 Priority: High
 
 State rules:
@@ -54,7 +54,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
 * **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
 * **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
@@ -834,7 +834,7 @@ Refactor the current local blob storage into a true immutable content-addressed 
 - `BlobTrait.mime` remains the dispatch key for viewers and processors, but MIME dispatch should build on top of the new CAS substrate rather than define it.
 - New blobs do not write `import_path` or `source_path` into generic entity metadata; CLI and GUI resolve file access through `BlobTrait` fields instead.
 
-### Phase 48: Ontological Model Refactor — Category, Persona, and Trait Separation
+### Phase 48: Ontological Model Refactor - Category, Persona, and Trait Separation
 **Description**
 Rename the `kind` field to `category` across the entire stack (Rust models, SurrealDB schema, Tauri IPC, TypeScript interfaces, and all frontend components) to better express its ontological role. Simultaneously rename the `Agent` variant to `Persona`. Remove the `Blob` and `Temporal` variants from `EntityKind`: both were redundant with `BlobTrait` and `TemporalTrait`, which are orthogonal capability layers any entity can carry regardless of category. `EntityKind` is reduced to four pure ontological classifiers: `Physical`, `Digital`, `Abstract`, `Persona`. Fix resulting graph rendering and data-loading bugs introduced by the schema migration.
 
@@ -1018,7 +1018,65 @@ Turn the Terminal activity into a proper workbench: the left side panel becomes 
 - The current terminal already multiplexes a single xterm canvas across PTY session ids; this phase should generalize that pattern instead of introducing a second terminal rendering stack.
 - The selector should stay suckless: session type, title, and state are enough for the first iteration; tab bars and extra chrome are unnecessary.
 
-### Phase 52: UI Utilities & UX Hardening
+### Phase 52: Edition Panel
+**Description**
+Add a first-class `Edition` activity to the activity bar. The panel provides a unified surface for reading and modifying any entity's full content: its structured database record (serialized as editable YAML/JSON) and its attached text files (notes, JSON, plain text blobs). A single canvas occupies the primary area; the left side panel hosts document navigation plus mode/format controls. The canvas can render CodeMirror for text editing, embedded xterm.js for `$EDITOR`, or inline viewers for binary blobs (PDF, image, GLB).
+
+Every entity automatically receives a canonical notes file (`{snake_case_label}.md`) at creation time. This file is stored as a `BlobTrait` in the CAS, always appears first in the document list, and is the primary free-form writing surface for that entity.
+
+**Design decisions**
+- Decision: Proposal A - Single Canvas, Document Switch.  
+  Rationale: Entity YAML and notes file are at equal priority; switching by keypress is sufficient; one notes file per entity is the common case; single canvas maximises editor real estate and keeps the implementation minimal.
+- Decision: CodeMirror as the baked-in web editor.  
+  Rationale: Proper syntax highlighting and line numbers are required; CodeMirror is lighter than Monaco and has no extension marketplace complexity.
+- Decision: Auto-created notes file on entity creation, named `{snake_case_label}.md`.  
+  Rationale: Every entity should have a notes surface immediately without an explicit import step. Naming by snake-cased label keeps the filename human-readable and deterministic.
+- Decision: Binary blobs render inline inside the Edition canvas.  
+  Rationale: This keeps document switching local to the Edition workflow and reuses the existing PDF / image / GLB viewers without forcing a panel hop.
+- Decision: Terminal mode replaces the canvas entirely - only for text-based documents.  
+  Rationale: `$EDITOR` (Neovim) must be a full-fidelity replacement, not a side-by-side widget. Binary blobs are excluded because the terminal cannot render them.
+
+**Tasks**
+
+- [✓] **`edition` activity**: Add an `Edit` (Pencil) Lucide icon entry to the activity bar between Inputs and Graph.
+- [✓] **Store state**: Add `editionEntityId`, `editionDocKey`, `editionMode`, and `editionFormat`, plus helpers for reading/writing entity and blob documents.
+- [✓] **Notes lifecycle**: Add `create_entity_notes`, `read_blob_content`, `write_blob_content_by_id`, `edit_blob_in_terminal`, `delete_blob_trait`, and `rename_blob_trait` Tauri commands, then call notes creation automatically from the frontend entity-creation flow.
+- [✓] **Side panel**: Build an Edition side panel showing the current entity, ordered document list, notes creation / rename / delete actions, and mode/format toggles.
+- [✓] **Web editor**: Render CodeMirror in the main canvas for entity YAML/JSON and text blobs, with syntax detection, dirty tracking, `Ctrl+S`, and save/discard controls.
+- [✓] **Terminal editor mode**: Mount a dedicated PTY canvas for `$EDITOR` and wire it to `edit_entity_in_terminal` / `edit_blob_in_terminal`.
+- [✓] **Inline binary preview**: Render image, PDF, and GLB blobs directly in the Edition canvas rather than opening a separate panel.
+- [✓] **Document navigation**: Support ordered document switching via `Alt+[` / `Alt+]`.
+- [✓] **Remove standalone Preview panel**: Remove the Preview panel from the activity bar, right-panel picker, and default tiling slots; all asset viewing moves into the Edition canvas inline viewers.
+- [✓] **Broad code-file MIME support**: Extend `infer_mime_from_path` to cover source code formats (Python, Rust, C/C++, JS/TS, HTML, CSS, Nix, Lua, SQL, Go, Shell, etc.) and add corresponding CodeMirror language extensions so code files open in the editor rather than falling back to binary view.
+- [✓] **CAS deduplication fix for notes**: New entity notes files use a ULID-keyed path under `notes/` via `alloc_empty()`, bypassing the content-addressed deduplication that caused all empty notes to share one physical file.
+- [✓] **CBOR deserialisation fix**: Change `get_blob_traits` query from `SELECT *` to explicit field selection to prevent SurrealDB `RecordId` CBOR revision-150 deserialisation errors.
+
+**Checks**
+- [✓] Creating a new entity automatically produces a `{snake_case_label}.md` blob visible in the Edition Panel document list.
+- [✓] Switching documents with `Alt+[` / `Alt+]` cycles through entity doc and all attached blobs in order.
+- [✓] Editing the entity YAML in web mode and saving updates the entity and traits visible in the Graph and Inspector panels without a full reload.
+- [✓] Editing the notes file in web mode saves new content; re-opening the panel reloads the updated content.
+- [✓] Selecting a binary blob in the side panel loads an inline preview in the Edition canvas.
+- [✓] Switching to terminal mode opens xterm.js with `$EDITOR` running on the selected text document.
+- [✓] CodeMirror applies syntax highlighting for entity YAML/JSON and all common text blob types: Markdown, JSON, YAML, Python, Rust, C/C++, JavaScript/TypeScript (JSX/TSX), HTML, CSS/SCSS.
+- [✓] Binary blobs (PDF, image, GLB) open inline in the Edition canvas; the standalone Preview panel no longer exists.
+- [✓] Multiple blobs attached to the same entity all appear in the side-panel document list and are individually selectable.
+- [✓] Newly created notes files for different entities are stored as distinct physical files (no CAS collision on empty content).
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `cargo check --workspace` passes with zero warnings.
+
+**Notes / Risks / Resources**
+- CodeMirror dependencies: `@codemirror/state`, `@codemirror/view`, `@codemirror/lang-yaml`, `@codemirror/lang-markdown`, `@codemirror/lang-json`, `@codemirror/lang-python`, `@codemirror/lang-rust`, `@codemirror/lang-cpp`, `@codemirror/lang-javascript`, `@codemirror/lang-html`, `@codemirror/lang-css`, `@codemirror/legacy-modes` (for LaTeX/stex via `StreamLanguage`).
+- The PDF viewer defaults to natural document colors; a "Theme" toggle in the toolbar applies the CSS-variable color remapping for dark/light theme integration.
+- The 3D (GLB/GLTF) viewer background uses CSS custom properties (`--bg-panel`, `--bg-secondary`, `--bg-primary`) for theme-adaptive gradient, not hardcoded colors.
+- The `write_blob_content_by_id` command follows immutable CAS semantics - it creates a new CAS object and updates the `BlobTrait` pointer. Old content survives until the next GC pass. This is intentional: it preserves blob history at the cost of slightly more disk usage.
+- `edit_entity_in_terminal` already exists and handles the YAML temp-file + PTY flow. This phase wires it into the Edition Panel canvas rather than using it from the Inspector escape hatch.
+- The auto-notes creation in the frontend entity flow must remain idempotent: if a notes blob for the entity already exists (e.g., after a restart and re-import), do not create a duplicate.
+- Reference design: [docs/notes/edition_panel_proposals.md](docs/notes/edition_panel_proposals.md)
+
+---
+
+### Phase 53: UI Utilities & UX Hardening
 **Description**
 Enhance the user experience with native integration for file management and quick identifier access.
 
@@ -1032,7 +1090,7 @@ Enhance the user experience with native integration for file management and quic
 - [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 
-### Phase 53: Semantic Metadata Enforcement
+### Phase 54: Semantic Metadata Enforcement
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 

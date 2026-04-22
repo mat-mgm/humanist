@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Trash2, Pencil, Info } from 'lucide-react';
+import { Trash2, Pencil, Info, X, Minus } from 'lucide-react';
 
 import { useOsStore, resolvedLabel } from '../store';
 import { EntitySnapshot, LabelTrait, SpatialTrait, TemporalTrait } from '../models';
@@ -36,7 +36,7 @@ const TagChip = memo(function TagChip({ label, onRemove }: { label: string; onRe
     }}>
       {label}
       <button onClick={onRemove} title="Remove tag"
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11, padding: '0 0 0 2px', lineHeight: 1 }}>✕</button>
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: '0 0 0 2px', lineHeight: 1, display: 'flex', alignItems: 'center' }}><Minus size={10} /></button>
     </span>
   );
 });
@@ -168,12 +168,10 @@ const SingleInspector = memo(function SingleInspector() {
   const deleteLabelTrait = useOsStore(s => s.deleteLabelTrait);
   const getEffectiveSpatialTrait = useOsStore(s => s.getEffectiveSpatialTrait);
 
-  // Terminal editor state (owned here since inspector is now standalone)
-  const [editFormat, setEditFormat] = useState<'yaml' | 'json' | 'markdown'>('yaml');
-  const [isSpawning, setIsSpawning] = useState(false);
 
   const selected = useMemo(() => entities.find(e => e.id === selectedId) ?? null, [entities, selectedId]);
-  const blobTrait = selected ? blobTraits.find(b => b.owner === selected.id) : null;
+  const ownBlobTraits = selected ? blobTraits.filter(b => b.owner === selected.id) : [];
+  const blobTrait = ownBlobTraits[0] ?? null;
   const blobSourcePath = blobTrait?.localUrl ?? null;
 
   const selectedDisplayLabel = useMemo(
@@ -351,17 +349,11 @@ const SingleInspector = memo(function SingleInspector() {
     catch (err) { alert('External editor failed: ' + err); }
   };
 
-  const onEditInTerminal = async () => {
-    if (!selected || isSpawning) return;
-    setIsSpawning(true);
-    const setActivePtySession = useOsStore.getState().setActivePtySession;
-    try {
-      setActivePtySession(`edit-${selected.id}`);
-      await invoke('edit_entity_in_terminal', { entityId: selected.id, format: editFormat });
-    } catch (err) {
-      alert('Terminal editor failed to start: ' + err);
-      setActivePtySession('main');
-    } finally { setIsSpawning(false); }
+  const onOpenInEditor = () => {
+    if (!selected) return;
+    const { setActiveActivity, setEditionEntity } = useOsStore.getState();
+    setEditionEntity(selected.id);
+    setActiveActivity('edition');
   };
 
   // Reset per-entity state on selection change
@@ -462,7 +454,7 @@ const SingleInspector = memo(function SingleInspector() {
               <input value={v} onChange={ev => setEditMeta(prev => ({ ...prev!, [k]: ev.target.value }))}
                 style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 7px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }} />
               <button onClick={() => setEditMeta(prev => { const n = { ...prev! }; delete n[k]; return n; })}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 13 }}>✕</button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', display: 'flex', alignItems: 'center' }}><Trash2 size={12} /></button>
             </div>
           ))}
           <div style={{ display: 'flex', gap: 5, marginTop: 4 }}>
@@ -477,36 +469,30 @@ const SingleInspector = memo(function SingleInspector() {
         </div>
       )}
 
-      {/* Blob */}
-      <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Blob</span>
-        {blobTrait && blobSourcePath && (
-          <button onClick={onOpenExternal}
-            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
-            Open
-          </button>
-        )}
+      {/* Blobs */}
+      <div style={{ margin: '16px 0 4px' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Documents</span>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {!blobTrait ? (
-          <span>No blob data</span>
-        ) : (
-          <>
-            <div className="prop-row"><span className="prop-key">File Name</span><span className="prop-val mono" style={{ wordBreak: 'break-all' }}>{blobTrait.filename}</span></div>
-            <div className="prop-row"><span className="prop-key">Mime</span><span className="prop-val mono">{blobTrait.mime}</span></div>
-            <div className="prop-row"><span className="prop-key">Size</span><span className="prop-val mono">{formatBlobSize(blobTrait.size)}</span></div>
-            <div className="prop-row"><span className="prop-key">Bucket</span><span className="prop-val mono">{blobTrait.bucket}</span></div>
-            <div className="prop-row"><span className="prop-key">Storage</span><span className="prop-val mono" style={{ wordBreak: 'break-all' }}>{blobTrait.storage_id}</span></div>
-            <div className="prop-row"><span className="prop-key">Hash</span><span className="prop-val mono" style={{ wordBreak: 'break-all' }}>{blobTrait.hash}</span></div>
-            {blobSourcePath && (
-              <div className="prop-row">
-                <span className="prop-key">Path</span>
-                <span className="prop-val mono" style={{ wordBreak: 'break-all' }}>{blobSourcePath}</span>
-              </div>
+      {ownBlobTraits.length === 0 ? (
+        <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No documents</span>
+      ) : ownBlobTraits.map(b => (
+        <div key={b.id} style={{ marginBottom: 10, padding: '6px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{b.filename}</span>
+            {b.localUrl && (
+              <button onClick={async () => { try { await invoke('open_external_path', { path: b.localUrl }); } catch (err) { alert('External editor failed: ' + err); } }}
+                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 10, flexShrink: 0, marginLeft: 6 }}>
+                Open
+              </button>
             )}
-          </>
-        )}
-      </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div className="prop-row"><span className="prop-key">Mime</span><span className="prop-val mono">{b.mime}</span></div>
+            <div className="prop-row"><span className="prop-key">Size</span><span className="prop-val mono">{formatBlobSize(b.size)}</span></div>
+            {b.localUrl && <div className="prop-row"><span className="prop-key">Path</span><span className="prop-val mono" style={{ wordBreak: 'break-all' }}>{b.localUrl}</span></div>}
+          </div>
+        </div>
+      ))}
 
       {/* Spatial */}
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -663,7 +649,7 @@ const SingleInspector = memo(function SingleInspector() {
                   isOut ? selected.id : `entity:${peerId}`,
                   isOut ? `entity:${peerId}` : selected.id, edge.label,
                 ); }} title="Remove edge"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12 }}>✕</button>
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', display: 'flex', alignItems: 'center' }}><Trash2 size={12} /></button>
               </div>
               {isEdgeSelected && (
                 <div style={{ padding: '6px 0 8px 16px', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -712,7 +698,7 @@ const SingleInspector = memo(function SingleInspector() {
               <div style={{ marginTop: 8, padding: 10, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Viewing snapshot — read only</span>
-                  <button onClick={clearSnapshot} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 12, padding: 0 }}>✕</button>
+                  <button onClick={clearSnapshot} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: 0, display: 'flex', alignItems: 'center' }}><X size={12} /></button>
                 </div>
                 <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Label: </span><span style={{ color: 'var(--text-primary)' }}>{snapshot.label}</span></div>
                 <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Category: </span><span className={`kind-badge kind-${snapshot.category}`}>{snapshot.category}</span></div>
@@ -754,7 +740,7 @@ const SingleInspector = memo(function SingleInspector() {
                   <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
                   {t.lang === activeLocale && <span style={{ fontSize: 9, color: 'var(--accent)', flexShrink: 0 }}>active</span>}
                   <button onClick={() => deleteLabelTrait(t.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 12, padding: '0 2px', flexShrink: 0 }} title="Delete translation">✕</button>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: '0 2px', flexShrink: 0, display: 'flex', alignItems: 'center' }} title="Delete translation"><Trash2 size={11} /></button>
                 </div>
               ))
             }
@@ -771,26 +757,17 @@ const SingleInspector = memo(function SingleInspector() {
         )}
       </div>
 
-      {/* Terminal editor */}
+      {/* Editor */}
       <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Terminal Editor</span>
-          <span style={{ fontSize: 10, color: 'var(--text-hint)', opacity: 0.7 }}>Uses local $EDITOR</span>
-        </div>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Editor</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <select value={editFormat} onChange={e => setEditFormat(e.target.value as any)}
-            style={{ flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, color: 'var(--text-primary)', outline: 'none' }}>
-            <option value="yaml">YAML</option>
-            <option value="json">JSON</option>
-            <option value="markdown">Markdown</option>
-          </select>
-          <button onClick={onEditInTerminal} disabled={isSpawning}
-            style={{ background: isSpawning ? 'var(--text-hint)' : 'var(--accent)', border: 'none', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 600, opacity: isSpawning ? 0.7 : 1 }}>
-            {isSpawning ? 'Spawning...' : 'Edit in Terminal'}
+          <button onClick={onOpenInEditor}
+            style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 14px', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 600 }}>
+            Edit
           </button>
-          {blobTrait && (
+          {blobTrait && blobSourcePath && (
             <button onClick={onOpenExternal}
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 11, fontWeight: 600 }}>
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 12px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, fontWeight: 600 }}>
               Open Externally
             </button>
           )}

@@ -6,7 +6,8 @@ pub struct CompositeEntity {
     #[serde(flatten)]
     pub entity: Entity,
     pub spatial: Option<SpatialTrait>,
-    pub blob: Option<BlobTrait>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blobs: Vec<BlobTrait>,
     pub temporal: Option<TemporalTrait>,
 }
 
