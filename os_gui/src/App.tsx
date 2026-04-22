@@ -42,14 +42,14 @@ const ALL_PANES: PaneConfig[] = [
 // Globe/Timeline/Calendar appear separately in the right panel picker even though
 // the activity bar groups them as "Causal Panel".
 const RIGHT_PANEL_PICKER = [
-  { id: 'graph',     icon: <Search   size={13} />, title: 'Knowledge Graph' },
-  { id: 'globe',     icon: <Globe    size={13} />, title: 'Globe' },
-  { id: 'timeline',  icon: <Clock    size={13} />, title: 'Timeline' },
-  { id: 'calendar',  icon: <Calendar size={13} />, title: 'Calendar' },
-  { id: 'terminal',  icon: <Terminal size={13} />, title: 'Terminal' },
-  { id: 'inspector', icon: <Info      size={13} />, title: 'Properties' },
-  { id: 'registry',  icon: <Database  size={13} />, title: 'Entities & Relations' },
+  { id: 'inspector', icon: <Info       size={13} />, title: 'Properties' },
+  { id: 'registry',  icon: <Database   size={13} />, title: 'Entities & Relations' },
   { id: 'edition',   icon: <PencilLine size={13} />, title: 'Edition' },
+  { id: 'graph',     icon: <Search     size={13} />, title: 'Knowledge Graph' },
+  { id: 'globe',     icon: <Globe      size={13} />, title: 'Globe' },
+  { id: 'timeline',  icon: <Clock      size={13} />, title: 'Timeline' },
+  { id: 'calendar',  icon: <Calendar   size={13} />, title: 'Calendar' },
+  { id: 'terminal',  icon: <Terminal   size={13} />, title: 'Terminal' },
 ];
 
 // When causal is in the canvas, globe/timeline/calendar are already visible there

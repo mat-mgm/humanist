@@ -1,8 +1,8 @@
 import { memo, useState, useCallback, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { useOsStore } from '../store';
 
-export const OntologyPanel = memo(function OntologyPanel() {
+export const RelationshipsPanel = memo(function RelationshipsPanel() {
   const fetchRelationshipTypes = useOsStore(s => s.fetchRelationshipTypes);
   const saveRelationshipType = useOsStore(s => s.saveRelationshipType);
   const deleteRelationshipType = useOsStore(s => s.deleteRelationshipType);
@@ -10,6 +10,7 @@ export const OntologyPanel = memo(function OntologyPanel() {
 
   useEffect(() => { fetchRelationshipTypes(); }, [fetchRelationshipTypes]);
 
+  const [search, setSearch] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [newTransitive, setNewTransitive] = useState(false);
   const [newSymmetric, setNewSymmetric] = useState(false);
@@ -37,35 +38,25 @@ export const OntologyPanel = memo(function OntologyPanel() {
     </label>
   );
 
+  const filtered = relationshipTypes.filter(rt =>
+    rt.label.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-header)' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Relationship Types</span>
-      </div>
-
-      {/* Type list */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {relationshipTypes.length === 0
-          ? <div style={{ padding: 16, fontSize: 11, color: 'var(--text-hint)' }}>No types defined yet.</div>
-          : relationshipTypes.map(rt => (
-            <div key={rt.id} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{rt.label}</span>
-              <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>
-                {[rt.transitive && 'transitive', rt.symmetric && 'symmetric', rt.inherits_traits && 'inherits'].filter(Boolean).join(' · ') || 'no flags'}
-              </span>
-              <button
-                onClick={() => deleteRelationshipType(rt.label)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12, padding: '0 4px' }}
-                title="Delete"
-              ><X size={11} /></button>
-            </div>
-          ))
-        }
+      {/* Search bar */}
+      <div style={{ display: 'flex', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-header)', flexShrink: 0 }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search relationships…"
+          style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+        />
       </div>
 
       {/* Create form */}
-      <div style={{ padding: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
         <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>New Type</span>
         <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="e.g. is_hosted_on" style={fieldStyle}
           onKeyDown={e => e.key === 'Enter' && submit()} />
@@ -78,6 +69,40 @@ export const OntologyPanel = memo(function OntologyPanel() {
         <button onClick={submit} style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
           + Add
         </button>
+      </div>
+
+      {/* Type list */}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 16, fontSize: 11, color: 'var(--text-hint)' }}>
+            {relationshipTypes.length === 0 ? 'No types defined yet.' : 'No matches.'}
+          </div>
+        ) : (
+          <table className="entity-table">
+            <thead>
+              <tr><th>Label</th><th>Flags</th><th></th></tr>
+            </thead>
+            <tbody>
+              {filtered.map(rt => (
+                <tr key={rt.id}>
+                  <td style={{ fontWeight: 600 }}>{rt.label}</td>
+                  <td style={{ fontSize: 10, color: 'var(--text-hint)' }}>
+                    {[rt.transitive && 'transitive', rt.symmetric && 'symmetric', rt.inherits_traits && 'inherits'].filter(Boolean).join(' · ') || '—'}
+                  </td>
+                  <td>
+                    <button
+                      onClick={() => deleteRelationshipType(rt.label)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', padding: '0 4px', display: 'flex', alignItems: 'center' }}
+                      title="Delete"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

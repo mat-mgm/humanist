@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { EntityRegistry } from './EntityRegistry';
-import { OntologyPanel } from './OntologyPanel';
+import { RelationshipsPanel } from './OntologyPanel';
 
 type Tab = 'entities' | 'relationships';
 
@@ -37,7 +37,7 @@ export function EntityKnowledgePanel() {
 
       {/* Scrollable panel body */}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-        {tab === 'entities' ? <EntityRegistry /> : <OntologyPanel />}
+        {tab === 'entities' ? <EntityRegistry /> : <RelationshipsPanel />}
       </div>
 
     </div>

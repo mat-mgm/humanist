@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -22,8 +24,14 @@ const LOCALES = [
   { value: 'fr', label: 'fr — Français' },
   { value: 'pt', label: 'pt — Português' },
   { value: 'es', label: 'es — Español' },
+  { value: 'ca', label: 'ca — Català' },
+  { value: 'it', label: 'it — Italiano' },
+  { value: 'nl', label: 'nl — Nederlands' },
   { value: 'zh', label: 'zh — 中文' },
+  { value: 'ja', label: 'ja — 日本語' },
+  { value: 'ko', label: 'ko — 한국어' },
   { value: 'ar', label: 'ar — العربية' },
+  { value: 'ru', label: 'ru — Русский' },
 ];
 
 const KEYBINDS_REFERENCE = [
@@ -47,10 +55,39 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange }: SettingsPanelProps) {
-  const activeLocale      = useOsStore(s => s.activeLocale);
-  const setActiveLocale   = useOsStore(s => s.setActiveLocale);
-  const tilingModeEnabled = useOsStore(s => s.tilingModeEnabled);
-  const setTilingMode     = useOsStore(s => s.setTilingModeEnabled);
+  const activeLocale        = useOsStore(s => s.activeLocale);
+  const setActiveLocale     = useOsStore(s => s.setActiveLocale);
+  const tilingModeEnabled   = useOsStore(s => s.tilingModeEnabled);
+  const setTilingMode       = useOsStore(s => s.setTilingModeEnabled);
+  const fetchAllEntities    = useOsStore(s => s.fetchAllEntities);
+  const fetchStorageHealth  = useOsStore(s => s.fetchStorageHealth);
+  const fetchBlobTraits     = useOsStore(s => s.fetchBlobTraits);
+  const fetchSpatialTraits  = useOsStore(s => s.fetchSpatialTraits);
+  const fetchTemporalTraits = useOsStore(s => s.fetchTemporalTraits);
+  const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
+
+  const [confirmDb,   setConfirmDb]   = useState(false);
+  const [confirmBlob, setConfirmBlob] = useState(false);
+  const [clearDbErr,  setClearDbErr]  = useState('');
+  const [clearBlobErr, setClearBlobErr] = useState('');
+
+  const doClearDatabase = async () => {
+    setClearDbErr('');
+    try {
+      await invoke('clear_database');
+      await Promise.all([fetchAllEntities(), fetchSpatialTraits(), fetchTemporalTraits(), fetchBlobTraits(), fetchAllLabelTraits(), fetchStorageHealth()]);
+    } catch (e: any) { setClearDbErr(String(e)); }
+    setConfirmDb(false);
+  };
+
+  const doClearBlobStore = async () => {
+    setClearBlobErr('');
+    try {
+      await invoke('clear_blob_store');
+      await Promise.all([fetchBlobTraits(), fetchStorageHealth()]);
+    } catch (e: any) { setClearBlobErr(String(e)); }
+    setConfirmBlob(false);
+  };
 
   const section: React.CSSProperties = {
     borderBottom: '1px solid var(--border)',
@@ -123,6 +160,55 @@ export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange 
               }}>{key}</kbd>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div style={section}>
+        <span style={sectionLabel}>Data Management</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* Clear Database */}
+          <div>
+            {!confirmDb ? (
+              <button onClick={() => { setConfirmDb(true); setClearDbErr(''); }}
+                style={{ background: 'none', border: '1px solid #ff6b6b', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: '#ff6b6b', fontSize: 11, fontWeight: 700 }}>
+                Clear Database
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#ff6b6b' }}>Wipe all entities, traits, edges, and history?</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={doClearDatabase}
+                    style={{ background: '#ff6b6b', border: 'none', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Yes, wipe</button>
+                  <button onClick={() => setConfirmDb(false)}
+                    style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {clearDbErr && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '4px 0 0' }}>{clearDbErr}</p>}
+          </div>
+
+          {/* Clear Blob Store */}
+          <div>
+            {!confirmBlob ? (
+              <button onClick={() => { setConfirmBlob(true); setClearBlobErr(''); }}
+                style={{ background: 'none', border: '1px solid #ff6b6b', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: '#ff6b6b', fontSize: 11, fontWeight: 700 }}>
+                Clear Blob Store
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#ff6b6b' }}>Remove all blob files and blob trait records?</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={doClearBlobStore}
+                    style={{ background: '#ff6b6b', border: 'none', borderRadius: 5, padding: '4px 12px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 700 }}>Yes, wipe</button>
+                  <button onClick={() => setConfirmBlob(false)}
+                    style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {clearBlobErr && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '4px 0 0' }}>{clearBlobErr}</p>}
+          </div>
+
         </div>
       </div>
 

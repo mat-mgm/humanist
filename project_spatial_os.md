@@ -54,7 +54,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel. The **Settings panel** additionally exposes theme selection, a multi-locale language dropdown (en, de, fr, pt, es, ca, it, nl, zh, ja, ko, ar, ru), keyboard shortcut reference, and destructive data-management commands (`clear_database`, `clear_blob_store`) backed by Tauri IPC — each gated by an inline confirmation step. The right panel (toggled via `Ctrl+\`) surfaces Properties, Entities & Relations, and Edition as the first three pickers, followed by the visualisation panels.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
 * **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
 * **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
@@ -1076,19 +1076,37 @@ Every entity automatically receives a canonical notes file (`{snake_case_label}.
 
 ---
 
-### Phase 53: UI Utilities & UX Hardening
+### Phase 53: UI Polish & Application Shell Hardening
 **Description**
-Enhance the user experience with native integration for file management and quick identifier access.
+Consolidate accumulated UX improvements into the application shell: panel layout polish, relationships panel UX, window management, data reset tools, and locale expansion.
 
 **Tasks**
-- [ ] **ULID Copy Tool**: Add a "Copy ULID" button to the `EntityInspector` and Registry list to quickly copy entity identifiers to the system clipboard.
-- [ ] **Clipboard Feedback**: Integrate a brief "Copied!" tooltip or toast notification on successful clipboard write.
-- [ ] **Entity list spacing**: Make the list items more compact, since now items are too high an contain empty space.
-- [ ] **Right side bar selector order**: Place the Properties, Entities and relationships and Preview before any other panel.
+
+*Panel & layout polish*
+- [✓] **Relationships panel improvements**: Rename `OntologyPanel` export to `RelationshipsPanel`; add search bar; render type list as a table with Label / Flags headers; move "New Type" form above the list.
+- [✓] **Entity list scrollbar**: Wrap the `EntityRegistry` table in a scrollable container so long entity lists do not overflow the panel.
+- [✓] **Icon cleanup**: Replace remaining `✕` text-button delete/remove actions in `EntityInspector` with `<Trash2>` or `<Minus>` lucide icons; reserve `<X>` for dismiss/close actions only.
+- [✓] **Right panel selector order**: Place Properties, Entities & Relations, and Edition before visualisation panels (Graph, Globe, Timeline, Calendar, Terminal) in the right-panel picker.
+
+*Window management*
+- [✓] **Window control permissions**: Add `core:window:allow-minimize`, `core:window:allow-toggle-maximize`, and `core:window:allow-close` to the Tauri capabilities manifest so the titlebar buttons function correctly.
+
+*Data management*
+- [✓] **Clear database**: Add a `clear_database` Tauri command and a "Clear Database" button in the Settings panel (with inline confirmation) to wipe all SurrealDB records and start blank.
+- [✓] **Clear blob store**: Add a `clear_blob_store` Tauri command and a "Clear Blob Store" button in the Settings panel (with inline confirmation) to remove all physical blob files.
+
+*Locale*
+- [✓] **Language dropdown expansion**: Add Catalan (`ca`), Italian (`it`), Dutch (`nl`), Japanese (`ja`), Korean (`ko`), and Russian (`ru`) to the Settings language selector.
 
 **Checks**
-- [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
-- [ ] `npm run build` passes with zero TypeScript errors.
+- [✓] Titlebar minimize, maximize/restore, and close buttons respond on click.
+- [✓] Relationships panel displays a scrollable table with a working search filter and the New Type form at the top.
+- [✓] Right panel picker shows Properties → Entities & Relations → Edition as the first three entries.
+- [✓] "Clear Database" with confirmation wipes all entity/trait/edge/history data; the graph and inspector show empty state afterwards.
+- [✓] "Clear Blob Store" with confirmation removes all blob files; blob count in the Inputs panel drops to zero.
+- [✓] Catalan and other newly added locales appear in and are selectable from the Settings language dropdown.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `cargo check --workspace` passes with zero warnings.
 
 ### Phase 54: Semantic Metadata Enforcement
 **Description**

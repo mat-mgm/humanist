@@ -589,6 +589,44 @@ async fn run_manual_gc(
 }
 
 #[tauri::command]
+async fn clear_database(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db
+        .db
+        .query(
+            "DELETE entity;
+             DELETE edge;
+             DELETE spatial_trait;
+             DELETE temporal_trait;
+             DELETE blob_trait;
+             DELETE label_trait;
+             DELETE entity_history;
+             DELETE trait_history;
+             DELETE relationship_type;",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_blob_store(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let st = state.lock().await;
+    st.db
+        .db
+        .query("DELETE blob_trait;")
+        .await
+        .map_err(|e| e.to_string())?;
+    let blob_dir = st.blob.base_dir.clone();
+    drop(st);
+    if blob_dir.exists() {
+        std::fs::remove_dir_all(&blob_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&blob_dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_entities(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -1872,6 +1910,8 @@ pub fn run() {
             begin_import,
             get_storage_health,
             run_manual_gc,
+            clear_database,
+            clear_blob_store,
             ingest_entity,
             list_entities,
             get_spatial_traits,

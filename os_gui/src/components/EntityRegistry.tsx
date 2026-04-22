@@ -52,7 +52,7 @@ const EntityRow = memo(function EntityRow({ entity, isSelected, isContext, onSel
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 export const EntityRegistry = memo(function EntityRegistry() {
-  const entities        = useOsStore(s => s.entities);
+  const entities        = useOsStore(s => s.allEntities);
   const selectedEntityId = useOsStore(s => s.selectedEntityId);
   const contextEntities = useOsStore(s => s.contextEntities);
   const selectEntity = useOsStore(s => s.selectEntity);
@@ -90,21 +90,23 @@ export const EntityRegistry = memo(function EntityRegistry() {
           <p className="hint">Use Ctrl+N or click [+ New] to create one.</p>
         </div>
       ) : (
-        <table className="entity-table" style={{ flex: 1 }}>
-          <thead><tr><th>Label</th><th>Kind</th><th>Context</th><th></th></tr></thead>
-          <tbody>
-            {filtered.map(e => (
-              <EntityRow key={e.id} entity={e}
-                isSelected={e.id === selectedEntityId}
-                isContext={contextIds.includes(e.id)}
-                onSelect={handleSelect}
-                onTag={(id, label) => { setQuickTagId(id); setQuickTagLabel(label); setQuickTagInput(''); }}
-                onRelate={(id, label) => setShowRelateFor({ id, label })}
-                onDelete={id => deleteEntity(id)}
-              />
-            ))}
-          </tbody>
-        </table>
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          <table className="entity-table">
+            <thead><tr><th>Label</th><th>Kind</th><th>Context</th><th></th></tr></thead>
+            <tbody>
+              {filtered.map(e => (
+                <EntityRow key={e.id} entity={e}
+                  isSelected={e.id === selectedEntityId}
+                  isContext={contextIds.includes(e.id)}
+                  onSelect={handleSelect}
+                  onTag={(id, label) => { setQuickTagId(id); setQuickTagLabel(label); setQuickTagInput(''); }}
+                  onRelate={(id, label) => setShowRelateFor({ id, label })}
+                  onDelete={id => deleteEntity(id)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {showRelateFor && (
         <RelateDialog sourceEntityId={showRelateFor.id} sourceLabel={showRelateFor.label} onClose={() => setShowRelateFor(null)} />
