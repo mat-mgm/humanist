@@ -183,3 +183,20 @@ export interface GcSweepStats {
   removed_blobs: number;
   reclaimed_bytes: number;
 }
+
+export type TerminalSessionKind = "shell" | "sql" | "prolog";
+export type TerminalSessionStatus = "ready" | "busy" | "closed";
+
+export interface TerminalSession {
+  id: string;
+  kind: TerminalSessionKind;
+  title: string;
+  prompt: string;
+  transcript: string;
+  currentInput: string;
+  cursor: number;
+  history: string[];
+  historyIndex: number | null;
+  status: TerminalSessionStatus;
+  visible: boolean;
+}

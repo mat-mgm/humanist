@@ -699,9 +699,30 @@ body,
   white-space: pre-wrap;
 }
 
+.terminal-panel,
+.terminal-panel .xterm,
 .terminal-panel .xterm-viewport,
 .terminal-panel .xterm-screen {
-  background-color: transparent !important;
+  background-color: var(--terminal-bg) !important;
+}
+
+.terminal-panel.is-empty,
+.terminal-panel.is-empty .xterm,
+.terminal-panel.is-empty .xterm-viewport,
+.terminal-panel.is-empty .xterm-screen {
+  background-color: var(--bg-secondary) !important;
+}
+
+.terminal-panel.is-empty .xterm-cursor-layer,
+.terminal-panel.is-empty .xterm-helper-textarea {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.terminal-empty-canvas {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-secondary);
 }
 
 /* ── Titlebar actions (Phase 4) ──────────────────────────────── */

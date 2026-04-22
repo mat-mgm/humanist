@@ -5,6 +5,7 @@ use core_engine::{
     models::{Entity, EntityKind},
     ports::{GraphDatabase, StateObserver},
 };
+use std::io::{self, BufRead};
 use std::{collections::HashMap, sync::Arc};
 use ulid::Ulid;
 
@@ -127,6 +128,8 @@ enum EdgeSub {
 enum PrologSub {
     /// Interpret logic query against graph state natively
     Query { query: String },
+    /// Start a persistent Prolog REPL over stdin/stdout
+    Repl,
 }
 
 #[tokio::main]
@@ -537,11 +540,12 @@ async fn handle_entity(
                 .await?
                 .into_iter()
                 .find(|t| t.owner == id);
-            let blob = db
+            let blobs: Vec<_> = db
                 .get_blob_traits()
                 .await?
                 .into_iter()
-                .find(|t| t.owner == id);
+                .filter(|t| t.owner == id)
+                .collect();
             let temporal = db
                 .get_temporal_traits()
                 .await?
@@ -551,7 +555,7 @@ async fn handle_entity(
             let composite = core_engine::formats::CompositeEntity {
                 entity,
                 spatial,
-                blob,
+                blobs,
                 temporal,
             };
 
@@ -593,7 +597,7 @@ async fn handle_entity(
                 if let Some(s) = new_composite.spatial {
                     db.save_spatial_trait(s).await?;
                 }
-                if let Some(b) = new_composite.blob {
+                for b in new_composite.blobs {
                     db.save_blob_trait(b).await?;
                 }
                 if let Some(t) = new_composite.temporal {
@@ -661,13 +665,7 @@ async fn handle_prolog(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match sub {
         PrologSub::Query { query } => {
-            let machine = prolog_engine::ScryerMachine::new();
-            println!("🔄 Loading logical graph layout into memory...");
-            prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(&machine, &db)
-                .await?;
-            let engine = prolog_engine::InferenceEngine::new(machine);
-
-            println!("🔍 Executing query: {}", query);
+            let engine = load_prolog_engine(&db).await?;
             let results = engine.query(&query)?;
 
             if results.is_empty() {
@@ -678,6 +676,64 @@ async fn handle_prolog(
                 }
             }
         }
+        PrologSub::Repl => {
+            let mut engine = load_prolog_engine(&db).await?;
+            let stdin = io::stdin();
+            for line in stdin.lock().lines() {
+                let line = line?;
+                let trimmed = line.trim();
+
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                if trimmed == "halt." {
+                    break;
+                }
+
+                if trimmed == "clear." {
+                    println!("\u{001f}SPATIAL_CLEAR\u{001f}");
+                    continue;
+                }
+
+                if trimmed == "reload." || trimmed == "reload" {
+                    match load_prolog_engine(&db).await {
+                        Ok(reloaded) => {
+                            engine = reloaded;
+                            println!("true.");
+                        }
+                        Err(error) => {
+                            println!("Error: {}", error);
+                        }
+                    }
+                    continue;
+                }
+
+                let query = trimmed.trim_end_matches('.');
+                match engine.query(query) {
+                    Ok(results) => {
+                        if results.is_empty() {
+                            println!("false.");
+                        } else {
+                            for res in results {
+                                println!("{}", res);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        println!("Error: {}", error);
+                    }
+                }
+            }
+        }
     }
     Ok(())
+}
+
+async fn load_prolog_engine(
+    db: &SurrealDbAdapter,
+) -> Result<prolog_engine::InferenceEngine, Box<dyn std::error::Error>> {
+    let machine = prolog_engine::ScryerMachine::new();
+    prolog_engine::synchronizer::StateSynchronizerTask::load_all_facts(&machine, db).await?;
+    Ok(prolog_engine::InferenceEngine::new(machine))
 }

@@ -54,7 +54,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
 * **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
 * **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
@@ -978,7 +978,47 @@ Replace the modal-based `CreateEntityDialog` and `IngestDialog` with a first-cla
 - The maintenance section must remain visually secondary so the main reading of the panel is still “bring data in”, not “operate the database”.
 - Reference design: [docs/notes/inputs_panel_phase_options.md](/home/rs/computation/programming/rust/spatial_os/docs/notes/inputs_panel_phase_options.md)
 
-### Phase 51: UI Utilities & UX Hardening
+### Phase 51: Terminal Workbench - Typed Sessions & Left-Rail Selector
+**Description**
+Turn the Terminal activity into a proper workbench: the left side panel becomes the terminal session navigator and launcher, while the main canvas renders the currently selected terminal session. Users can create and switch between multiple long-lived Shell, SQL, and Prolog sessions during the current app run without mixing them into editor-driven temporary PTY sessions.
+
+**Tasks**
+- [✓] **Session model**: Introduce a first-class runtime session model for the Terminal activity with explicit session type (`shell`, `sql`, `prolog`), stable session id, title, lifecycle state, and visibility separate from temporary editor sessions.
+- [✓] **Left side selector**: Replace the current Terminal side-panel placeholder with a dedicated session workbench showing environment launch actions (`New Shell`, `New SQL`, `New Prolog`) and the list of visible terminal sessions.
+- [✓] **Canvas/session split**: Keep the selected terminal session in the main canvas only; the left side panel must act strictly as selector/launcher, not as a second terminal surface.
+- [✓] **Long-lived typed sessions**: Make Shell, SQL, and Prolog true long-lived interactive sessions that preserve their own prompt state, scrollback, and command context while the app remains open.
+- [✓] **Session switching**: Allow jumping between multiple sessions of any type without losing the inactive sessions' state.
+- [✓] **Hidden editor sessions**: Keep `edit-<entity>` and other temporary editor-backed sessions out of the left-panel session list so the workbench only exposes user-managed terminal sessions.
+- [✓] **Close/fallback rules**: Add explicit close behavior for visible sessions and define deterministic fallback selection when the active visible session is closed.
+- [✓] **Keyboard workflow**: Preserve the keyboard-centric flow by allowing the Terminal activity to open directly into the current visible session and by keeping session creation/switching reachable through focusable side-panel controls rather than mouse-only UI.
+
+**Checks**
+- [✓] Creating a Shell session from the left panel opens it in the main canvas and leaves previously opened sessions intact.
+- [✓] Creating multiple Shell / SQL / Prolog sessions shows each one in the left-panel selector and switching between them preserves per-session state.
+- [✓] SQL and Prolog sessions behave as true interactive long-lived sessions during the current app run rather than one-shot query dialogs.
+- [✓] Closing the active visible session selects a sensible remaining visible session without leaving the terminal canvas in a broken state.
+- [✓] Temporary editor sessions such as `edit-<entity>` do not appear in the left-panel session selector.
+- [✓] Restarting the app clears runtime terminal sessions, matching the current-run-only persistence rule.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `cargo check --workspace` passes with zero warnings.
+
+**Design decisions**
+- Decision: The left side panel is the terminal workbench navigator; the terminal canvas stays in the main canvas area.
+  Rationale: This keeps the shell surface large and readable while giving session management a stable, low-chrome home in the existing activity layout.
+- Decision: Session types are first-class runtime concepts (`shell`, `sql`, `prolog`) rather than labels over one generic shell.
+  Rationale: True long-lived sessions require stable ownership of prompt state, history, and lifecycle per environment.
+- Decision: Terminal sessions persist only for the current app run.
+  Rationale: This is the minimal durable behavior for now and avoids premature restart-recovery complexity.
+- Decision: Editor-driven PTY sessions remain hidden from the session selector.
+  Rationale: The workbench should expose only user-managed terminal sessions, not implementation-detail sessions spawned by file editing flows.
+
+**Notes / Risks / Resources**
+- True long-lived SQL and Prolog sessions imply session-local prompt state, history, and output buffering rather than one-shot command execution.
+- SQL and Prolog history is shared per session type and persisted across app runs, while the runtime sessions themselves remain current-run-only.
+- The current terminal already multiplexes a single xterm canvas across PTY session ids; this phase should generalize that pattern instead of introducing a second terminal rendering stack.
+- The selector should stay suckless: session type, title, and state are enough for the first iteration; tab bars and extra chrome are unnecessary.
+
+### Phase 52: UI Utilities & UX Hardening
 **Description**
 Enhance the user experience with native integration for file management and quick identifier access.
 
@@ -992,7 +1032,7 @@ Enhance the user experience with native integration for file management and quic
 - [ ] ULIDs are correctly copied and can be verified by pasting into any text field.
 - [ ] `npm run build` passes with zero TypeScript errors.
 
-### Phase 45: Semantic Metadata Enforcement
+### Phase 53: Semantic Metadata Enforcement
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 

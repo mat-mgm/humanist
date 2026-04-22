@@ -6,6 +6,7 @@ import { EntityKnowledgePanel } from './EntityKnowledgePanel';
 import { AssetPreview } from './AssetPreview';
 import { ErrorBoundary } from './ErrorBoundary';
 import { InputsSidePanel } from './InputsSidePanel';
+import { TerminalSidePanel } from './TerminalSidePanel';
 
 type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night'
   | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
@@ -42,6 +43,7 @@ function SidePanelContent({ activity, themeSearch, onThemeChange, onThemeSearchC
         Use the tab bar inside the Causal Panel to switch between Timeline and Calendar.
       </div>
     );
+    case 'terminal':  return <ErrorBoundary label="Terminal Side Panel"><TerminalSidePanel /></ErrorBoundary>;
     case 'inspector': return <ErrorBoundary label="Properties"><EntityInspectorPanel /></ErrorBoundary>;
     case 'registry':  return <ErrorBoundary label="Entities & Relations"><EntityKnowledgePanel /></ErrorBoundary>;
     case 'preview':   return <ErrorBoundary label="Preview"><AssetPreview /></ErrorBoundary>;

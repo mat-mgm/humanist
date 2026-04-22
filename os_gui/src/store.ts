@@ -19,6 +19,9 @@ import {
   StorageHealth,
   GcSweepStats,
   EntityKind,
+  TerminalSession,
+  TerminalSessionKind,
+  TerminalSessionStatus,
 } from './models';
 import { logFrontend } from './lib/log';
 
@@ -52,6 +55,113 @@ interface InputJobFinishedEvent {
 }
 
 export type GraphEdge = EdgeRecord;
+
+const INITIAL_TERMINAL_SESSION_ID = 'shell-1';
+export const TERMINAL_CLEAR_MARKER = '\u001fSPATIAL_CLEAR\u001f';
+const TERMINAL_HISTORY_STORAGE_PREFIX = 'spatial-os:terminal-history:';
+
+function loadPersistedTerminalHistory(kind: TerminalSessionKind): string[] {
+  if (kind === 'shell' || typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(`${TERMINAL_HISTORY_STORAGE_PREFIX}${kind}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTerminalHistory(kind: TerminalSessionKind, history: string[]) {
+  if (kind === 'shell' || typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(`${TERMINAL_HISTORY_STORAGE_PREFIX}${kind}`, JSON.stringify(history));
+  } catch {
+    // best effort only
+  }
+}
+
+function terminalPrompt(kind: TerminalSessionKind): string {
+  switch (kind) {
+    case 'sql':
+      return 'sql> ';
+    case 'prolog':
+      return '?- ';
+    case 'shell':
+    default:
+      return '';
+  }
+}
+
+function terminalTitle(kind: TerminalSessionKind, index: number): string {
+  switch (kind) {
+    case 'sql':
+      return `SQL ${index}`;
+    case 'prolog':
+      return `Prolog ${index}`;
+    case 'shell':
+    default:
+      return `Shell ${index}`;
+  }
+}
+
+function createTerminalSessionRecord(
+  kind: TerminalSessionKind,
+  index: number,
+  id?: string,
+  history: string[] = loadPersistedTerminalHistory(kind),
+): TerminalSession {
+  return {
+    id: id ?? `${kind}-${globalThis.crypto.randomUUID()}`,
+    kind,
+    title: terminalTitle(kind, index),
+    prompt: terminalPrompt(kind),
+    transcript: '',
+    currentInput: '',
+    cursor: 0,
+    history,
+    historyIndex: null,
+    status: 'ready',
+    visible: true,
+  };
+}
+
+export function terminalSessionCommand(kind: TerminalSessionKind): string | undefined {
+  switch (kind) {
+    case 'sql':
+      return `
+stty -echo
+trap 'stty echo' EXIT
+cargo build -q -p os_cli || exit $?
+while :; do
+  IFS= read -r line
+  status=$?
+  if [ $status -ne 0 ]; then
+    printf '\\n'
+    continue
+  fi
+  [ "$line" = ".exit" ] && exit 0
+  [ "$line" = ".clear" ] && printf '\x1fSPATIAL_CLEAR\x1f' && continue
+  [ -z "$line" ] && continue
+  target/debug/os_cli -q db sql "$line" || true
+done
+`.trim();
+    case 'prolog':
+      return `
+stty -echo
+trap 'stty echo' EXIT
+cargo build -q -p os_cli || exit $?
+exec target/debug/os_cli -q prolog repl
+`.trim();
+    case 'shell':
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Pure helper: resolves the best display label for an entity.
@@ -117,7 +227,9 @@ interface OsStore {
   filterEdgeLabels: string[];       // Edge labels to HIDE (empty = show all)   
   highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
-  activePtySession: string;
+  activePtySession: string | null;
+  terminalSessions: TerminalSession[];
+  activeTerminalSessionId: string | null;
   inputDrafts: InputDraft[];
   selectedInputDraftIds: string[];
   inputPickerRequestToken: number;
@@ -156,7 +268,15 @@ interface OsStore {
   searchEntitiesAction: (query: string, lang?: string) => Promise<Entity[]>;
 
   // Actions — read
-  setActivePtySession: (sessionId: string) => void;
+  setActivePtySession: (sessionId: string | null) => void;
+  ensureTerminalWorkbench: () => Promise<void>;
+  createTerminalSession: (kind: TerminalSessionKind) => Promise<string>;
+  activateTerminalSession: (sessionId: string) => void;
+  closeTerminalSession: (sessionId: string) => Promise<void>;
+  updateTerminalSession: (sessionId: string, patch: Partial<TerminalSession>) => void;
+  syncTerminalHistoryForKind: (kind: TerminalSessionKind, history: string[]) => void;
+  appendTerminalSessionTranscript: (sessionId: string, chunk: string) => void;
+  replaceTerminalSessionTranscript: (sessionId: string, transcript: string) => void;
   updateNodePosition: (id: string, x: number, y: number) => void;
   fetchEntities: () => Promise<void>;
   fetchSpatialTraits: () => Promise<void>;
@@ -260,7 +380,9 @@ export const useOsStore = create<OsStore>((set, get) => ({
   filterEdgeLabels: [],
   highlightedPath: [],
   highlightedEdgeKeys: new Set<string>(),
-  activePtySession: 'main',
+  activePtySession: INITIAL_TERMINAL_SESSION_ID,
+  terminalSessions: [createTerminalSessionRecord('shell', 1, INITIAL_TERMINAL_SESSION_ID)],
+  activeTerminalSessionId: INITIAL_TERMINAL_SESSION_ID,
   inputDrafts: [],
   selectedInputDraftIds: [],
   inputPickerRequestToken: 0,
@@ -297,6 +419,93 @@ export const useOsStore = create<OsStore>((set, get) => ({
   setGraphResetViewFn: (fn) => set({ graphResetViewFn: fn }),
 
   setActivePtySession: (sessionId) => set({ activePtySession: sessionId }),
+  ensureTerminalWorkbench: async () => {
+    const sessions = get().terminalSessions.filter(session => session.visible);
+    if (sessions.length > 0) {
+      const activeId = get().activeTerminalSessionId ?? sessions[0].id;
+      set({
+        activeTerminalSessionId: activeId,
+        activePtySession: activeId,
+      });
+      const active = sessions.find(session => session.id === activeId);
+      if (active) {
+        await invoke('spawn_terminal', { sessionId: active.id, command: terminalSessionCommand(active.kind) });
+      }
+      return;
+    }
+    set({
+      activeTerminalSessionId: null,
+      activePtySession: null,
+    });
+  },
+  createTerminalSession: async (kind) => {
+    const sameKindCount = get().terminalSessions.filter(session => session.kind === kind && session.visible).length;
+    const sharedHistory = get().terminalSessions.find(session => session.kind === kind)?.history
+      ?? loadPersistedTerminalHistory(kind);
+    const session = createTerminalSessionRecord(kind, sameKindCount + 1, undefined, sharedHistory);
+    set(state => ({
+      terminalSessions: [...state.terminalSessions, session],
+      activeTerminalSessionId: session.id,
+      activePtySession: session.id,
+      activeActivity: 'terminal',
+      sidePanelOpen: true,
+    }));
+    await invoke('spawn_terminal', { sessionId: session.id, command: terminalSessionCommand(kind) });
+    return session.id;
+  },
+  activateTerminalSession: (sessionId) => {
+    const session = get().terminalSessions.find(existing => existing.id === sessionId && existing.visible);
+    if (!session) return;
+    set({
+      activeTerminalSessionId: sessionId,
+      activePtySession: sessionId,
+      activeActivity: 'terminal',
+      sidePanelOpen: true,
+    });
+  },
+  closeTerminalSession: async (sessionId) => {
+    const sessions = get().terminalSessions;
+    const target = sessions.find(session => session.id === sessionId && session.visible);
+    if (!target) return;
+    const remaining = sessions.filter(session => session.id !== sessionId && session.visible);
+    let nextActiveId = get().activeTerminalSessionId;
+    if (nextActiveId === sessionId) {
+      nextActiveId = remaining[remaining.length - 1]?.id ?? null;
+    }
+    set(state => ({
+      terminalSessions: state.terminalSessions.map(session =>
+        session.id === sessionId ? { ...session, visible: false, status: 'closed' as TerminalSessionStatus } : session
+      ),
+      activeTerminalSessionId: nextActiveId,
+      activePtySession: nextActiveId,
+    }));
+    await invoke('kill_terminal', { sessionId: target.id });
+  },
+  updateTerminalSession: (sessionId, patch) => set(state => ({
+    terminalSessions: state.terminalSessions.map(session =>
+      session.id === sessionId ? { ...session, ...patch } : session
+    ),
+  })),
+  syncTerminalHistoryForKind: (kind, history) => {
+    persistTerminalHistory(kind, history);
+    set(state => ({
+      terminalSessions: state.terminalSessions.map(session =>
+        session.kind === kind
+          ? { ...session, history, historyIndex: session.visible ? session.historyIndex : null }
+          : session
+      ),
+    }));
+  },
+  appendTerminalSessionTranscript: (sessionId, chunk) => set(state => ({
+    terminalSessions: state.terminalSessions.map(session =>
+      session.id === sessionId ? { ...session, transcript: session.transcript + chunk } : session
+    ),
+  })),
+  replaceTerminalSessionTranscript: (sessionId, transcript) => set(state => ({
+    terminalSessions: state.terminalSessions.map(session =>
+      session.id === sessionId ? { ...session, transcript } : session
+    ),
+  })),
 
   addCreateInputDraft: () => {
     const jobId = globalThis.crypto.randomUUID();

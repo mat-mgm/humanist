@@ -4,9 +4,18 @@ use std::io::{Read, Write};
 use tauri::{AppHandle, Emitter};
 use std::thread;
 
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
 pub struct PtyHost {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    transcript: Arc<Mutex<Vec<u8>>>,
     pub on_exit: Arc<tokio::sync::Notify>,
 }
 
@@ -20,19 +29,21 @@ impl PtyHost {
             pixel_height: 0,
         }).map_err(|e: anyhow::Error| e.to_string())?;
 
-        let shell = command.unwrap_or_else(|| {
-            if cfg!(windows) { "powershell.exe".to_string() } else { "zsh".to_string() }
-        });
-
         let mut cmd = if cfg!(windows) {
+            let shell = command.unwrap_or_else(|| "powershell.exe".to_string());
             let mut c = CommandBuilder::new("powershell.exe");
             c.arg("-Command");
             c.arg(shell);
             c
+        } else if let Some(script) = command {
+            let mut c = CommandBuilder::new("bash");
+            c.arg("--noprofile");
+            c.arg("--norc");
+            c.arg("-ic");
+            c.arg(script);
+            c
         } else {
-            let mut c = CommandBuilder::new("sh");
-            c.arg("-c");
-            c.arg(shell);
+            let c = CommandBuilder::new("zsh");
             c
         };
 
@@ -40,6 +51,8 @@ impl PtyHost {
         if let Some(editor) = std::env::var_os("EDITOR") {
             cmd.env("EDITOR", editor);
         }
+        cmd.env("TERM", "xterm-256color");
+        cmd.cwd(workspace_root());
 
         let mut child = pair.slave.spawn_command(cmd).map_err(|e: anyhow::Error| e.to_string())?;
 
@@ -47,10 +60,12 @@ impl PtyHost {
         let writer = pair.master.take_writer().map_err(|e: anyhow::Error| e.to_string())?;
         let writer = Arc::new(Mutex::new(writer));
         let master = Arc::new(Mutex::new(pair.master));
+        let transcript = Arc::new(Mutex::new(Vec::new()));
         let on_exit = Arc::new(tokio::sync::Notify::new());
 
         let app_c = app.clone();
         let sid_data = session_id.clone();
+        let transcript_c = transcript.clone();
         thread::spawn(move || {
             let mut reader = reader;
             let mut buffer = [0u8; 4096];
@@ -59,6 +74,9 @@ impl PtyHost {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = &buffer[..n];
+                        if let Ok(mut existing) = transcript_c.lock() {
+                            existing.extend_from_slice(data);
+                        }
                         let _ = app_c.emit("pty-data", (sid_data.clone(), data.to_vec()));
                     }
                     Err(_) => break,
@@ -77,7 +95,7 @@ impl PtyHost {
             notify.notify_one();
         });
 
-        Ok(Self { writer, master, on_exit })
+        Ok(Self { writer, master, transcript, on_exit })
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
@@ -96,5 +114,10 @@ impl PtyHost {
             pixel_height: 0,
         }).map_err(|e: anyhow::Error| e.to_string())?;
         Ok(())
+    }
+
+    pub fn snapshot(&self) -> Result<Vec<u8>, String> {
+        let transcript = self.transcript.lock().map_err(|_| "Lock failed".to_string())?;
+        Ok(transcript.clone())
     }
 }

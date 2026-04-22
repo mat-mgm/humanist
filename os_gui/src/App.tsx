@@ -147,6 +147,7 @@ export default function App() {
   const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
   const fetchAllEntities = useOsStore(s => s.fetchAllEntities);
   const fetchStorageHealth = useOsStore(s => s.fetchStorageHealth);
+  const ensureTerminalWorkbench = useOsStore(s => s.ensureTerminalWorkbench);
   const activeActivity    = useOsStore(s => s.activeActivity);
   const rightPanelId      = useOsStore(s => s.rightPanelId);
   const tilingModeEnabled = useOsStore(s => s.tilingModeEnabled);
@@ -229,6 +230,7 @@ export default function App() {
     fetchAllLabelTraits();
     fetchAllEntities();
     fetchStorageHealth();
+    void ensureTerminalWorkbench();
     let cleanup: (() => void) | undefined;
     startListening().then(fn => { cleanup = fn; });
     return () => { if (cleanup) cleanup(); };
@@ -446,7 +448,7 @@ export default function App() {
   const activePtySession = useOsStore(s => s.activePtySession);
   useEffect(() => {
     if (!tilingModeEnabled) return;
-    if (activePtySession !== 'main' && activePtySession !== null) {
+    if (activePtySession !== null) {
       const inTiled    = tiledSlots.some(s => slotIds(s).includes('terminal'));
       const inFloating = floatingPaneIds.includes('terminal');
       if (!inTiled && !inFloating) {
