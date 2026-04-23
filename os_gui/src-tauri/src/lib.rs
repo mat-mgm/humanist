@@ -289,6 +289,95 @@ fn collect_import_sources(path: &Path, tag_labels: &[String]) -> Result<Vec<Impo
 }
 
 #[tauri::command]
+async fn pick_icon_file() -> Result<Option<String>, String> {
+    let handle = async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Select icon image")
+            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"])
+            .pick_file()
+            .map(|path| path.to_string_lossy().to_string())
+    });
+    handle.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn reify_edge(
+    from_id: String,
+    to_id: String,
+    label: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let st = state.lock().await;
+
+    // Fetch the original edge to inherit its payload (strength, latency, metadata).
+    let fetch_ql = "SELECT strength, latency, metadata FROM edge \
+                    WHERE in = type::thing('entity', $src) \
+                    AND out = type::thing('entity', $tgt) \
+                    AND label = $lbl LIMIT 1;";
+    let src_short = from_id.strip_prefix("entity:").unwrap_or(&from_id);
+    let tgt_short = to_id.strip_prefix("entity:").unwrap_or(&to_id);
+    let mut fetch_resp = st.db.db
+        .query(fetch_ql)
+        .bind(("src", src_short.to_string()))
+        .bind(("tgt", tgt_short.to_string()))
+        .bind(("lbl", label.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<serde_json::Value> = fetch_resp.take(0).map_err(|e| e.to_string())?;
+    let (strength, latency, meta): (Option<f64>, Option<i64>, Option<serde_json::Value>) =
+        if let Some(row) = rows.first() {
+            (
+                row.get("strength").and_then(|v| v.as_f64()),
+                row.get("latency").and_then(|v| v.as_i64()),
+                row.get("metadata").cloned(),
+            )
+        } else {
+            (None, None, None)
+        };
+
+    // Create the reification node.
+    let ulid = Ulid::new().to_string();
+    let new_id = format!("entity:{}", ulid);
+    let entity = Entity {
+        id: new_id.clone(),
+        category: EntityKind::Abstract,
+        label: label.clone(),
+        lang_canonical: "en".to_string(),
+        metadata: HashMap::new(),
+        deleted_at: None,
+    };
+    st.db.save_entity(entity).await?;
+
+    // Add the two replacement edges, inheriting the original payload.
+    st.db.add_edge_with_payload(&from_id, &new_id, &label, strength, latency, meta.clone()).await?;
+    st.db.add_edge_with_payload(&new_id, &to_id, &label, strength, latency, meta).await?;
+
+    // Delete the original edge using parameterized query to avoid interpolation issues.
+    let del_ql = "DELETE edge WHERE in = type::thing('entity', $src) \
+                  AND out = type::thing('entity', $tgt) \
+                  AND label = $lbl;";
+    st.db.db
+        .query(del_ql)
+        .bind(("src", src_short.to_string()))
+        .bind(("tgt", tgt_short.to_string()))
+        .bind(("lbl", label.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    st.bus.on_event("entity.created".to_string(), 1, ulid.clone()).await;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.created", "ulid": ulid, "label": label}),
+    ).map_err(|e| e.to_string())?;
+    app.emit(
+        "graph-updated",
+        serde_json::json!({"from": from_id, "to": to_id, "label": label}),
+    ).map_err(|e| e.to_string())?;
+    Ok(new_id)
+}
+
+#[tauri::command]
 async fn pick_native_import_files() -> Result<Vec<String>, String> {
     let handle = async_runtime::spawn_blocking(|| {
         rfd::FileDialog::new()
@@ -1357,6 +1446,10 @@ async fn save_relationship_type(
     transitive: bool,
     symmetric: bool,
     inherits_traits: bool,
+    visible: Option<bool>,
+    flow: Option<String>,
+    routing: Option<String>,
+    color: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
@@ -1368,6 +1461,10 @@ async fn save_relationship_type(
             transitive,
             symmetric,
             inherits_traits,
+            visible: visible.unwrap_or(true),
+            flow,
+            routing,
+            color,
         })
         .await
 }
@@ -1776,8 +1873,10 @@ async fn get_trait_history(
 async fn log_frontend(level: String, message: String) {
     match level.as_str() {
         "error" => tracing::error!(source = "frontend", "{}", message),
-        "warn" => tracing::warn!(source = "frontend", "{}", message),
-        _ => {}
+        "warn"  => tracing::warn!(source = "frontend", "{}", message),
+        "info"  => tracing::info!(source = "frontend", "{}", message),
+        "debug" => tracing::debug!(source = "frontend", "{}", message),
+        _       => tracing::info!(source = "frontend", "{}", message),
     }
 }
 
@@ -1964,6 +2063,8 @@ pub fn run() {
             create_entity_notes,
             delete_blob_trait,
             rename_blob_trait,
+            pick_icon_file,
+            reify_edge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

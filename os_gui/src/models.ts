@@ -72,6 +72,9 @@ export interface ContextProfile {
   max_depth: number;
 }
 
+export type EdgeFlow    = 'none' | 'down' | 'right' | 'up' | 'left';
+export type EdgeRouting = 'straight' | 'step' | 'arc';
+
 /** Phase 45: semantic definition of a relationship label. */
 export interface RelationshipType {
   id: string;
@@ -79,6 +82,11 @@ export interface RelationshipType {
   transitive: boolean;
   symmetric: boolean;
   inherits_traits: boolean;
+  /** When false, edges of this type are hidden in the graph view. Default true. */
+  visible: boolean;
+  flow:    EdgeFlow    | null;
+  routing: EdgeRouting | null;
+  color:   string      | null;
 }
 
 /** Phase 45: full edge record with optional payload fields. */

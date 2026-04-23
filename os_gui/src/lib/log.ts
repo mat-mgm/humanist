@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-type LogLevel = "warn" | "error";
+type LogLevel = "debug" | "info" | "warn" | "error";
 
 export function logFrontend(level: LogLevel, message: string): void {
   invoke("log_frontend", { level, message }).catch(() => {

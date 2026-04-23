@@ -165,6 +165,7 @@ export default function App() {
   const startListening = useOsStore(s => s.startListening);
   const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
   const fetchAllEntities = useOsStore(s => s.fetchAllEntities);
+  const fetchRelationshipTypes = useOsStore(s => s.fetchRelationshipTypes);
   const fetchStorageHealth = useOsStore(s => s.fetchStorageHealth);
   const ensureTerminalWorkbench = useOsStore(s => s.ensureTerminalWorkbench);
   const activeActivity    = useOsStore(s => s.activeActivity);
@@ -248,6 +249,7 @@ export default function App() {
     useOsStore.getState().fetchTemporalTraits();
     fetchAllLabelTraits();
     fetchAllEntities();
+    fetchRelationshipTypes();
     fetchStorageHealth();
     void ensureTerminalWorkbench();
     let cleanup: (() => void) | undefined;

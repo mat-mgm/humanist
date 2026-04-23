@@ -55,7 +55,9 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
   - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
   - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel. The **Settings panel** additionally exposes theme selection, a multi-locale language dropdown (en, de, fr, pt, es, ca, it, nl, zh, ja, ko, ar, ru), keyboard shortcut reference, and destructive data-management commands (`clear_database`, `clear_blob_store`) backed by Tauri IPC — each gated by an inline confirmation step. The right panel (toggled via `Ctrl+\`) surfaces Properties, Entities & Relations, and Edition as the first three pickers, followed by the visualisation panels.
-* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges.
+* Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges. Entities may carry an `icon` key in their `metadata` JSON object (absolute file path) that renders as a circular icon overlay on the node in `GraphPanel`, set via the right-click "Set Icon…" action.
+* **Relationship Type Visual Properties**: `RelationshipType` in `core_engine/src/models.rs` carries three optional visual fields: `flow: Option<String>` (directional layout bias: `down`, `right`, `up`, `left`), `routing: Option<String>` (edge path style: `straight`, `step`, `arc`), and `color: Option<String>` (CSS hex color). The flow field drives a per-tick d3-force velocity bias that decays with the simulation's alpha parameter. The routing field selects between ForceGraph2D's default straight line, an orthogonal L-path, and a quadratic bezier arc; non-straight edges suppress the default renderer (transparent `linkColor`, zero `linkWidth`) and are drawn entirely in `linkCanvasObject`. All arrowheads are snapped to the nearest cardinal axis (H or V) rather than following diagonal src→tgt vectors; when flow is set, the exact flow direction is used instead. Relationship types are auto-registered on first edge use (except `tagged_as`) so they appear in the Relationships panel without manual creation. `(from, to, label)` triples are deduplicated at write time so repeated calls (e.g. repeated tagging) do not create duplicate edges.
+* **Graph Interaction**: Clicking a node selects it; double-clicking toggles its media preview. Edge click selects the edge, highlights it with the accent color, and shows a context menu with "Reify to Node" and "Delete Edge" actions. Edge reification (`reify_edge` Tauri command) atomically creates a new `abstract` entity, adds edges from source → node → target, and deletes the original edge. The node `val` (d3 repulsion / click-surface radius) is dynamically set to match the image footprint when a preview is active. Media preview open/closed state is persisted in `localStorage`. PDF previews render in natural colors (no theme recoloring). The background grid/dot matrix adapts to zoom level by stepping the world-space interval in multiples of 5 to keep screen-space spacing in the ~[30, 150] px range.
 * **Entity Category**: Each entity has a `category` field (formerly `kind`) classifying its ontological nature. Four variants: `physical` (tangible objects), `digital` (software resources, files, datasets — ingested blobs receive this category), `abstract` (concepts, tags, ideas, events), `persona` (acting subjects: persons, processes, systems). Category is a pure ontological classifier orthogonal to trait composition — any entity of any category may carry any combination of traits. `BlobTrait` presence, not category, marks file-content entities; `TemporalTrait` presence, not category, marks time-anchored entities.
 * **Temporal Causal Context Tracking**: Any entity can carry a `TemporalTrait` (supporting points, spans, and recurring events) regardless of its category. The **Timeline Panel** provides a synchronized visual representation, allowing for causal context tracking where selecting a node in any view highlights its temporal position.
 * **Unified Semantic Relationships (Graph Edges & Tags)**: 
@@ -649,12 +651,10 @@ Replace the "all-or-nothing" graph load with an Exploration Mode: the graph star
 - [✓] "Clear" resets the graph to empty; "Load Full" loads all entities and edges.
 - [✓] A `SELECT`-prefixed query loads exactly the returned entities — hop count is ignored, no BFS expansion.
 - [✓] "Load Full" button is disabled with label "Init…" until the backend signals readiness.
-- [ ] "Load Full" on first launch no longer crashes the Knowledge Graph panel. *(regression: ForceGraph2D simulation callback fires on stale node reference during the first load; subsequent loads work correctly)*
+- [✓] "Load Full" on first launch no longer crashes the Knowledge Graph panel. *(fixed in Phase 54: graphLoading gate prevents ForceGraph2D from receiving data during the first load transition)*
 - [✓] `cargo check --workspace` passes with zero warnings.
 - [✓] `npm run build` passes with zero TypeScript errors.
 
-**Known Issues**
-- **Load Full first-launch crash**: Clicking "Load Full" immediately after launch crashes the Knowledge Graph panel with "The object can not be found here." Clicking the ErrorBoundary retry button recovers and all subsequent loads work correctly. Root cause is suspected to be a ForceGraph2D d3 simulation callback referencing a node that no longer exists during the first state transition. Mitigations attempted: `block_on` in Rust setup, frontend retry loop, `backend-ready` event gating, removing the pre-clear step in `loadFullGraph`. None fully resolved the issue on first launch.
 
 ### Phase 45: Flexible Panel Architecture & Tab Merging
 **Description**
@@ -1108,7 +1108,120 @@ Consolidate accumulated UX improvements into the application shell: panel layout
 - [✓] `npm run build` passes with zero TypeScript errors.
 - [✓] `cargo check --workspace` passes with zero warnings.
 
-### Phase 54: Semantic Metadata Enforcement
+### Phase 54: Graph View Refinements
+**Description**
+A focused set of graph-view quality improvements: fix the first-launch crash on "Load Full", add keyboard-driven node navigation, enforce selection ordering, modernise arrowheads, add a background-style toggle, fix tag-label overlap, introduce a soft-fill region style variant, add a `visible` flag to relationship types (hiding tag edges by default), and surface selection-aware tag/relate actions directly in the graph side panel.
+
+**Tasks**
+
+*Bug fixes*
+- [✓] **Fix Load Full first-launch crash**: Gate the data passed to `ForceGraph2D` behind a `graphLoading` boolean in the store. Set it `true` at the start of `loadFullGraph`, and set it `false` only after both `entities` and `edges` are committed to state. In `GraphPanel`, pass an empty array to `ForceGraph2D` while `graphLoading` is `true`, then swap in real data once loading is complete. This eliminates the stale-node-reference in the d3 simulation tick that causes the first-launch crash.
+
+*Keyboard navigation*
+- [✓] **Arrow key node navigation**: In `GraphPanel`, attach a `keydown` listener (active when the panel is focused). When a node is selected and an arrow key is pressed, find the graph node whose screen-space position forms the smallest angular deviation from the arrow direction within a ±45° cone and select it, centering the viewport on it via `ForceGraph2D.centerAt`. If no node is found in the cone, do nothing.
+- [✓] **Space to toggle selection**: Pressing `Space` on a focused graph node adds it to `selectedIds` if absent, or removes it if present (multi-selection toggle without mouse).
+- [✓] **Escape to deselect all**: Pressing `Escape` in the graph panel calls `clearSelection()` in the store.
+- [✓] **Auto-center selected node**: After any programmatic selection change (arrow nav, space), call `ForceGraph2D.centerAt(node.x, node.y, 300)` to smoothly pan the selected node into view.
+
+*Selection ordering*
+- [✓] **Ordered selection**: `selectedIds` is already an ordered `string[]` in the Zustand store (appended via `[...selectedIds, id]`). Fixed `EntityInspector` to iterate `selectedIds` order (via `selectedIds.map(id => entities.find(...))`) rather than `entities.filter()` which used entity-list order.
+
+*Visual polish*
+- [✓] **Enlarge graph explore bar**: Increased height from 24 px to 28 px and padding from `3px 8px` to `5px 10px` in `GraphSidePanel.tsx`.
+- [✓] **Modern arrowheads**: Replaced the built-in filled triangle (`linkDirectionalArrowLength`) with a custom open-chevron arrowhead drawn in `linkCanvasObject` — two lines from the tip at ±22°, no filled shape. Arrowhead color matches the edge stroke.
+- [✓] **Background style toggle** (`grid` | `dots`): Added `backgroundStyle: 'grid' | 'dots'` to the Zustand store (default `'grid'`). `GraphPanel` switches between grid lines and a dot-matrix pattern in `onRenderFramePre`. Grid/Dot icon toggle in `GraphSidePanel`.
+- [✓] **Prevent tag-label overlap**: Two-pass render in `onRenderFramePre`: pass 1 builds hulls + label anchors; pass 3 runs a greedy push-up collision loop over sorted label positions before drawing.
+
+*Tag region styling*
+- [✓] **Region style selector** (`hatch` | `fill`): Added `regionStyle: 'hatch' | 'fill'` to the Zustand store (default `'hatch'`). Fill mode draws 15% opacity solid background + 2 px solid border. Hatch/Fill button toggle in `GraphSidePanel` below the Regions toggle.
+
+*Relationship visibility*
+- [✓] **`visible` flag on `RelationshipType`**: Added `visible: bool` (default `true`) to `RelationshipType` in `core_engine/src/models.rs`, SurrealDB schema, and TypeScript `models.ts`. Seeded `tagged_as` with `visible: false` at schema init.
+- [✓] **Filter invisible edges**: `filteredData` in `GraphPanel` excludes edges whose label matches a `RelationshipType` with `visible = false`.
+- [✓] **Toggle in Relationships panel**: Eye/EyeOff icon button per row in `RelationshipsPanel` type table; `visible` checkbox in the New Type form.
+
+*Selection-aware side panel actions*
+- [✓] **Contextual selection section in `GraphSidePanel`**: When `selectedIds.length >= 1`, a compact section appears at the bottom of the panel with a tag-all input and a Relate selection button (opens `RelateDialog` from the first selected entity). Section is hidden when no nodes are selected.
+
+*Bug fixes*
+- [✓] **ResizeObserver staleness fix**: Changed `useEffect` deps from `[]` to `[graphMountKey]`; reads `containerRef.current` inside the ResizeObserver callback so it tracks the live container after each full-load transition. Added explicit `g.width(w).height(h)` call immediately after ForceGraph2D construction.
+- [✓] **Relationship types missing from panel**: `add_edge` in `db.rs` auto-inserts a `relationship_type` row on first use of any new label (skipping `tagged_as`), so all edge labels appear in the Relationships panel without manual registration.
+- [✓] **Duplicate tag edges**: `add_edge` checks for an existing `(from, to, label)` edge before inserting, preventing duplicate edges from repeated tag/relate calls.
+- [✓] **Hide default ForceGraph2D line for custom-routed edges**: Non-straight routing (`step`, `arc`) suppresses the default renderer (`linkColor` → transparent, `linkWidth` → 0); the path is drawn entirely in `linkCanvasObject`.
+- [✓] **Flow force decay fix**: Uses the `alpha` argument d3 passes to the force function (not `g.d3AlphaTarget()`); `bias = 0.6 * alpha` decays naturally to zero as the simulation cools.
+- [✓] **Arrow directionality**: Arrowheads snap to the nearest cardinal axis (H or V). When `flow` is set on the relationship type the exact flow direction is used; otherwise the dominant axis of the src→tgt vector is used.
+
+*Relationship type visual properties*
+- [✓] **`flow`, `routing`, `color` on `RelationshipType`**: Added to `models.rs`, `db.rs` schema, `save_relationship_type` Tauri command, `models.ts`, and `store.ts`.
+- [✓] **Routing-aware edge drawing**: `linkCanvasObject` dispatches on `rt.routing`: `step` draws an orthogonal L-path, `arc` draws a quadratic bezier; `straight` falls through to ForceGraph2D's default renderer.
+- [✓] **Directional d3-force layout**: `g.d3Force('flow', ...)` applies per-tick velocity bias along the flow axis, decaying with alpha.
+- [✓] **Adaptive background grid / dot matrix**: World-space step scales in ×5 / ÷5 multiples to keep screen-space spacing in ~[30, 150] px range at all zoom levels.
+- [✓] **Solid concave arrowheads**: Replaced open chevrons with a filled concave-kite shape via `quadraticCurveTo`; color matches the edge.
+- [✓] **Dot matrix contrast**: Dot alpha raised to 0.7.
+- [✓] **Tag edges hidden on startup**: `App.tsx` bootstrap calls `fetchRelationshipTypes()` so `invisibleLabelsRef` is seeded before the first graph render.
+- [✓] **Inline relationship type editing**: `RelationPanel` pencil icon replaces a row inline with an `EditRow` exposing all fields: label, flow, routing, color, transitive, symmetric, inherits_traits, visible.
+
+*Node interaction*
+- [✓] **Double-click to toggle media preview**: Two clicks on the same node within 400 ms triggers the image/PDF preview toggle; single click always selects.
+- [✓] **Miniature in real color**: Removed pixel-level theme color reinjection from PDF preview rendering; thumbnails display in natural colors.
+- [✓] **Node size matches miniature for repulsion / click surface**: `n.val` is set dynamically when a preview is active so d3 repulsion and click-hit-detection match the image footprint.
+- [✓] **Persist miniature open/closed state**: `toggledImageNodes` set is persisted in `localStorage` (`spatial-os:toggled-image-nodes`) and restored on component mount.
+- [✓] **Node icons**: Right-click → "Set Icon…" opens a native file picker (`pick_icon_file` via `rfd`), stores the path in `entity.metadata.icon`, and renders a 32 px circular icon on the node. "Clear Icon" removes it. Icons are always shown (not toggled).
+
+*Edge interaction*
+- [✓] **Edge selection**: Clicking a link highlights it with the accent color (thicker stroke) and shows an edge context menu. Background or node click dismisses the menu.
+- [✓] **Edge reification**: "Reify to Node" in the edge context menu calls `reify_edge` (Tauri command), which atomically creates a new `abstract` entity, adds `source → node → target` edges, and deletes the original edge.
+- [✓] **Delete edge from context menu**: "Delete Edge" in the edge context menu calls `remove_edge`.
+
+**Checks**
+- [✓] Clicking "Load Full" immediately after first launch loads the graph without crashing; the error boundary is never triggered.
+- [✓] After "Load Full", the canvas fills the entire container with no blank gap to the right.
+- [✓] With a node selected, pressing `→` selects the nearest node to the right; pressing `↑` selects the nearest node above; pressing `Escape` clears the selection.
+- [✓] Pressing `Space` on a focused node toggles it in/out of the multi-selection without clearing other selected nodes.
+- [✓] The EntityInspector lists selected entities in the order they were selected, not alphabetically or by ID.
+- [✓] The graph explore bar is visibly wider and more comfortable to type in.
+- [✓] All user-created relationship types (e.g. `depends_on`) appear in the Relationships panel, not just `tagged_as`.
+- [✓] Tagging an entity twice does not produce duplicate `tagged_as` edges.
+- [✓] Arrowheads are solid concave kite shapes; all arrow tips point perfectly horizontal or vertical.
+- [✓] Edges with `step` routing draw an L-shaped orthogonal path; `arc` draws a smooth curve; neither shows a duplicate straight line underneath.
+- [✓] Setting a relationship's flow to `right` and reloading does not push nodes off-screen; the simulation converges normally.
+- [✓] Editing a relationship type's label, color, or routing takes effect immediately on the graph.
+- [✓] Switching background style to "dots" replaces grid lines with evenly spaced dots that scale with zoom; switching back restores the grid.
+- [✓] With multiple tagged nodes visible, no two tag-region labels overlap at any zoom level.
+- [✓] Switching region style to "fill" draws a solid transparent background and solid border; switching back to "hatch" restores the original pattern.
+- [✓] Edges with `visible = false` relationship type do not appear on the canvas; toggling the eye icon in the Relationships panel immediately shows/hides the corresponding edges.
+- [✓] `tagged_as` edges are hidden by default on a fresh database; toggling their type to visible shows them.
+- [✓] Selecting one or more nodes in the graph reveals the Tag/Relate section in the left side panel; deselecting all hides it.
+- [✓] Double-clicking a node with an attached image/PDF toggles the preview; single click selects.
+- [✓] PDF previews display in natural paper colors, not theme colors.
+- [✓] Toggled previews are still open after an app restart.
+- [✓] Clicking an edge highlights it and shows the edge context menu.
+- [✓] "Reify to Node" converts the selected edge into a node connected to both endpoints.
+- [✓] "Set Icon…" on a node opens a native file picker and renders the chosen image as a circular icon on the graph node.
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `cargo check --workspace` passes with zero warnings.
+
+**Design decisions**
+- Decision: Use `alpha` parameter (not `g.d3AlphaTarget()`) in the flow force function.
+  Rationale: `d3AlphaTarget()` returns the *target* (always 0 at rest), not the *current* alpha — using it as a multiplier makes the force constant, causing runaway node velocity.
+- Decision: Snap arrowheads to cardinal (H or V) axis globally.
+  Rationale: Diagonal arrowheads look unclean at any angle; cardinal snapping gives a consistent, grid-aligned aesthetic regardless of where nodes settle in the simulation.
+- Decision: Store node icon path in `entity.metadata.icon` rather than a dedicated `IconTrait` table.
+  Rationale: Icons are a lightweight cosmetic property; the metadata bag is already flexible JSON and `update_metadata` is an existing IPC endpoint.
+- Decision: Implement `reify_edge` as a single Tauri command rather than composing frontend store actions.
+  Rationale: Atomic execution prevents a partial state (node created, original edge not yet deleted) from being visible to the user.
+
+**Design decisions**
+- Decision: Gate `ForceGraph2D` data on a `graphLoading` flag rather than retrying on error.
+  Rationale: Feeding an empty array during the load transition is the minimal, non-destructive fix — no retry logic, no timing hacks, no change to the error boundary.
+- Decision: Arrow navigation uses a ±45° directional cone, not strict axis alignment.
+  Rationale: A strict axis (±0°) would almost never match a real node position; 45° gives an ergonomic "nearest in that direction" feel while remaining deterministic.
+- Decision: `visible` flag lives on `RelationshipType`, not individual edges.
+  Rationale: Visibility is a semantic property of the relationship class (e.g. `tagged_as` is always structural/invisible); per-edge overrides would add complexity without a clear use case now.
+- Decision: Keep `hatch` as the default region style.
+  Rationale: The hatch pattern is already implemented and visually distinctive; `fill` is additive, not a replacement.
+
+### Phase 55: Semantic Metadata Enforcement
 **Description**
 Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
 

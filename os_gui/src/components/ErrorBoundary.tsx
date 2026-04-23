@@ -17,6 +17,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(`[ErrorBoundary:${this.props.label ?? 'panel'}]`, error, info.componentStack);
+    // Also ship to the Rust log so it appears in the structured tracing output
+    import('../lib/log').then(({ logFrontend }) => {
+      logFrontend('error',
+        `[ErrorBoundary:${this.props.label ?? 'panel'}] ${error.name}: ${error.message} | stack: ${error.stack ?? 'n/a'} | component: ${info.componentStack}`
+      );
+    });
   }
 
   render() {

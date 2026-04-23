@@ -217,6 +217,8 @@ interface OsStore {
   backendReady: boolean;
   // Full entity list for the explore dropdown (refreshed on every entity event)
   allEntities: Entity[];
+  // All tagged_as edges — kept in sync regardless of graph view
+  allTagEdges: GraphEdge[];
 
   // UI flags
   isLoading: boolean;
@@ -303,6 +305,7 @@ interface OsStore {
   addEdgeAction: (fromId: string, toId: string, label: string) => Promise<void>;
   removeEdge: (fromId: string, toId: string, label?: string) => Promise<void>;
   saveBlobContent: (owner: string, content: string) => Promise<void>;
+  clearSelection: () => void;
   toggleRegions: () => void;
   toggleFilterKind: (kind: string) => void;
   setFilterKinds: (kinds: string[]) => void;
@@ -350,6 +353,11 @@ interface OsStore {
   setGraphPathError: (err: string | null) => void;
   graphResetViewFn: (() => void) | null;
   setGraphResetViewFn: (fn: (() => void) | null) => void;
+  graphLoading: boolean;
+  backgroundStyle: 'grid' | 'dots';
+  setBackgroundStyle: (s: 'grid' | 'dots') => void;
+  regionStyle: 'hatch' | 'fill';
+  setRegionStyle: (s: 'hatch' | 'fill') => void;
 
   // ── Edition Panel state ───────────────────────────────────────
   editionEntityId: string | null;
@@ -389,6 +397,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
   hopCount: 2,
   backendReady: false,
   allEntities: [],
+  allTagEdges: [],
   isLoading: false,
   lastEvent: null,
   nodePositions: {},
@@ -434,6 +443,11 @@ export const useOsStore = create<OsStore>((set, get) => ({
   setGraphPathError: (err) => set({ graphPathError: err }),
   graphResetViewFn: null,
   setGraphResetViewFn: (fn) => set({ graphResetViewFn: fn }),
+  graphLoading: false,
+  backgroundStyle: 'grid' as const,
+  setBackgroundStyle: (s) => set({ backgroundStyle: s }),
+  regionStyle: 'fill' as const,
+  setRegionStyle: (s) => set({ regionStyle: s }),
 
   // ── Edition Panel ─────────────────────────────────────────────
   editionEntityId: null,
@@ -915,7 +929,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
   fetchEdges: async () => {
     try {
       const edges = await invoke<GraphEdge[]>('get_edges');
-      set({ edges });
+      const allTagEdges = edges.filter(e => e.label === 'tagged_as');
+      set({ edges, allTagEdges });
     } catch (e) {
       logFrontend('error', 'fetchEdges error: ' + String(e));
     }
@@ -956,6 +971,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
     get().setSelectedIds(next);
   },
 
+  clearSelection: () => {
+    set({ selectedIds: [], selectedEntityId: null });
+  },
+
   queryContext: async (contextId) => {
     try {
       const related = await invoke<Entity[]>('query_context', { contextId });
@@ -994,12 +1013,16 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   fetchAllEntities: async () => {
     // On first call (e.g. app bootstrap) the backend may still be initialising.
-    // Retry for up to ~10 s so the Load Full button becomes active as soon as the
+    // Retry for up to ~10 s so the Load button becomes active as soon as the
     // backend is ready, without the user having to do anything.
     for (let attempt = 0; attempt < 35; attempt++) {
       try {
-        const records = await invoke<Entity[]>('list_entities');
-        set({ allEntities: records, backendReady: true });
+        const [records, allEdges] = await Promise.all([
+          invoke<Entity[]>('list_entities'),
+          invoke<GraphEdge[]>('get_edges'),
+        ]);
+        const tagEdges = allEdges.filter(e => e.label === 'tagged_as');
+        set({ allEntities: records, allTagEdges: tagEdges, backendReady: true });
         return;
       } catch {
         if (attempt < 34) await new Promise(r => setTimeout(r, 300));
@@ -1043,20 +1066,25 @@ export const useOsStore = create<OsStore>((set, get) => ({
   },
 
   loadFullGraph: async () => {
-    // Do NOT clear entities before the fetch — setting entities:[] triggers a
-    // render with an empty ForceGraph2D while its simulation is still running,
-    // which causes "The object can not be found here." from a stale callback.
-    // Instead, switch mode and mark loading, then replace data in one update.
-    set({ graphMode: 'full', isLoading: true });
+    logFrontend('info', '[graph/load] loadFullGraph started — setting graphLoading=true');
+    set({ graphMode: 'full', isLoading: true, graphLoading: true });
     try {
+      const t0 = performance.now();
       const [entities, edges] = await Promise.all([
         invoke<Entity[]>('list_entities'),
         invoke<GraphEdge[]>('get_edges'),
       ]);
-      set({ entities, edges, isLoading: false });
+      const fetchMs = Math.round(performance.now() - t0);
+      const allTagEdges = edges.filter(e => e.label === 'tagged_as');
+      logFrontend('info',
+        `[graph/load] fetch done in ${fetchMs}ms — entities=${entities.length} edges=${edges.length} tagEdges=${allTagEdges.length}`
+      );
+      logFrontend('info', '[graph/load] setting graphLoading=false (atomic with data)');
+      set({ entities, edges, allTagEdges, allEntities: entities, isLoading: false, graphLoading: false });
+      logFrontend('info', '[graph/load] store update committed');
     } catch (e: any) {
-      logFrontend('error', 'loadFullGraph failed: ' + String(e));
-      set({ isLoading: false });
+      logFrontend('error', '[graph/load] loadFullGraph failed: ' + String(e));
+      set({ isLoading: false, graphLoading: false });
     }
   },
 
@@ -1254,6 +1282,10 @@ export const useOsStore = create<OsStore>((set, get) => ({
       transitive: rel.transitive,
       symmetric: rel.symmetric,
       inheritsTraits: rel.inherits_traits,
+      visible: rel.visible,
+      flow: rel.flow ?? null,
+      routing: rel.routing ?? null,
+      color: rel.color ?? null,
     });
     await get().fetchRelationshipTypes();
   },

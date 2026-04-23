@@ -3,8 +3,9 @@ import { useOsStore } from '../store';
 import { RelateDialog } from './RelateDialog';
 
 // ── Row ───────────────────────────────────────────────────────────────────────
-const EntityRow = memo(function EntityRow({ entity, isSelected, isContext, onSelect, onTag, onRelate, onDelete }: {
+const EntityRow = memo(function EntityRow({ entity, tags, isSelected, isContext, onSelect, onTag, onRelate, onDelete }: {
   entity: any;
+  tags: string[];
   isSelected: boolean;
   isContext: boolean;
   onSelect: (id: string | null) => void;
@@ -22,7 +23,25 @@ const EntityRow = memo(function EntityRow({ entity, isSelected, isContext, onSel
       style={{ cursor: 'pointer', position: 'relative' }}
       className={isSelected ? 'row-selected' : isContext ? 'row-context' : ''}
     >
-      <td title={entity.id}>{entity.label}</td>
+      <td title={entity.id}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span>{entity.label}</span>
+          {tags.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {tags.map(tag => (
+                <span key={tag} style={{
+                  fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                  background: 'var(--accent)22', color: 'var(--accent)',
+                  border: '1px solid var(--accent)44', fontWeight: 600,
+                  letterSpacing: '0.03em',
+                }}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </td>
       <td><span className={`kind-badge kind-${entity.category}`}>{entity.category}</span></td>
       <td>{isSelected ? '◉' : isContext ? '◎' : ''}</td>
       <td style={{ position: 'relative' }}>
@@ -51,8 +70,9 @@ const EntityRow = memo(function EntityRow({ entity, isSelected, isContext, onSel
 });
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
-export const EntityRegistry = memo(function EntityRegistry() {
+export const EntityPanel = memo(function EntityPanel() {
   const entities        = useOsStore(s => s.allEntities);
+  const allTagEdges     = useOsStore(s => s.allTagEdges);
   const selectedEntityId = useOsStore(s => s.selectedEntityId);
   const contextEntities = useOsStore(s => s.contextEntities);
   const selectEntity = useOsStore(s => s.selectEntity);
@@ -68,26 +88,93 @@ export const EntityRegistry = memo(function EntityRegistry() {
   const [quickTagInput, setQuickTagInput] = useState('');
   const [showRelateFor, setShowRelateFor] = useState<{ id: string; label: string } | null>(null);
 
+  // Build tag index: bare entityId (no "entity:" prefix) → [tagLabel, ...]
+  // Backend strips the "entity:" prefix from edge.from / edge.to, so we must
+  // add it back when looking up in allEntities (which carry full IDs).
+  const tagsByEntityId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const edge of allTagEdges) {
+      const tagEntity = entities.find(e => e.id === `entity:${edge.to}`);
+      if (!tagEntity) continue;
+      const existing = map.get(edge.from) ?? [];
+      existing.push(tagEntity.label);
+      map.set(edge.from, existing);
+    }
+    return map;
+  }, [allTagEdges, entities]);
+
+  // Collect all unique tag labels for the tag-search dropdown
+  const allTagLabels = useMemo(() => {
+    const labels = new Set<string>();
+    for (const tags of tagsByEntityId.values()) {
+      for (const t of tags) labels.add(t);
+    }
+    return Array.from(labels).sort();
+  }, [tagsByEntityId]);
+
   const contextIds = useMemo(() => contextEntities.map(e => e.id), [contextEntities]);
-  const filtered   = useMemo(() => entities.filter(e => e.label.toLowerCase().includes(search.toLowerCase())), [entities, search]);
+
+  // Parse search: "#tagName" filters by tag; otherwise label search
+  const tagSearch = search.startsWith('#') ? search.slice(1).toLowerCase() : null;
+  const labelSearch = tagSearch === null ? search.toLowerCase() : '';
+
+  const filtered = useMemo(() => {
+    if (tagSearch !== null) {
+      // Filter entities that have at least one tag matching the search
+      if (tagSearch === '') return entities; // just "#" with nothing after
+      return entities.filter(e => {
+        const tags = tagsByEntityId.get(e.id.replace('entity:', '')) ?? [];
+        return tags.some(t => t.toLowerCase().includes(tagSearch));
+      });
+    }
+    return entities.filter(e => e.label.toLowerCase().includes(labelSearch));
+  }, [entities, tagsByEntityId, tagSearch, labelSearch]);
+
   const handleSelect = useCallback((id: string | null) => selectEntity(id), [selectEntity]);
+
+  // Suggest matching tags when typing "#…"
+  const tagSuggestions = useMemo(() => {
+    if (tagSearch === null || tagSearch === '') return [];
+    return allTagLabels.filter(t => t.toLowerCase().includes(tagSearch)).slice(0, 6);
+  }, [tagSearch, allTagLabels]);
 
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Toolbar */}
       <div style={{ display: 'flex', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-header)', flexShrink: 0 }}>
-        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities…"
-          style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }} />
+        <div style={{ flex: 1, position: 'relative' }}>
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entities… or #tag"
+            style={{ width: '100%', background: 'var(--bg-primary)', border: '1px solid var(--accent)', borderRadius: 4, padding: '5px 10px', color: 'var(--text-primary)', fontSize: 11, height: 28, outline: 'none', boxSizing: 'border-box' }} />
+          {tagSuggestions.length > 0 && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.4)', marginTop: 2 }}>
+              {tagSuggestions.map(t => (
+                <div key={t} onClick={() => setSearch(`#${t}`)}
+                  style={{ padding: '4px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--accent)', display: 'flex', gap: 6, alignItems: 'center', borderBottom: '1px solid var(--border)' }}
+                  onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg-primary)')}
+                  onMouseLeave={ev => (ev.currentTarget.style.background = 'transparent')}>
+                  <span style={{ fontWeight: 700 }}>#</span>{t}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <button onClick={() => { setActiveActivity('inputs'); setSidePanelOpen(true); addCreateInputDraft(); }} title="New entity (Ctrl+N)"
-          style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+          style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
           + New
         </button>
       </div>
 
+      {/* Tag filter hint */}
+      {tagSearch !== null && (
+        <div style={{ padding: '4px 10px', fontSize: 10, color: 'var(--text-hint)', background: 'var(--accent)11', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          Filtering by tag — <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 10, padding: 0 }}>clear</button>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="empty-state" style={{ padding: 16 }}>
-          <p>No entities found.</p>
-          <p className="hint">Use Ctrl+N or click [+ New] to create one.</p>
+          <p>{tagSearch !== null ? `No entities tagged "${tagSearch}".` : 'No entities found.'}</p>
+          {tagSearch === null && <p className="hint">Use Ctrl+N or click [+ New] to create one.</p>}
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
@@ -96,6 +183,7 @@ export const EntityRegistry = memo(function EntityRegistry() {
             <tbody>
               {filtered.map(e => (
                 <EntityRow key={e.id} entity={e}
+                  tags={tagsByEntityId.get(e.id.replace('entity:', '')) ?? []}
                   isSelected={e.id === selectedEntityId}
                   isContext={contextIds.includes(e.id)}
                   onSelect={handleSelect}

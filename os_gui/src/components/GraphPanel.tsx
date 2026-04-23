@@ -7,6 +7,7 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 import { useOsStore, resolvedLabel } from '../store';
+import { logFrontend } from '../lib/log';
 import { RelateDialog } from './RelateDialog';
 import { KEYBINDS } from '../App';
 import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
@@ -60,6 +61,10 @@ const selectGraphExploreQuery = (s: any) => s.graphExploreQuery;
 const selectGraphShowGrid = (s: any) => s.graphShowGrid;
 const selectSetGraphExploreQuery = (s: any) => s.setGraphExploreQuery;
 const selectSetGraphExploreStatus = (s: any) => s.setGraphExploreStatus;
+const selectRelationshipTypes = (s: any) => s.relationshipTypes;
+const selectGraphLoading = (s: any) => s.graphLoading;
+const selectBackgroundStyle = (s: any) => s.backgroundStyle;
+const selectRegionStyle = (s: any) => s.regionStyle;
 
 /**
  * Visual configuration for Tag Regions
@@ -108,6 +113,12 @@ export const GraphPanel = memo(function GraphPanel() {
   const allLabelTraits = useOsStore(selectAllLabelTraits);
   const activeLocale = useOsStore(selectActiveLocale);
 
+  const relationshipTypes  = useOsStore(selectRelationshipTypes);
+  const graphLoading       = useOsStore(selectGraphLoading);
+  const backgroundStyle    = useOsStore(selectBackgroundStyle);
+  const regionStyle        = useOsStore(selectRegionStyle);
+  const clearSelection     = useOsStore((s: any) => s.clearSelection);
+
   // Toolbar state — now lives in the store so GraphSidePanel can share it
   const exploreQuery     = useOsStore(selectGraphExploreQuery);
   const showGrid         = useOsStore(selectGraphShowGrid);
@@ -118,7 +129,28 @@ export const GraphPanel = memo(function GraphPanel() {
 
   // searchQuery mirrors exploreQuery for canvas highlight
   const [searchQuery, setSearchQuery] = useState('');
-  const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(new Set());
+  const TOGGLED_NODES_KEY = 'spatial-os:toggled-image-nodes';
+  const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(TOGGLED_NODES_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
+  // Keyboard focus cursor — moves with arrow keys, independent of selection
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const focusedNodeIdRef = useRef<string | null>(null);
+
+  // Used to recreate the ForceGraph2D instance on full-load completion, avoiding
+  // the WKWebView "The object can not be found here" DOMException.
+  const [graphMountKey, setGraphMountKey] = useState(0);
+  const prevLoadingRef = useRef(graphLoading);
+  const skipNextFeedRef = useRef(false);
+
+  // Selected link state (for edge selection + reification)
+  const selectedLinkRef = useRef<{ source: string; target: string; label: string } | null>(null);
+  const [selectedLinkMenu, setSelectedLinkMenu] = useState<{
+    x: number; y: number; source: string; target: string; label: string;
+  } | null>(null);
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string } | null>(null);
@@ -144,6 +176,13 @@ export const GraphPanel = memo(function GraphPanel() {
   const selectedIdsRef = useRef(selectedIds);
   const highlightedPathRef = useRef<string[]>([]);
   const highlightedEdgeKeysRef = useRef<Set<string>>(new Set());
+  const backgroundStyleRef = useRef<'grid' | 'dots'>(backgroundStyle);
+  const regionStyleRef = useRef<'hatch' | 'fill'>(regionStyle);
+  const relationshipTypesRef = useRef(relationshipTypes);
+  // Set of edge labels that should be hidden visually (but kept in force sim)
+  const invisibleLabelsRef = useRef<Set<string>>(new Set());
+  // label → RelationshipType for O(1) lookup during rendering
+  const relTypeMapRef = useRef<Map<string, any>>(new Map());
 
   // Phase 44: SQL passthrough — debounced only for SELECT queries; dropdown uses local filter
   useEffect(() => {
@@ -172,11 +211,31 @@ export const GraphPanel = memo(function GraphPanel() {
     }, 250);
   }, [exploreQuery]);
 
+  useEffect(() => {
+    try { localStorage.setItem(TOGGLED_NODES_KEY, JSON.stringify([...toggledImageNodes])); } catch {}
+  }, [toggledImageNodes]);
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
   useEffect(() => { showRegionsRef.current = showRegions; }, [showRegions]);
   useEffect(() => { blobTraitsRef.current = blobTraits; }, [blobTraits]);
+  useEffect(() => { focusedNodeIdRef.current = focusedNodeId; }, [focusedNodeId]);
+  useEffect(() => { backgroundStyleRef.current = backgroundStyle; }, [backgroundStyle]);
+  useEffect(() => { regionStyleRef.current = regionStyle; }, [regionStyle]);
+  useEffect(() => {
+    relationshipTypesRef.current = relationshipTypes;
+    invisibleLabelsRef.current = new Set(
+      relationshipTypes.filter((rt: any) => rt.visible === false).map((rt: any) => rt.label)
+    );
+    relTypeMapRef.current = new Map(
+      relationshipTypes.map((rt: any) => [rt.label, rt])
+    );
+    // Refresh link visuals when visibility / style flags change
+    if (readyRef.current && graphRef.current) {
+      graphRef.current.linkColor(graphRef.current.linkColor());
+      graphRef.current.linkWidth(graphRef.current.linkWidth());
+    }
+  }, [relationshipTypes]);
   useEffect(() => {
     highlightedPathRef.current = highlightedPath;
     highlightedEdgeKeysRef.current = highlightedEdgeKeys;
@@ -193,27 +252,35 @@ export const GraphPanel = memo(function GraphPanel() {
   }, [toggledImageNodes]);
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
+  const lastClickRef = useRef<{ id: string; time: number } | null>(null);
+
   const onNodeClick = useCallback((node: any, event: MouseEvent) => {
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
 
-    // Toggle multi-select
     if (KEYBINDS.multiSelectModifier(event)) {
       toggleSelection(fullId);
       return;
     }
 
-    if (selectedIdRef.current === fullId) {
+    // Double-click detection: two clicks on the same node within 400 ms toggles media preview
+    const now = Date.now();
+    const last = lastClickRef.current;
+    if (last && last.id === fullId && now - last.time < 400) {
+      lastClickRef.current = null;
       setToggledImageNodes(prev => {
         const next = new Set(prev);
         if (next.has(fullId)) next.delete(fullId);
         else next.add(fullId);
         return next;
       });
-    } else {
-      selectEntity(fullId);
+      return;
     }
+    lastClickRef.current = { id: fullId, time: now };
+
+    selectEntity(fullId);
     setCtxMenu(null);
+    setSelectedLinkMenu(null);
   }, [selectEntity, toggleSelection]);
 
   const onNodeRightClick = useCallback((node: any, event: MouseEvent) => {
@@ -221,18 +288,28 @@ export const GraphPanel = memo(function GraphPanel() {
     const nodeId: string = (node as GNode).id;
     const fullId = nodeId.startsWith('entity:') ? nodeId : `entity:${nodeId}`;
     selectEntity(fullId);
+    setSelectedLinkMenu(null);
     setCtxMenu({ x: event.clientX, y: event.clientY, nodeId: fullId, nodeLabel: node.label ?? nodeId });
   }, [selectEntity]);
 
-  // Bootstrap once
+  // Bootstrap — re-runs when graphMountKey changes (i.e. after each full-load transition)
   useEffect(() => {
-    if (!containerRef.current || readyRef.current) return;
+    logFrontend('info', `[graph/bootstrap] effect fired — graphMountKey=${graphMountKey} readyRef=${readyRef.current} hasContainer=${!!containerRef.current}`);
+    if (!containerRef.current || readyRef.current) {
+      logFrontend('warn', `[graph/bootstrap] skipped (containerRef=${!!containerRef.current} readyRef=${readyRef.current})`);
+      return;
+    }
     readyRef.current = true;
+    logFrontend('info', '[graph/bootstrap] creating new ForceGraph2D instance');
 
     const g = (ForceGraph2D as any)()(containerRef.current)
       .graphData({ nodes: [], links: [] })
       .backgroundColor('rgba(0,0,0,0)')
       .linkColor((link: any) => {
+        if (invisibleLabelsRef.current.has(link.label)) return 'rgba(0,0,0,0)';
+        const rt0 = relTypeMapRef.current.get(link.label);
+        // Non-straight edges are drawn entirely in linkCanvasObject — suppress default line
+        if (rt0?.routing && rt0.routing !== 'straight') return 'rgba(0,0,0,0)';
         const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
         const targetId = typeof link.target === 'object' ? link.target.id : link.target;
         const edgeKey = `${sourceId}|${targetId}`;
@@ -242,21 +319,37 @@ export const GraphPanel = memo(function GraphPanel() {
         const sq = searchQueryRef.current.toLowerCase();
         const sm = !sq || (link.source?.label && link.source.label.toLowerCase().includes(sq));
         const tm = !sq || (link.target?.label && link.target.label.toLowerCase().includes(sq));
-        const baseColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#a0a0a0';
-        return (sq && !sm && !tm) ? 'rgba(100, 100, 100, 0.15)' : baseColor;
+        if (sq && !sm && !tm) return 'rgba(100, 100, 100, 0.15)';
+        const rt = relTypeMapRef.current.get(link.label);
+        if (rt?.color) return rt.color;
+        return getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#a0a0a0';
       })
       .linkWidth((link: any) => {
+        if (invisibleLabelsRef.current.has(link.label)) return 0;
+        const rt0 = relTypeMapRef.current.get(link.label);
+        if (rt0?.routing && rt0.routing !== 'straight') return 0;
         const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
         const targetId = typeof link.target === 'object' ? link.target.id : link.target;
         const edgeKey = `${sourceId}|${targetId}`;
-        return highlightedEdgeKeysRef.current.has(edgeKey) ? 4 : 1.5;
+        return highlightedEdgeKeysRef.current.has(edgeKey) ? 4 : 2;
       })
-      .linkDirectionalArrowLength(5)
-      .linkDirectionalArrowRelPos(1)
+      .linkDirectionalArrowLength(0)
       .onNodeClick(onNodeClick)
       .onNodeRightClick(onNodeRightClick)
+      .onLinkClick((link: any, event: MouseEvent) => {
+        if (!link.source || !link.target || typeof link.source !== 'object') return;
+        const sel = {
+          source: link.source.id,
+          target: link.target.id,
+          label: link.label,
+        };
+        selectedLinkRef.current = sel;
+        setSelectedLinkMenu({ x: event.clientX, y: event.clientY, ...sel });
+        setCtxMenu(null);
+      })
       .onBackgroundClick(() => {
-        // Clear selection on background click
+        selectedLinkRef.current = null;
+        setSelectedLinkMenu(null);
         if (selectedIdsRef.current.length > 0) {
           setSelectedIds([]);
         }
@@ -305,44 +398,10 @@ export const GraphPanel = memo(function GraphPanel() {
               offCanvas.height = viewport.height;
               const offCtx = offCanvas.getContext('2d');
               if (!offCtx) return;
-              
-              // We want standard white PDF background since we'll draw it on the graph
               offCtx.fillStyle = '#ffffff';
               offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
-
               return page.render({ canvasContext: offCtx, viewport: viewport } as any).promise.then(() => {
-                // Pixel-level Theme Color Injection
-                const temp = document.createElement('div');
-                document.body.appendChild(temp);
-                
-                const getRgb = (varName: string) => {
-                  temp.style.color = `var(${varName})`;
-                  const colorString = getComputedStyle(temp).color;
-                  const match = colorString.match(/\d+/g);
-                  if (match && match.length >= 3) {
-                    return [parseInt(match[0], 10), parseInt(match[1], 10), parseInt(match[2], 10)];
-                  }
-                  return [255, 255, 255];
-                };
-
-                const bgTone = getRgb('--bg-primary');
-                const textTone = getRgb('--text-primary');
-                document.body.removeChild(temp);
-
-                const imageData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                  const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
-                  if (a === 0) continue; 
-                  
-                  const lightness = (r + g + b) / (3 * 255);
-                  data[i] = textTone[0] * (1 - lightness) + bgTone[0] * lightness;
-                  data[i+1] = textTone[1] * (1 - lightness) + bgTone[1] * lightness;
-                  data[i+2] = textTone[2] * (1 - lightness) + bgTone[2] * lightness;
-                }
-                offCtx.putImageData(imageData, 0, 0);
-
-                n.img = offCanvas; // Cash into image property
+                n.img = offCanvas;
                 if (readyRef.current && graphRef.current) {
                   graphRef.current.nodeColor(graphRef.current.nodeColor());
                 }
@@ -367,6 +426,8 @@ export const GraphPanel = memo(function GraphPanel() {
             else w = maxDim * aspect;
             n.__imgW = w;
             n.__imgH = h;
+            // Scale nodeVal so click surface + repulsion matches the image footprint
+            n.val = Math.max(1, ((Math.max(w, h) / 2) / 4) ** 2);
 
             ctx.save();
             ctx.drawImage(n.img, n.x - w / 2, n.y - h / 2, w, h);
@@ -377,6 +438,34 @@ export const GraphPanel = memo(function GraphPanel() {
             ctx.lineWidth = 1.5 / globalScale;
             ctx.strokeStyle = KIND_COLORS[n.category] ?? '#8b91a8';
             ctx.stroke();
+          }
+        }
+
+        // Icon override: render entity icon from metadata.icon (always shown, not toggled)
+        const iconPath = n.metadata?.icon as string | undefined;
+        if (iconPath && !isImageReady) {
+          if (!n._iconImg) {
+            const img = new Image();
+            img.src = convertFileSrc(iconPath);
+            img.onload = () => {
+              if (readyRef.current && graphRef.current) {
+                graphRef.current.nodeColor(graphRef.current.nodeColor());
+              }
+            };
+            n._iconImg = img;
+          }
+          if (n._iconImg.complete && (n._iconImg as HTMLImageElement).naturalWidth > 0) {
+            const iconR = 16;
+            n.__imgW = iconR * 2;
+            n.__imgH = iconR * 2;
+            n.val = ((iconR / 4) ** 2);
+            isImageReady = true;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, iconR, 0, 2 * Math.PI);
+            ctx.clip();
+            ctx.drawImage(n._iconImg, n.x - iconR, n.y - iconR, iconR * 2, iconR * 2);
+            ctx.restore();
           }
         }
 
@@ -412,6 +501,21 @@ export const GraphPanel = memo(function GraphPanel() {
           ctx.stroke();
         }
 
+        // Keyboard focus cursor: same weight as selection ring, warm accent color
+        if (`entity:${n.id}` === focusedNodeIdRef.current) {
+          ctx.beginPath();
+          if (isImageReady && n.__imgW) {
+            ctx.rect(n.x - n.__imgW / 2 - 5, n.y - n.__imgH / 2 - 5, n.__imgW + 10, n.__imgH + 10);
+          } else {
+            ctx.arc(n.x, n.y, radius + 5, 0, 2 * Math.PI, false);
+          }
+          ctx.lineWidth = 2.5 / globalScale;
+          ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--graph-path').trim() || '#f5a623';
+          ctx.globalAlpha = 0.9;
+          ctx.stroke();
+          ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
+        }
+
         if (globalScale > 0.8) {
           const fontSize = 4;
           ctx.textAlign = 'center';
@@ -425,6 +529,9 @@ export const GraphPanel = memo(function GraphPanel() {
       })
       .linkCanvasObjectMode(() => 'after')
       .linkCanvasObject((link: any, ctx: CanvasRenderingContext2D) => {
+        // Suppress invisible-type edges entirely
+        if (invisibleLabelsRef.current.has(link.label)) return;
+
         const sq = searchQueryRef.current.toLowerCase();
         const sm = !sq || (link.source?.label && link.source.label.toLowerCase().includes(sq));
         const tm = !sq || (link.target?.label && link.target.label.toLowerCase().includes(sq));
@@ -435,6 +542,125 @@ export const GraphPanel = memo(function GraphPanel() {
         if (link.target.x == null || link.target.y == null || Number.isNaN(link.target.x) || Number.isNaN(link.target.y)) return;
         if (link.source.id === link.target.id) return;
 
+        const sourceId = link.source.id;
+        const targetId = link.target.id;
+        const edgeKey = `${sourceId}|${targetId}`;
+        const isPath = highlightedEdgeKeysRef.current.size > 0 && highlightedEdgeKeysRef.current.has(edgeKey);
+        const selLink = selectedLinkRef.current;
+        const isSelectedLink = selLink &&
+          selLink.source === sourceId && selLink.target === targetId && selLink.label === link.label;
+        const rt = relTypeMapRef.current.get(link.label);
+        const routing: string = rt?.routing ?? 'straight';
+        const pathAlpha = (sq && !sm && !tm) ? 0.15 : 1;
+
+        const baseColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#a0a0a0';
+        const edgeColor = isSelectedLink
+          ? (getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0')
+          : isPath
+            ? (getComputedStyle(document.documentElement).getPropertyValue('--graph-path').trim() || '#f5a623')
+            : (rt?.color ?? baseColor);
+
+        const sx = link.source.x, sy = link.source.y;
+        const tx2 = link.target.x, ty2 = link.target.y;
+        const dx = tx2 - sx, dy = ty2 - sy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 0.1) return;
+
+        const ux = dx / len, uy = dy / len;
+        const nodeR = 7;
+
+        // ── Edge path ───────────────────────────────────────────
+        ctx.save();
+        ctx.strokeStyle = edgeColor;
+        ctx.lineWidth = isSelectedLink ? 2.0 : isPath ? 1.5 : 1.0;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalAlpha = pathAlpha;
+
+        if (routing === 'step') {
+          // Orthogonal L-path.
+          // To make the LAST segment align with the flow direction:
+          //   right/left flow → go vertical first, then horizontal (last seg = H)
+          //   down/up flow   → go horizontal first, then vertical (last seg = V)
+          //   no flow        → horizontal first, then vertical (default)
+          const stepFlow: string = rt?.flow ?? 'none';
+          const vFirst = stepFlow === 'right' || stepFlow === 'left';
+          const midX = vFirst ? sx : tx2;
+          const midY = vFirst ? ty2 : sy;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(midX, midY);
+          ctx.lineTo(tx2, ty2);
+          ctx.stroke();
+        } else if (routing === 'arc') {
+          // Quadratic bezier with control point offset perpendicular to midpoint
+          const mx = (sx + tx2) / 2;
+          const my = (sy + ty2) / 2;
+          const curvature = 0.25;
+          const cpx = mx - uy * len * curvature;
+          const cpy = my + ux * len * curvature;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.quadraticCurveTo(cpx, cpy, tx2, ty2);
+          ctx.stroke();
+        }
+        // 'straight' edges are drawn by ForceGraph2D's default renderer (linkColor/linkWidth)
+
+        ctx.restore();
+
+        // ── Solid concave arrowhead ──────────────────────────────
+        // The arrowhead direction must match the ACTUAL direction the path segment
+        // arrives at the target node — otherwise the head detaches from the line.
+        let arrowUx: number, arrowUy: number;
+        if (routing === 'step') {
+          // Last segment direction follows the segment order computed above:
+          //   vFirst (right/left flow): last segment is horizontal
+          //   else:                     last segment is vertical
+          const stepFlow2: string = rt?.flow ?? 'none';
+          const vFirst2 = stepFlow2 === 'right' || stepFlow2 === 'left';
+          if (vFirst2) {
+            arrowUx = dx >= 0 ? 1 : -1; arrowUy = 0;
+          } else {
+            arrowUx = 0; arrowUy = dy >= 0 ? 1 : -1;
+          }
+        } else if (routing === 'arc') {
+          // Bezier tangent at t=1: direction from control point to target.
+          // Use the actual tangent (no cardinal snap) so the arrowhead stays
+          // perfectly flush with the curve's final approach direction.
+          const mx2 = (sx + tx2) / 2, my2 = (sy + ty2) / 2;
+          const cpx2 = mx2 - uy * len * 0.25, cpy2 = my2 + ux * len * 0.25;
+          const tdx2 = tx2 - cpx2, tdy2 = ty2 - cpy2;
+          const tlen2 = Math.sqrt(tdx2 * tdx2 + tdy2 * tdy2) || 1;
+          arrowUx = tdx2 / tlen2; arrowUy = tdy2 / tlen2;
+        } else {
+          // Straight: ForceGraph2D draws the line in (ux,uy); arrowhead must match exactly
+          arrowUx = ux; arrowUy = uy;
+        }
+        const tipX = tx2 - arrowUx * nodeR;
+        const tipY = ty2 - arrowUy * nodeR;
+
+        const px = -arrowUy, py = arrowUx;
+        const headH = 5, headW = 1.6;
+        const lx = tipX - arrowUx * headH + px * headW;
+        const ly = tipY - arrowUy * headH + py * headW;
+        const rx2 = tipX - arrowUx * headH - px * headW;
+        const ry2 = tipY - arrowUy * headH - py * headW;
+        const ix = tipX - arrowUx * (headH * 0.9);
+        const iy = tipY - arrowUy * (headH * 0.9);
+
+        const radius = 0.3;
+        ctx.beginPath();
+        ctx.arcTo(tipX, tipY, lx, ly, radius);
+        ctx.arcTo(lx, ly, ix, iy, radius);
+        ctx.arcTo(ix, iy, rx2, ry2, radius);
+        ctx.arcTo(rx2, ry2, tipX, tipY, radius);
+        ctx.closePath();
+        ctx.fillStyle = edgeColor;
+        ctx.globalAlpha = pathAlpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // ── Edge label ──────────────────────────────────────────
         const label = link.label;
         if (!label) return;
 
@@ -443,21 +669,37 @@ export const GraphPanel = memo(function GraphPanel() {
         const textWidth = ctx.measureText(label).width;
         const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
 
-        const x = link.source.x + (link.target.x - link.source.x) / 2;
-        const y = link.source.y + (link.target.y - link.source.y) / 2;
+        // Place label at midpoint of the drawn path
+        let lbx: number, lby: number;
+        if (routing === 'arc') {
+          const mx = (sx + tx2) / 2;
+          const my = (sy + ty2) / 2;
+          const curvature = 0.25;
+          const cpx = mx - uy * len * curvature;
+          const cpy = my + ux * len * curvature;
+          lbx = (sx + 2 * cpx + tx2) / 4; // midpoint on bezier (t=0.5)
+          lby = (sy + 2 * cpy + ty2) / 4;
+        } else if (routing === 'step') {
+          const flow4: string = rt?.flow ?? 'none';
+          const midX = (flow4 === 'down' || flow4 === 'up') ? sx : tx2;
+          const midY = (flow4 === 'down' || flow4 === 'up') ? ty2 : sy;
+          lbx = (sx + midX + tx2) / 3;
+          lby = (sy + midY + ty2) / 3;
+        } else {
+          lbx = (sx + tx2) / 2;
+          lby = (sy + ty2) / 2;
+        }
 
         const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#1a1b26';
         ctx.fillStyle = bgColor;
-        ctx.fillRect(x - bckgDimensions[0] / 2, y - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
-
+        ctx.fillRect(lbx - bckgDimensions[0] / 2, lby - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const txtSec = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#8b91a8';
-        ctx.fillStyle = txtSec;
-        ctx.fillText(label, x, y);
+        ctx.fillStyle = rt?.color ?? (getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#8b91a8');
+        ctx.fillText(label, lbx, lby);
       })
       .onRenderFramePre((ctx: CanvasRenderingContext2D, _globalScale: number) => {
-        // 1. Draw Grid
+        // 1. Draw background: grid lines or dot matrix
         if (showGridRef.current) {
           const canvas = ctx.canvas;
           const width = canvas.width;
@@ -467,12 +709,33 @@ export const GraphPanel = memo(function GraphPanel() {
           const ty = t.y;
           const k = t.k;
 
-          const spacing = 50 * k;
-          if (spacing >= 4) {
-            ctx.save();
-            ctx.resetTransform();
-            const borderCol = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#444';
-            const majorSpacing = spacing * 5;
+          // Adaptive grid: keep screen-space cell size in ~[30, 150] px
+          // by stepping the world-space interval up/down in multiples of 5.
+          let worldStep = 50;
+          let spacing = worldStep * k;
+          while (spacing < 30)  { worldStep *= 5; spacing = worldStep * k; }
+          while (spacing > 150) { worldStep /= 5; spacing = worldStep * k; }
+          const majorSpacing = spacing * 5;
+
+          ctx.save();
+          ctx.resetTransform();
+          const borderCol = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#444';
+
+          if (backgroundStyleRef.current === 'dots') {
+            // Dot matrix — size scales slightly with zoom for tactile feel
+            const dotR = Math.min(1.8, Math.max(0.8, k * 0.9));
+            ctx.fillStyle = borderCol;
+            ctx.globalAlpha = 0.7;
+            ctx.beginPath();
+            for (let x = ((tx % spacing) + spacing) % spacing; x < width; x += spacing) {
+              for (let y = ((ty % spacing) + spacing) % spacing; y < height; y += spacing) {
+                ctx.moveTo(x + dotR, y);
+                ctx.arc(x, y, dotR, 0, 2 * Math.PI);
+              }
+            }
+            ctx.fill();
+          } else {
+            // Major grid lines
             ctx.beginPath();
             ctx.strokeStyle = borderCol;
             ctx.globalAlpha = 0.45;
@@ -484,6 +747,7 @@ export const GraphPanel = memo(function GraphPanel() {
               ctx.moveTo(0, y); ctx.lineTo(width, y);
             }
             ctx.stroke();
+            // Minor grid lines
             ctx.beginPath();
             ctx.globalAlpha = 0.18;
             ctx.lineWidth = 0.75;
@@ -494,11 +758,11 @@ export const GraphPanel = memo(function GraphPanel() {
               ctx.moveTo(0, y); ctx.lineTo(width, y);
             }
             ctx.stroke();
-            ctx.restore();
           }
+          ctx.restore();
         }
 
-        // 2. Draw Tag Regions
+        // 2. Draw Tag Regions — collect hulls first, then render + resolve label collisions
         if (showRegionsRef.current && graphRef.current) {
           const { nodes: liveNodes, links: liveLinks } = graphRef.current.graphData();
           const groups: Record<string, { label: string, points: { x: number, y: number }[] }> = {};
@@ -514,20 +778,27 @@ export const GraphPanel = memo(function GraphPanel() {
               if (fromNode) {
                 if (!groups[toId]) {
                   groups[toId] = { label: toNode?.label || toId, points: [] };
-                  // Include the tag entity itself in its region
-                  if (toNode) {
-                    groups[toId].points.push({ x: toNode.x, y: toNode.y });
-                  }
+                  if (toNode) groups[toId].points.push({ x: toNode.x, y: toNode.y });
                 }
                 groups[toId].points.push({ x: fromNode.x, y: fromNode.y });
               }
             }
           });
 
+          // Pass 1: build hull + label anchor data for all groups
+          type RegionData = {
+            hull: { x: number; y: number }[];
+            color: string;
+            labelText: string;
+            labelX: number;
+            labelY: number;
+            labelW: number;
+          };
+          const regions: RegionData[] = [];
+
           Object.entries(groups).forEach(([tagId, group]) => {
             if (group.points.length < 1) return;
 
-            // Dilation: add a bubble around each node to create the "gap"
             const pointsWithGap: { x: number; y: number }[] = [];
             group.points.forEach(p => {
               for (let a = 0; a < 2 * Math.PI; a += Math.PI / 4) {
@@ -542,72 +813,109 @@ export const GraphPanel = memo(function GraphPanel() {
             if (hull.length < 3) return;
 
             const color = getStableColor(tagId);
+            const text = group.label.toUpperCase();
+            ctx.font = REGION_STYLE.labelFont;
+            const labelW = ctx.measureText(text).width;
+            const minYHull = Math.min(...hull.map(p => p.y));
+            const avgX = hull.reduce((a, b) => a + b.x, 0) / hull.length;
 
+            regions.push({
+              hull,
+              color,
+              labelText: text,
+              labelX: avgX,
+              labelY: minYHull - REGION_STYLE.labelVOffset,
+              labelW,
+            });
+          });
+
+          // Pass 2: render hull fills + borders
+          const isFill = regionStyleRef.current === 'fill';
+          regions.forEach(({ hull, color }) => {
             ctx.save();
-
-            // 1. Define the hull path for fill and clipping
             ctx.beginPath();
             drawRoundedHullPath(ctx, hull, REGION_STYLE.roundness);
 
-            // 2. Background Fill
-            ctx.globalAlpha = 0.05;
-            ctx.fillStyle = color;
-            ctx.fill();
+            if (isFill) {
+              // Soft-fill: solid transparent background + 2px border
+              ctx.globalAlpha = 0.15;
+              ctx.fillStyle = color;
+              ctx.fill();
+              ctx.beginPath();
+              drawRoundedHullPath(ctx, hull, REGION_STYLE.roundness);
+              ctx.globalAlpha = REGION_STYLE.borderAlpha;
+              ctx.strokeStyle = color;
+              ctx.lineWidth = REGION_STYLE.borderWidth;
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+              ctx.stroke();
+            } else {
+              // Hatch style
+              ctx.globalAlpha = 0.05;
+              ctx.fillStyle = color;
+              ctx.fill();
 
-            // 3. Manual Hatching (Clipped to the hull)
-            ctx.save();
-            ctx.clip();
+              ctx.save();
+              ctx.clip();
+              ctx.beginPath();
+              ctx.strokeStyle = color;
+              ctx.lineWidth = REGION_STYLE.hatchLineWidth;
+              ctx.globalAlpha = REGION_STYLE.hatchAlpha;
+              const kValues = hull.map(p => p.x - p.y);
+              const kMin = Math.min(...kValues);
+              const kMax = Math.max(...kValues);
+              const sp = REGION_STYLE.hatchSpacing;
+              for (let kk = kMin - sp; kk < kMax + sp; kk += sp) {
+                const minY = Math.min(...hull.map(p => p.y)) - sp;
+                const maxY = Math.max(...hull.map(p => p.y)) + sp;
+                ctx.moveTo(kk + minY, minY);
+                ctx.lineTo(kk + maxY, maxY);
+              }
+              ctx.stroke();
+              ctx.restore();
 
-            ctx.beginPath();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = REGION_STYLE.hatchLineWidth;
-            ctx.globalAlpha = REGION_STYLE.hatchAlpha;
-
-            // Calculate the exact range of k = x - y for the diagonals
-            const kValues = hull.map(p => p.x - p.y);
-            const kMin = Math.min(...kValues);
-            const kMax = Math.max(...kValues);
-
-            const spacing = REGION_STYLE.hatchSpacing;
-            // Sweep k from min to max. We add extra padding to ensure full edge coverage
-            for (let k = kMin - spacing; k < kMax + spacing; k += spacing) {
-              // Diagonal line x = y + k. 
-              // To cover the hull, we draw a line long enough to cross the bounding box.
-              const minY = Math.min(...hull.map(p => p.y)) - spacing;
-              const maxY = Math.max(...hull.map(p => p.y)) + spacing;
-              ctx.moveTo(k + minY, minY);
-              ctx.lineTo(k + maxY, maxY);
+              ctx.beginPath();
+              drawRoundedHullPath(ctx, hull, REGION_STYLE.roundness);
+              ctx.globalAlpha = REGION_STYLE.borderAlpha;
+              ctx.strokeStyle = color;
+              ctx.lineWidth = REGION_STYLE.borderWidth;
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+              ctx.stroke();
             }
-            ctx.stroke();
-            ctx.restore(); // Remove clipping
-
-            // 4. Border (Redraw the path if needed or reuse if possible)
-            // Note: restoring state might have cleared the path in some browsers if it wasn't saved, 
-            // so we redraw it for the stroke to be safe.
-            ctx.beginPath();
-            drawRoundedHullPath(ctx, hull, REGION_STYLE.roundness);
-            ctx.globalAlpha = REGION_STYLE.borderAlpha;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = REGION_STYLE.borderWidth;
-            ctx.lineJoin = 'round';
-            ctx.lineCap = 'round';
-            ctx.stroke();
-
             ctx.restore();
+          });
 
-            // Label
-            if (_globalScale > 0.4) {
+          // Pass 3: render labels with greedy 1-D collision avoidance
+          if (_globalScale > 0.4) {
+            // Sort by labelY (top to bottom) so higher labels get priority
+            const sorted = [...regions].sort((a, b) => a.labelY - b.labelY);
+            const placed: { x: number; y: number; w: number }[] = [];
+            const labelH = 8; // approximate pixel height of a label
+
+            sorted.forEach(({ color, labelText, labelX, labelY, labelW }) => {
+              let y = labelY;
+              // Greedy push-down until no overlap with already-placed labels
+              for (let iter = 0; iter < 20; iter++) {
+                const overlapping = placed.find(p => {
+                  const dx = Math.abs(p.x - labelX);
+                  const dy = Math.abs(p.y - y);
+                  return dx < (p.w + labelW) / 2 + 4 && dy < labelH;
+                });
+                if (!overlapping) break;
+                y = overlapping.y - labelH - 2;
+              }
+              placed.push({ x: labelX, y, w: labelW });
+
               ctx.save();
               ctx.font = REGION_STYLE.labelFont;
               ctx.fillStyle = color;
               ctx.textAlign = 'center';
-              const minYHull = Math.min(...hull.map(p => p.y));
-              const avgX = hull.reduce((a, b) => a + b.x, 0) / hull.length;
               ctx.globalAlpha = REGION_STYLE.labelAlpha;
-              ctx.fillText(group.label.toUpperCase(), avgX, minYHull - REGION_STYLE.labelVOffset);
+              ctx.fillText(labelText, labelX, y);
               ctx.restore();
-            }
-          });
+            });
+          }
         }
 
         // 3. (Marquee rect is now a React div overlay — no canvas drawing needed)
@@ -619,11 +927,38 @@ export const GraphPanel = memo(function GraphPanel() {
     g.d3Force('charge').strength(-50).distanceMin(8).distanceMax(300);
     g.d3Force('link').distance(40);
 
+    // Flow force: soft directional bias for relationship types with a flow direction.
+    // d3-force passes `alpha` (1→0) to the function each tick — velocity changes must
+    // be proportional to alpha so they naturally decay to zero as the sim cools.
+    g.d3Force('flow', (alpha: number) => {
+      const { links } = g.graphData();
+      const bias = 0.6 * alpha;
+      for (const link of links) {
+        const rt = relTypeMapRef.current.get((link as any).label);
+        if (!rt?.flow || rt.flow === 'none') continue;
+        const src = (link as any).source;
+        const tgt = (link as any).target;
+        if (!src || !tgt || src.x == null || tgt.x == null) continue;
+        switch (rt.flow) {
+          case 'down':  tgt.vy += bias; src.vy -= bias; break;
+          case 'up':    tgt.vy -= bias; src.vy += bias; break;
+          case 'right': tgt.vx += bias; src.vx -= bias; break;
+          case 'left':  tgt.vx -= bias; src.vx += bias; break;
+        }
+      }
+    });
+
     g.onNodeDragEnd((node: any) => {
       if (node.id) updateNodePosition(node.id, node.x, node.y);
     });
 
     graphRef.current = g;
+
+    // ForceGraph2D reads offsetWidth at init time, which may be 0 if the flex
+    // container hasn't painted yet. Force the correct size immediately.
+    if (containerRef.current) {
+      g.width(containerRef.current.clientWidth).height(containerRef.current.clientHeight);
+    }
 
     // Register zoom-reset function so GraphSidePanel can call it
     setGraphResetViewFn(() => {
@@ -632,8 +967,21 @@ export const GraphPanel = memo(function GraphPanel() {
         setTimeout(() => graphRef.current?.zoomToFit(400, 30), 450);
       }
     });
-    return () => setGraphResetViewFn(null);
-  }, [onNodeClick, onNodeRightClick]);
+    logFrontend('info', `[graph/bootstrap] instance ready — graphMountKey=${graphMountKey}`);
+
+    return () => {
+      logFrontend('info', `[graph/bootstrap] cleanup — destroying instance graphMountKey=${graphMountKey}`);
+      setGraphResetViewFn(null);
+      readyRef.current = false;
+      const old = graphRef.current;
+      graphRef.current = null;
+      // _destructor() removes the canvas from the container div. This is safe here
+      // because the container div has no React children — all overlays live in a
+      // sibling wrapper. React never calls removeChild on anything inside the container,
+      // so there is no WKWebView NotFoundError risk.
+      try { (old as any)?._destructor?.(); } catch {}
+    };
+  }, [graphMountKey]);
 
   // Marquee: intercept at window capture phase to beat d3-zoom
   useEffect(() => {
@@ -750,7 +1098,11 @@ export const GraphPanel = memo(function GraphPanel() {
     };
   }, [setSelectedIds]);
 
-  // Synchronous filtering for UI stats and data preparation
+  // Synchronous filtering for UI stats and data preparation.
+  // NOTE: invisible-type edges (e.g. tagged_as) are kept in filteredData so they
+  // participate in the d3 force simulation (attracting tagged nodes) and in the
+  // region-hull detection pass. They are suppressed only in the visual-render layer
+  // (linkColor / linkWidth / linkCanvasObject checks against invisibleLabelsRef).
   const filteredData = useMemo(() => {
     const isFiltered = filterKinds.length > 0;
     const kindNodes = isFiltered
@@ -769,10 +1121,32 @@ export const GraphPanel = memo(function GraphPanel() {
     return { nodes: kindNodes, edges: kindEdges };
   }, [entities, edges, filterKinds, filterEdgeLabels]);
 
+  useEffect(() => {
+    logFrontend('debug', `[graph/panel] graphLoading changed → ${graphLoading} (prev=${prevLoadingRef.current})`);
+    const wasLoading = prevLoadingRef.current;
+    prevLoadingRef.current = graphLoading;
+    if (wasLoading && !graphLoading) {
+      logFrontend('info', `[graph/panel] transition true→false detected; bumping graphMountKey (current=${graphMountKey}), setting skipNextFeed`);
+      skipNextFeedRef.current = true;
+      setGraphMountKey(k => k + 1);
+    }
+  }, [graphLoading]);
+
   // Sync data to force-graph instance
   useEffect(() => {
+    logFrontend('debug', `[graph/sync] effect fired — graphLoading=${graphLoading} graphMountKey=${graphMountKey} skipNext=${skipNextFeedRef.current} hasGraph=${!!graphRef.current} nodes=${filteredData.nodes.length} edges=${filteredData.edges.length}`);
+    if (graphLoading) return;
+    if (skipNextFeedRef.current) {
+      logFrontend('info', '[graph/sync] skipping feed on old instance (skipNextFeed was set)');
+      skipNextFeedRef.current = false;
+      return;
+    }
     const g = graphRef.current;
-    if (!g) return;
+    if (!g) {
+      logFrontend('warn', '[graph/sync] graphRef.current is null — cannot feed data');
+      return;
+    }
+    logFrontend('info', `[graph/sync] feeding graphMountKey=${graphMountKey} — nodes=${filteredData.nodes.length} edges=${filteredData.edges.length}`);
 
     const { nodes: liveNodes, links: liveLinks } = g.graphData();
     const liveById = new Map<string, any>(liveNodes.map((n: any) => [n.id, n]));
@@ -826,8 +1200,14 @@ export const GraphPanel = memo(function GraphPanel() {
       }
     }
 
-    g.graphData({ nodes: nextNodes, links: nextLinks });
-  }, [filteredData, nodePositions, showRegions, allLabelTraits, activeLocale]);
+    try {
+      g.graphData({ nodes: nextNodes, links: nextLinks });
+      logFrontend('info', `[graph/sync] graphData() call succeeded — fed ${nextNodes.length} nodes, ${nextLinks.length} links`);
+    } catch (err: any) {
+      logFrontend('error', `[graph/sync] graphData() threw: ${String(err)} | stack: ${err?.stack ?? 'n/a'}`);
+      throw err; // re-throw so ErrorBoundary catches it
+    }
+  }, [filteredData, nodePositions, showRegions, allLabelTraits, activeLocale, graphLoading, graphMountKey]);
 
 
   useEffect(() => {
@@ -839,29 +1219,106 @@ export const GraphPanel = memo(function GraphPanel() {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      graphRef.current?.width(el.clientWidth).height(el.clientHeight);
+      // Use containerRef.current rather than captured `el` so we always read the
+      // live element even after graphMountKey replaces the container div.
+      const c = containerRef.current;
+      if (c && graphRef.current) {
+        graphRef.current.width(c.clientWidth).height(c.clientHeight);
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [graphMountKey]); // re-run when graphMountKey replaces the container element
 
   return (
     <div className="panel graph-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
-      <div 
-        ref={containerRef} 
-        style={{ flex: 1, width: '100%', minHeight: 0, overflow: 'hidden', position: 'relative', outline: 'none' }} 
+      {/* Wrapper: flex column so container fills via flex:1; position:relative anchors the overlays */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
+      {/* ForceGraph2D exclusively owns this div — no React children inside */}
+      <div
+        key={graphMountKey}
+        ref={containerRef}
+        style={{ flex: 1, minHeight: 0, overflow: 'hidden', outline: 'none' }}
         onClick={() => setCtxMenu(null)}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {
             const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedId ? [selectedId] : []);
-            if (idsToDelete.length > 0) {
-              setShowDeleteConfirm(true);
+            if (idsToDelete.length > 0) setShowDeleteConfirm(true);
+            return;
+          }
+
+          // Escape: clear focus cursor and selection
+          if (e.key === 'Escape') {
+            setFocusedNodeId(null);
+            clearSelection();
+            return;
+          }
+
+          // Space: toggle focused node in/out of actual selection
+          if (e.key === ' ') {
+            e.preventDefault();
+            if (!focusedNodeId) return;
+            toggleSelection(focusedNodeId);
+            return;
+          }
+
+          // Arrow keys: move keyboard focus cursor (independent of selection)
+          const arrowDir: Record<string, [number, number]> = {
+            ArrowRight: [1, 0], ArrowLeft: [-1, 0],
+            ArrowUp: [0, -1], ArrowDown: [0, 1],
+          };
+          if (e.key in arrowDir && graphRef.current) {
+            e.preventDefault();
+            const [dx, dy] = arrowDir[e.key];
+            const { nodes } = graphRef.current.graphData();
+            const cursorShortId = focusedNodeId
+              ? focusedNodeId.replace('entity:', '')
+              : selectedId
+                ? selectedId.replace('entity:', '')
+                : null;
+
+            if (!cursorShortId) {
+              // Pick the node closest to the graph centre as starting cursor
+              const validNodes = nodes.filter((n: any) => n.x != null && n.y != null);
+              if (validNodes.length > 0) {
+                const cx = validNodes.reduce((s: number, n: any) => s + n.x, 0) / validNodes.length;
+                const cy = validNodes.reduce((s: number, n: any) => s + n.y, 0) / validNodes.length;
+                const closest = validNodes.reduce((best: any, n: any) => {
+                  const d = (n.x - cx) ** 2 + (n.y - cy) ** 2;
+                  return d < best.d ? { n, d } : best;
+                }, { n: validNodes[0], d: Infinity }).n;
+                setFocusedNodeId(`entity:${closest.id}`);
+                graphRef.current.centerAt(closest.x, closest.y, 300);
+              }
+              return;
+            }
+
+            const cur = nodes.find((n: any) => n.id === cursorShortId);
+            if (!cur || cur.x == null || cur.y == null) return;
+
+            let bestNode: any = null;
+            let bestScore = Infinity;
+            for (const node of nodes) {
+              if (node.id === cursorShortId || node.x == null || node.y == null) continue;
+              const relX = node.x - cur.x;
+              const relY = node.y - cur.y;
+              const dist = Math.sqrt(relX * relX + relY * relY);
+              if (dist < 0.1) continue;
+              const dot = (relX / dist) * dx + (relY / dist) * dy;
+              if (dot < 0.707) continue;
+              const score = dist / dot;
+              if (score < bestScore) { bestScore = score; bestNode = node; }
+            }
+            if (bestNode) {
+              setFocusedNodeId(`entity:${bestNode.id}`);
+              graphRef.current.centerAt(bestNode.x, bestNode.y, 300);
             }
           }
         }}
-      >
-        {/* Marquee selection overlay */}
+      />
+
+        {/* Marquee selection overlay — sibling of container, not inside it */}
         {selectionBoxScreen && (
           <div style={{
             position: 'absolute',
@@ -876,7 +1333,7 @@ export const GraphPanel = memo(function GraphPanel() {
           }} />
         )}
 
-        {/* Phase 44: empty-state overlay */}
+        {/* Empty-state overlay — sibling of container, not inside it */}
         {entities.length === 0 && graphMode === 'context' && (
           <div style={{
             position: 'absolute',
@@ -903,7 +1360,6 @@ export const GraphPanel = memo(function GraphPanel() {
           onContextMenu={e => e.preventDefault()}
         >
           {selectedIds.length > 1 ? (
-            // Bulk Actions
             <>
               <div style={{ padding: '4px 14px', fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>SELECTION ({selectedIds.length})</div>
               <div
@@ -924,11 +1380,31 @@ export const GraphPanel = memo(function GraphPanel() {
               </div>
             </>
           ) : (
-            // Single Action
             [
               { label: 'Inspect', action: () => { selectEntity(ctxMenu.nodeId); setCtxMenu(null); } },
               { label: 'Relate…', action: () => { setShowRelate(true); setCtxMenu(null); } },
               { label: 'Tag…', action: () => { setQuickTagNode({ id: ctxMenu.nodeId, label: ctxMenu.nodeLabel }); setCtxMenu(null); } },
+              { label: 'Set Icon…', action: async () => {
+                const iconPath = await invoke<string | null>('pick_icon_file');
+                if (iconPath) {
+                  const ent = entities.find((e: any) => e.id === ctxMenu.nodeId);
+                  if (ent) {
+                    await invoke('update_metadata', {
+                      id: ctxMenu.nodeId,
+                      metadata: { ...ent.metadata, icon: iconPath },
+                    });
+                  }
+                }
+                setCtxMenu(null);
+              }},
+              { label: 'Clear Icon', action: async () => {
+                const ent2 = entities.find((e: any) => e.id === ctxMenu.nodeId);
+                if (ent2 && (ent2.metadata as any)?.icon) {
+                  const { icon: _removed, ...rest } = ent2.metadata as any;
+                  await invoke('update_metadata', { id: ctxMenu.nodeId, metadata: rest });
+                }
+                setCtxMenu(null);
+              }},
               { label: 'Delete', action: () => { deleteEntity(ctxMenu.nodeId); setCtxMenu(null); }, danger: true },
             ].map(item => (
               <div key={item.label} onClick={item.action} style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: (item as any).danger ? '#ff6b6b' : 'var(--text-primary)' }} onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')} onMouseLeave={ev => (ev.currentTarget.style.background = '')}>
@@ -936,6 +1412,54 @@ export const GraphPanel = memo(function GraphPanel() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {selectedLinkMenu && (
+        <div
+          style={{ position: 'fixed', zIndex: 500, left: selectedLinkMenu.x, top: selectedLinkMenu.y, background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 7, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', minWidth: 180, padding: '4px 0' }}
+          onMouseLeave={() => setSelectedLinkMenu(null)}
+          onContextMenu={e => e.preventDefault()}
+        >
+          <div style={{ padding: '4px 14px', fontSize: 10, color: 'var(--text-hint)', fontWeight: 600 }}>EDGE · {selectedLinkMenu.label}</div>
+          <div
+            onClick={async () => {
+              const menu = selectedLinkMenu;
+              setSelectedLinkMenu(null);
+              selectedLinkRef.current = null;
+              try {
+                await invoke('reify_edge', {
+                  fromId: `entity:${menu.source}`,
+                  toId: `entity:${menu.target}`,
+                  label: menu.label,
+                });
+              } catch (e) { console.error('reify_edge failed:', e); }
+            }}
+            style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: 'var(--text-primary)' }}
+            onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
+            onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+          >
+            Reify to Node
+          </div>
+          <div
+            onClick={async () => {
+              const menu = selectedLinkMenu;
+              setSelectedLinkMenu(null);
+              selectedLinkRef.current = null;
+              try {
+                await invoke('remove_edge', {
+                  fromId: `entity:${menu.source}`,
+                  toId: `entity:${menu.target}`,
+                  label: menu.label,
+                });
+              } catch (e) { console.error('remove_edge failed:', e); }
+            }}
+            style={{ padding: '7px 14px', fontSize: 12, cursor: 'pointer', color: '#ff6b6b' }}
+            onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg)')}
+            onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+          >
+            Delete Edge
+          </div>
         </div>
       )}
 

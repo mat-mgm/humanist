@@ -58,6 +58,10 @@ impl SurrealDbAdapter {
             DEFINE FIELD transitive ON relationship_type TYPE bool DEFAULT false;
             DEFINE FIELD symmetric ON relationship_type TYPE bool DEFAULT false;
             DEFINE FIELD inherits_traits ON relationship_type TYPE bool DEFAULT false;
+            DEFINE FIELD IF NOT EXISTS visible ON relationship_type TYPE bool DEFAULT false;
+            DEFINE FIELD IF NOT EXISTS flow ON relationship_type TYPE option<string> DEFAULT NONE;
+            DEFINE FIELD IF NOT EXISTS routing ON relationship_type TYPE option<string> DEFAULT NONE;
+            DEFINE FIELD IF NOT EXISTS color ON relationship_type TYPE option<string> DEFAULT NONE;
             DEFINE INDEX IF NOT EXISTS idx_relationship_type_label ON relationship_type FIELDS label UNIQUE;
 
             DEFINE TABLE IF NOT EXISTS entity_history SCHEMALESS;
@@ -93,6 +97,24 @@ impl SurrealDbAdapter {
         "#;
 
         db.query(schema_ql).await.map_err(|e| e.to_string())?;
+
+        // Seed built-in relationship types that should exist on every fresh database.
+        // LET $exists avoids a duplicate when re-connecting to an existing DB.
+        let seed_ql = r#"
+            LET $exists = SELECT label FROM relationship_type WHERE label = 'tagged_as';
+            IF array::len($exists) = 0 {
+                INSERT INTO relationship_type {
+                    label: 'tagged_as',
+                    transitive: false,
+                    symmetric: false,
+                    inherits_traits: false,
+                    visible: false
+                };
+            } ELSE {
+                UPDATE relationship_type SET visible = false WHERE label = 'tagged_as' AND visible = true;
+            };
+        "#;
+        db.query(seed_ql).await.map_err(|e| e.to_string())?;
 
         tracing::info!("db connected");
         Ok(Self { db: Arc::new(db) })
@@ -504,6 +526,22 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String> {
+        // Skip insert if this exact (from, to, label) edge already exists.
+        let check_qs = format!(
+            "SELECT id FROM edge WHERE in = {} AND out = {} AND label = $label LIMIT 1;",
+            from_id, to_id
+        );
+        let mut check_resp = self
+            .db
+            .query(check_qs)
+            .bind(("label", label.to_string()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let existing: Vec<serde_json::Value> = check_resp.take(0).map_err(|e| e.to_string())?;
+        if !existing.is_empty() {
+            return Ok(());
+        }
+
         let qs = format!("RELATE {}->edge->{} SET label = $label;", from_id, to_id);
         self.db
             .query(qs)
@@ -512,6 +550,17 @@ impl GraphDatabase for SurrealDbAdapter {
             .map_err(|e| e.to_string())?
             .check()
             .map_err(|e| e.to_string())?;
+
+        // Auto-register the label as a relationship type the first time it is used,
+        // so it appears in the Relationships panel without manual registration.
+        // tagged_as is already seeded as a hidden built-in; skip it here.
+        if label != "tagged_as" {
+            let seed_ql = "IF array::len(SELECT label FROM relationship_type WHERE label = $lbl) = 0 { \
+                INSERT INTO relationship_type { label: $lbl, transitive: false, symmetric: false, inherits_traits: false, visible: true }; \
+            };";
+            let _ = self.db.query(seed_ql).bind(("lbl", label.to_string())).await;
+        }
+
         Ok(())
     }
 
@@ -524,6 +573,22 @@ impl GraphDatabase for SurrealDbAdapter {
         latency: Option<i64>,
         metadata: Option<serde_json::Value>,
     ) -> Result<(), String> {
+        // Skip insert if this exact (from, to, label) edge already exists.
+        let check_qs = format!(
+            "SELECT id FROM edge WHERE in = {} AND out = {} AND label = $label LIMIT 1;",
+            from_id, to_id
+        );
+        let mut check_resp = self
+            .db
+            .query(check_qs)
+            .bind(("label", label.to_string()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let existing: Vec<serde_json::Value> = check_resp.take(0).map_err(|e| e.to_string())?;
+        if !existing.is_empty() {
+            return Ok(());
+        }
+
         let qs = format!(
             "RELATE {}->edge->{} SET label = $label, strength = $strength, latency = $latency, metadata = $metadata;",
             from_id, to_id
@@ -541,6 +606,14 @@ impl GraphDatabase for SurrealDbAdapter {
             .map_err(|e| e.to_string())?
             .check()
             .map_err(|e| e.to_string())?;
+
+        if label != "tagged_as" {
+            let seed_ql = "IF array::len(SELECT label FROM relationship_type WHERE label = $lbl) = 0 { \
+                INSERT INTO relationship_type { label: $lbl, transitive: false, symmetric: false, inherits_traits: false, visible: true }; \
+            };";
+            let _ = self.db.query(seed_ql).bind(("lbl", label.to_string())).await;
+        }
+
         Ok(())
     }
 

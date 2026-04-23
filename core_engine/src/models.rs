@@ -112,7 +112,21 @@ pub struct RelationshipType {
     pub symmetric: bool,
     #[serde(default)]
     pub inherits_traits: bool,
+    /// When false, edges of this type are hidden in the graph view.
+    #[serde(default = "default_visible")]
+    pub visible: bool,
+    /// Layout flow direction: "none" | "down" | "right" | "up" | "left"
+    #[serde(default)]
+    pub flow: Option<String>,
+    /// Edge routing style: "straight" | "step" | "arc"
+    #[serde(default)]
+    pub routing: Option<String>,
+    /// Optional hex color override for edges of this type, e.g. "#ff6b6b"
+    #[serde(default)]
+    pub color: Option<String>,
 }
+
+fn default_visible() -> bool { true }
 
 /// A full edge record including optional payload fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]

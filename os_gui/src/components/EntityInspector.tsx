@@ -54,7 +54,10 @@ const SelectionPanel = memo(function SelectionPanel() {
   const [relError, setRelError]       = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const selectedEntities = useMemo(() => entities.filter(e => selectedIds.includes(e.id)), [entities, selectedIds]);
+  // Preserve selection order: iterate selectedIds to build the list
+  const selectedEntities = useMemo(() =>
+    selectedIds.map(id => entities.find(e => e.id === id)).filter(Boolean) as typeof entities,
+    [entities, selectedIds]);
   const isTwoSelected    = selectedIds.length === 2;
   const [nodeA, nodeB]   = selectedEntities;
 
