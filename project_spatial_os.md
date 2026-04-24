@@ -1221,161 +1221,22 @@ A focused set of graph-view quality improvements: fix the first-launch crash on 
 - Decision: Keep `hatch` as the default region style.
   Rationale: The hatch pattern is already implemented and visually distinctive; `fill` is additive, not a replacement.
 
-### Phase 55: Semantic Metadata Enforcement
+### Phase 55: Linux Packaging & AppImage Build Shell
 **Description**
-Harden the "flexible JSON" metadata bag by implementing Kind-specific schemas. This ensures that a `physical` entity *must* have certain fields while an `agent` requires others.
+Enable first-class Linux packaging for the Tauri GUI and make AppImage bundling work from the Nix flake by separating the regular development shell from a dedicated FHS packaging shell.
 
 **Tasks**
-- [ ] **Schema Registry**: Build a registration system in `core_engine` for `EntityKind` metadata requirements (using JSON Schema or similar).
-- [ ] **Validation Middleware**: Add a validation step in `save_entity` that halts persistence if the provided metadata violates the Kind's schema.
-- [ ] **GUI Form Generation**: Auto-generate property input fields in the `EntityInspector` based on the required schema for the entity's kind.
+- [✓] Enable Tauri bundling in `os_gui/src-tauri/tauri.conf.json` so native Linux artifacts are produced by `cargo tauri build`.
+- [✓] Verify Linux package generation for `.deb` and `.rpm` outputs from the existing Tauri build pipeline.
+- [✓] Refactor `flake.nix` to keep a standard `default` development shell for everyday work.
+- [✓] Add a dedicated `appimage` FHS dev shell exposed as `nix develop .#appimage`.
+- [✓] Include the AppImage bundling prerequisites in that shell, including `xdg-utils`, so `/usr/bin/xdg-open` is available where the Tauri AppImage script expects it.
+- [✓] Document the operational packaging flow: use `nix develop` for normal development and `nix develop .#appimage` when building AppImages on NixOS.
 
 **Checks**
-- [ ] Attempting to save a `physical` entity without a required `serial_number` metadata field fails with a descriptive error.
-- [ ] The Inspector highlights missing but required fields in red.
+- [✓] `cargo tauri build` produces Linux bundle artifacts under `target/release/bundle/`.
+- [✓] `target/release/bundle/deb/` contains a usable `.deb` package.
+- [✓] `target/release/bundle/rpm/` contains a usable `.rpm` package.
+- [ ] Inside `nix develop .#appimage`, `ls /usr/bin/xdg-open` succeeds.
+- [ ] `cargo tauri build --bundles appimage` completes successfully from the `appimage` shell.
 
----
-
-## Potential Future Phases
-
-> The following phases are defined for directional reference. They are not yet scheduled and should be promoted to the main roadmap when their prerequisites are met.
-
-[] Add potential phase for database remove and populate with useful data script.
-[] Add potential phase for improved and cleaned debug system.
-
-### Phase 41: Hybrid Globe Imagery & Local Fallback (10–20 GB)
-**Description**
-Implement a dual-layer imagery strategy: high-fidelity streaming via Google 3D Tiles and a robust, multi-gigabyte local fallback for offline/air-gapped operations.
-
-**Tasks**
-- [✓] **Local Tile Server**: Implement a lightweight MBTiles/TMS provider in `core_engine` (Rust) to serve the local imagery cache via loopback using `mmap` for zero-copy tile access.
-- [✓] **Full Planet mbtiles**: Find a reasonably sized mbtiles file of the entire planet and add it to the local cache. Sources:
-  - https://archive.org/download/osm-vector-mbtiles/
-  - https://www.limaps.org/tileserver.html
-- [✓] **Cesium Integration**: Configure `UrlTemplateImageryProvider` to target the local Rust server as the primary base layer.
-- [✓] **Google 3D Tiles**: Integrate `createGooglePhotorealistic3DTileset`. Inject the API key via Tauri's secured state (`tauri::State`) to prevent frontend exposure.
-- [✓] **Automatic Failover**: Implement network-status detection logic to automatically downgrade from Google 3D Tiles to the local cache when connectivity is severed.
-
-**Checks**
-- [✓] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
-
-**Current Blockers**:
-- [ ] **European Economic Area API restrictions**: Google Maps 3D tiles are not available in the EEA (https://developers.google.com/maps/comms/eea/map-tiles).
-- [ ] **Imagery Persistence**: MBTiles path persistence is correctly reaching the backend, but `get_app_state` appears to hang or return empty for the user.
-- [ ] **Online Resume**: Google Imagery does not automatically restore when toggling from Offline back to Online.
-
-### Phase 42: Unified Polymorphic Geometry (`SpatialTrait`)
-**Description**
-Refactor the three fragmented spatial trait structs (`SpatialTrait` for points, `PathTrait` for lines, `RegionTrait` for polygons) into a single, unified `SpatialTrait` backed by a `Geometry` enum. The MIME-like geometry type drives all downstream rendering behavior in Cesium.
-
-**Tasks**
-- [✓] **Initial Multi-Trait Foundation**: Baseline support for points, paths, and polygons established using separate struct-per-geometry architecture.
-- [ ] **`Geometry` Enum**: Define the following enum in `core_engine/src/models.rs`:
-    ```rust
-    pub enum Geometry {
-        Point { lat: f64, lng: f64, alt: Option<f64> },
-        LineString { points: Vec<Vec<f64>>, width: Option<f32>, color: Option<String> },
-        Polygon { boundary: Vec<Vec<f64>>, height: Option<f64>, fill_color: Option<String> },
-    }
-    ```
-- [ ] **Unified `SpatialTrait`**: Replace the separate `lat`, `lng`, `alt`, `points`, `boundary` fields in `SpatialTrait` with a single `geometry: Geometry` field. Remove the `PathTrait` and `RegionTrait` structs entirely from `models.rs`.
-- [ ] **Database Schema Consolidation**: Update `db.rs` to collapse the `path_trait` and `region_trait` SurrealDB tables into a single `spatial_trait` table. Define the `geometry` column as a flexible SurrealDB `object` field.
-- [ ] **Port Consolidation**: In `ports.rs`, remove the `save_path_trait` and `save_region_trait` methods from the `GraphDatabase` trait. All geometry is now persisted via `save_spatial_trait`.
-- [ ] **GeoJSON Serialization**: Implement a `to_geojson_feature()` method on `SpatialTrait` that maps each `Geometry` variant to the correct GeoJSON `type` (`"Point"`, `"LineString"`, `"Polygon"`). This is the single trust boundary between the Rust model and the Cesium renderer.
-- [ ] **Cesium Renderer Update**: Refactor `GlobePanel.tsx` to read a **unified geometry stream** and dispatch rendering (Cesium `PointPrimitive`, `Polyline`, `Polygon`) based on the GeoJSON `type` field in the feature, replacing the separate event handlers for paths and regions.
-- [ ] **Interface Updates**:
-    - [ ] Remove `pathTraits` and `regionTraits` from the Zustand store; merge all geometry into the `spatialTraits` map, keyed by entity ID.
-    - [ ] Update `EntityInspector` in `ViewportPanel.tsx` to render geometry details dynamically based on the variant, without separate `pathTrait` and `regionTrait` prop branches.
-    - [ ] Update `os_cli`'s `spatial add` command to accept a `--geometry` flag (values: `point`, `line`, `polygon`) instead of separate subcommands.
-
-**Checks**
-- [ ] The SurrealDB schema has a single `spatial_trait` table. `SHOW TABLES` returns no `path_trait` or `region_trait`.
-- [ ] `cargo check --workspace` passes with zero warnings and zero references to the removed `PathTrait` and `RegionTrait` structs.
-- [ ] A `Point`, a `LineString`, and a `Polygon` entity all render correctly on the Cesium globe simultaneously using the unified data stream.
-- [ ] The Prolog engine still correctly resolves spatial predicates (e.g., `nearby/2`) after the schema change.
-
-**Current Blockers**:
-- [✓] **Prolog Sync**: Schema and model alignment verified; error was due to missing field in test data.
-
-### Phase 43: Tile Server Extraction (Core → GUI)
-**Description**
-Remove the embedded HTTP tile server from `core_engine/src/tiles.rs` (which uses `axum` and opens a local TCP port) and replace it with a **Tauri Custom URI Scheme Protocol** handler in the GUI. The `.mbtiles` file path is registered as a `BlobTrait` entity in the knowledge graph, making the offline map a first-class trackable asset.
-
-**Tasks**
-- [ ] **Tauri Protocol Handler**: In `os_gui/src-tauri/src/lib.rs`, register a custom URI scheme `spatial-tiles://` using `tauri::Builder::register_uri_scheme_protocol`. The handler opens the `.mbtiles` SQLite file directly using `rusqlite` and returns tile bytes for a given `{z}/{x}/{y}` path.
-- [ ] **TMS Y-coordinate Conversion**: Port the TMS Y-axis inversion logic (`y_tms = (1 << z) - 1 - y`) from `tiles.rs` into the new Tauri protocol handler.
-- [ ] **MIME Type Detection**: Port the magic-byte MIME detection from `tiles.rs` into the handler so vector tiles (`application/vnd.mapbox-vector-tile`) and raster tiles (`image/png`, `image/webp`) are served with the correct `Content-Type`.
-- [ ] **`BlobTrait` Registration**: When the user selects an `.mbtiles` file, record it as a `BlobTrait` entity in the graph with `mime: "application/x-mbtiles"` and the absolute filesystem path in `storage_id`. The GUI reads this trait at startup to find the current tile file.
-- [ ] **Cesium URL Update**: Change the `UrlTemplateImageryProvider` URL in `GlobePanel.tsx` from `http://localhost:{PORT}/tiles/{z}/{x}/{y}` to `spatial-tiles://default/{z}/{x}/{y}`.
-- [ ] **Core Cleanup**: Delete `core_engine/src/tiles.rs`. Remove `axum`, `tokio-rusqlite`, and all tile-serving dependencies from `core_engine/Cargo.toml`. Remove the `TileServer` startup call from the application bootstrap.
-
-**Checks**
-- [ ] The Cesium globe renders offline tiles correctly using the `spatial-tiles://` protocol with no HTTP server running.
-- [ ] `lsof -i :{TILE_PORT}` confirms that no TCP port is opened by the application.
-- [ ] `cargo check --workspace` passes with zero warnings and no reference to the removed `tiles.rs` module.
-- [ ] The `.mbtiles` path is visible as a `BlobTrait` entity in the Entity Registry.
-- [ ] Selecting a new `.mbtiles` file via the native file picker updates the `BlobTrait` and causes Cesium to reload the new tileset.
-
-
-### Phase 52 (Potential): Live OSINT Ingestion (ADSB, TLE, Maritime)
-**Description**
-Build background workers in the Rust `core_engine` to ingest live Open Source Intelligence (OSINT) feeds (aircraft, satellites, maritime vessels) and broadcast them via the `EventBus`.
-
-**Tasks**
-- [ ] **ADSB Worker**: Implement an async Tokio worker to poll ADSB-Exchange or OpenSky for live aircraft coordinates.
-- [ ] **Satellite TLE Worker**: Integrate TLE propagation (via a Rust SGP4 crate) in the backend to compute live orbital positions from NORAD data.
-- [ ] **EventBus Mapping**: Map incoming live signals to ephemeral `Entity` nodes with `SpatialTrait` and `TemporalTrait` and emit them on the `EventBus`.
-- [ ] **Throttle Logic**: Implement spatial dead-reckoning to suppress IPC traffic for slowly-moving entities, reducing frontend update pressure.
-
-**Checks**
-- [ ] Live satellites and aircraft appear on the globe without manual refresh.
-- [ ] The `os_cli` can query the live position of any tracked agent via `entity ls --kind agent`.
-- [ ] Dead-reckoning correctly suppresses redundant updates (verified via EventBus message counters).
-- [ ] `cargo check --workspace` passes with zero warnings.
-
-### Phase 53 (Potential): Shader Intelligence (NVG, Thermal, CRT)
-**Description**
-Implement custom WebGL post-processing via Cesium's `PostProcessStageCollection` to emulate specialized sensor views: Night Vision Goggles (NVG), FLIR thermal, and a retro CRT aesthetic.
-
-**Tasks**
-- [ ] **NVG Stage**: Implement a fragment shader stage applying green-phosphor tint and procedural noise to simulate NVG optics.
-- [ ] **Thermal Stage**: Implement a luminance-to-heatmap fragment shader (cool-to-warm palette) to simulate FLIR.
-- [ ] **CRT Filter**: Add scanline and chromatic-aberration post-processing as a global Cesium post-process stage or CSS/shader overlay.
-- [ ] **Uniform Control**: Wire shader parameters (gain, noise level, palette intensity) to the Properties Panel when the 3D Viewport is focused.
-- [ ] **Mode Toggle**: Add a view-mode selector (Normal / NVG / Thermal / CRT) to the Globe panel toolbar.
-
-**Checks**
-- [ ] Toggle between Normal, NVG, Thermal, and CRT modes is instantaneous (no globe reload).
-- [ ] Shaders correctly preserve transparency for UI overlays (labels, icons, billboards).
-- [ ] `npm run build` passes with zero TypeScript errors.
-
-### Phase 54 (Potential): 4D Causal Reconstruction
-**Description**
-Unify the Globe and Timeline for "God's Eye" historical playback — replaying any recorded event with all spatial actors (aircraft, ships, satellites) in their correct 3D positions, synchronized to the timeline scrubber.
-
-**Tasks**
-- [ ] **Record Mode**: Implement a Record mode that persists `EventBus` spatial updates into SurrealDB with sub-second temporal resolution (nanosecond `event_at` precision).
-- [ ] **Cesium Clock Sync**: Link the `TimelinePanel` scrub action to the Cesium `Clock` API so all entity positions update in lock-step during playback.
-- [ ] **Causal Highlighting**: When a node is selected on the `GraphPanel`, highlight the corresponding aircraft path and satellite overhead at the entity's exact timestamp on the globe.
-- [ ] **Playback Controls**: Add play/pause/speed controls to the `TimelinePanel` for replay sessions.
-
-**Checks**
-- [ ] Replaying a historical event shows all moving entities (planes, ships, satellites) in their correct 3D positions synchronized to the timeline.
-- [ ] Causal node selection correctly cross-links the Graph, Timeline, and Globe views simultaneously.
-- [ ] Sub-second resolution is preserved through the SurrealDB → IPC → Cesium Clock pipeline.
-- [ ] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
-
-### Phase 55 (Potential): Agentic Geospatial Command
-**Description**
-Integrate the LLM/Prolog inference engines with the geospatial layer to enable natural language "vibe-coding" queries that resolve to visual spatial selections and automated globe camera control.
-
-**Tasks**
-- [ ] **NLP-to-Spatial Query**: Implement `agent find "<natural language>"` in `os_cli` and the GUI terminal (e.g., "satellites over Austin") translating to structured SurrealDB spatial-temporal queries.
-- [ ] **Automatic Camera Control**: Allow the inference result to emit `camera_fly_to` Tauri IPC commands, flying the globe to the relevant area automatically.
-- [ ] **Constraint-Based Search**: Expose complex Prolog constraint patterns (e.g., "Find all tankers that turned off AIS within 50km of a known strike") using the `prolog_engine` inference loop.
-- [ ] **Cross-Panel Visual Resolution**: Resolved query results highlight matching entities on the `GraphPanel`, `TimelinePanel`, and Globe simultaneously.
-
-**Checks**
-- [ ] `agent find "satellites over Austin"` returns valid globe positions and flies the camera to the result.
-- [ ] Complex OSINT Prolog queries resolve to visual selections across all three panels (Graph, Timeline, Globe).
-- [ ] `cargo check --workspace` and `npm run build` pass with zero warnings/errors.
