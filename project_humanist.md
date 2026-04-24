@@ -1,4 +1,4 @@
-# Project Spatial OS
+# Project Humanist
 
 ## Overview
 A spatial operating system interface and backend.
@@ -9,7 +9,7 @@ A spatial operating system interface and backend.
 ## Status
 Current status: in-progress
 Start date: 
-Last updated: 2026-04-22
+Last updated: 2026-04-24
 Priority: High
 
 State rules:
@@ -239,7 +239,7 @@ Integrate a dynamic-predicate Scryer Prolog rules system into the Hexagonal Core
 Integrate the standalone `prolog_engine` deduction functionality outward to the user interfaces, enabling direct evaluation of semantic queries via headless CLI arguments and the embedded xterm.js GUI terminal.
 
 **Tasks**
-- [✓] Implement `prolog_engine` query handler interface within `os_cli` subcommands (e.g., `spatial-os prolog query "reachable(X, Y)."`).
+- [✓] Implement `prolog_engine` query handler interface within `os_cli` subcommands (e.g., `humanist prolog query "reachable(X, Y)."`).
 - [✓] Expose an asynchronous Tauri IPC command (e.g. `invoke('run_prolog_query')`) routing strictly validated payload strings to the `InferenceEngine`.
 - [✓] Connect the `xterm.js` integrated terminal ecosystem in `os_gui` to support querying Prolog facts natively via the `pl` command.
 - [✓] Safely capture `run_query` output bindings to return human-readable parsed logs to the frontend terminal stdout stream.
@@ -664,7 +664,7 @@ Refactor the GUI from a fixed tabbed-viewport model to a fully flexible panel sy
 - **9 atomic panels**: Graph, Globe, Terminal, Properties (EntityInspector), Preview (AssetPreview), Entities (EntityRegistry), Relationships (OntologyPanel), TimelineView, CalendarView
 - **Drag-to-merge**: `react-dnd` + `react-dnd-html5-backend`; drag item carries `{ id, fromSlotIdx }` to distinguish merge-from-outside vs reorder-within
 - **Layout state**: Minimal tree — `SlotNode = { type: 'pane'; id: string } | { type: 'tabgroup'; ids: string[]; active: string }`. `tiledPaneIds: string[]` → `tiledSlots: SlotNode[]`. Existing `LayoutMode` presets preserved.
-- **Persistence**: `localStorage` key `spatial-os:layout` (serializes `tiledSlots`, `floatingPaneIds`, `layoutMode`)
+- **Persistence**: `localStorage` key `humanist:layout` (serializes `tiledSlots`, `floatingPaneIds`, `layoutMode`)
 - **Default layout**: `[pane:graph, tabgroup:[inspector, registry, preview, ontology]]` — Globe, Timeline, Calendar, Terminal off by default
 - **Panel reordering**: `Alt+Enter` promotes focused tiled slot to index 0; `Alt+j` / `Alt+k` are context-sensitive — cycle tabs within a focused tabgroup (stopping at the boundary and moving to the adjacent slot rather than wrapping)
 - **Panel renames**: Inspector → Properties, Asset Preview → Preview, Entity Registry → Entities, Ontology → Relationships
@@ -976,7 +976,7 @@ Replace the modal-based `CreateEntityDialog` and `IngestDialog` with a first-cla
 - This phase intentionally overlaps the earlier “Native File Picker” utility request because file selection is a core part of the Inputs panel contract, not an isolated convenience feature.
 - The current `ingest_entity(label, file_path)` command may survive temporarily as an internal helper, but the user-facing GUI flow should be driven by evented progress from the start.
 - The maintenance section must remain visually secondary so the main reading of the panel is still “bring data in”, not “operate the database”.
-- Reference design: [docs/notes/inputs_panel_phase_options.md](/home/rs/computation/programming/rust/spatial_os/docs/notes/inputs_panel_phase_options.md)
+- Reference design: [docs/notes/inputs_panel_phase_options.md](/home/rs/computation/programming/rust/humanist/docs/notes/inputs_panel_phase_options.md)
 
 ### Phase 51: Terminal Workbench - Typed Sessions & Left-Rail Selector
 **Description**
@@ -1165,7 +1165,7 @@ A focused set of graph-view quality improvements: fix the first-launch crash on 
 - [✓] **Double-click to toggle media preview**: Two clicks on the same node within 400 ms triggers the image/PDF preview toggle; single click always selects.
 - [✓] **Miniature in real color**: Removed pixel-level theme color reinjection from PDF preview rendering; thumbnails display in natural colors.
 - [✓] **Node size matches miniature for repulsion / click surface**: `n.val` is set dynamically when a preview is active so d3 repulsion and click-hit-detection match the image footprint.
-- [✓] **Persist miniature open/closed state**: `toggledImageNodes` set is persisted in `localStorage` (`spatial-os:toggled-image-nodes`) and restored on component mount.
+- [✓] **Persist miniature open/closed state**: `toggledImageNodes` set is persisted in `localStorage` (`humanist:toggled-image-nodes`) and restored on component mount.
 - [✓] **Node icons**: Right-click → "Set Icon…" opens a native file picker (`pick_icon_file` via `rfd`), stores the path in `entity.metadata.icon`, and renders a 32 px circular icon on the node. "Clear Icon" removes it. Icons are always shown (not toggled).
 
 *Edge interaction*
@@ -1240,3 +1240,18 @@ Enable first-class Linux packaging for the Tauri GUI and make AppImage bundling 
 - [ ] Inside `nix develop .#appimage`, `ls /usr/bin/xdg-open` succeeds.
 - [ ] `cargo tauri build --bundles appimage` completes successfully from the `appimage` shell.
 
+### Phase 56: Program Rename to Humanist
+**Description**
+Rename the product identity from `Spatial OS` to `Humanist` across the codebase, runtime identifiers, storage paths, GUI persistence keys, and project documentation so the CLI, GUI, and backend all present a single coherent name.
+
+**Tasks**
+- [✓] **CLI Identity**: Rename the clap application name and CLI about text from `spatial-os` / Spatial OS to `humanist`.
+- [✓] **Runtime Identifiers**: Rename backend namespace, Prolog runtime module, log filename, and internal test/temp prefixes to Humanist-aligned identifiers.
+- [✓] **Persistence Keys**: Rename GUI `localStorage` keys and Tauri filesystem scopes from `spatial-os` to `humanist`.
+- [✓] **Storage Defaults**: Rename conventional database/store paths and the store environment variable from `SPATIAL_OS_STORE` to `HUMANIST_STORE`.
+- [✓] **Docs & Project Metadata**: Rename the roadmap file to `project_humanist.md` and update project references/documentation to the new product name.
+
+**Checks**
+- [✓] `rg -n "Spatial OS|Spatial-OS|Spatial-Analytical Knowledge OS|spatial_os|spatial-os|SPATIAL_OS" .` returns no remaining branded references.
+- [✓] The roadmap itself records the rename as an explicit completed phase.
+- [✓] CLI, GUI, and backend identifiers now use `Humanist` / `humanist` consistently.

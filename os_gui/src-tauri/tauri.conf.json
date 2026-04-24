@@ -21,7 +21,7 @@
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/.local/share/spatial-os/**"]
+        "scope": ["$HOME/.local/share/humanist/**"]
       },
       "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob: asset:; connect-src * data: blob: asset:; worker-src * blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval' blob:;",
       "dangerousDisableAssetCspModification": true
@@ -29,7 +29,7 @@
   },
 
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

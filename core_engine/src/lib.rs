@@ -20,7 +20,7 @@ mod tests {
         let db = db::SurrealDbAdapter::new().await.unwrap();
         let event_bus = bus::EventBus::new();
         let blob_dir =
-            std::env::temp_dir().join(format!("spatial-os-lib-test-{}", ulid::Ulid::new()));
+            std::env::temp_dir().join(format!("humanist-lib-test-{}", ulid::Ulid::new()));
         std::fs::create_dir_all(&blob_dir).unwrap();
         let blob = std::sync::Arc::new(LocalBlobAdapter::new(blob_dir.clone()));
 

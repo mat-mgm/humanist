@@ -72,7 +72,7 @@ const DEFAULT_SLOTS: SlotNode[] = [
   { type: 'tabgroup', ids: ['inspector', 'registry'], active: 'inspector' },
 ];
 
-const STORAGE_KEY = 'spatial-os:layout';
+const STORAGE_KEY = 'humanist:layout';
 
 const REMOVED_PANE_IDS = new Set(['preview']);
 
@@ -489,7 +489,7 @@ export default function App() {
 
         {/* ── Titlebar ─────────────────────────────────────────── */}
         <div className="titlebar" style={{ WebkitAppRegion: 'drag' } as any}>
-          <span className="titlebar-logo" style={{ WebkitAppRegion: 'drag' } as any}>⬡ Spatial-OS</span>
+          <span className="titlebar-logo" style={{ WebkitAppRegion: 'drag' } as any}>⬡ Humanist</span>
           <div style={{ display: 'flex', WebkitAppRegion: 'no-drag' } as any}>
             <button className="window-btn" onClick={() => appWindow.minimize()} title="Minimise"><Minus size={12} /></button>
             <button className="window-btn" onClick={() => appWindow.toggleMaximize()} title="Maximise"><Square size={12} /></button>

@@ -10,8 +10,8 @@ use std::{collections::HashMap, sync::Arc};
 use ulid::Ulid;
 
 #[derive(Parser)]
-#[command(name = "spatial-os")]
-#[command(about = "Spatial-Analytical Knowledge OS — CLI Interface")]
+#[command(name = "humanist")]
+#[command(about = "Humanist — CLI Interface")]
 struct Cli {
     /// Enable debug-level log output
     #[arg(short, long, global = true)]

@@ -13,7 +13,7 @@ impl ScryerMachine {
     pub fn new() -> Self {
         let mut machine = Machine::new_lib();
         machine.consult_module_string(
-            "spatial_os_runtime",
+            "humanist_runtime",
             ":- use_module(library(charsio)).".to_string(),
         );
         tracing::info!("prolog engine ready");

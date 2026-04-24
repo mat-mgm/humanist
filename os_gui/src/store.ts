@@ -58,7 +58,7 @@ export type GraphEdge = EdgeRecord;
 
 const INITIAL_TERMINAL_SESSION_ID = 'shell-1';
 export const TERMINAL_CLEAR_MARKER = '\u001fSPATIAL_CLEAR\u001f';
-const TERMINAL_HISTORY_STORAGE_PREFIX = 'spatial-os:terminal-history:';
+const TERMINAL_HISTORY_STORAGE_PREFIX = 'humanist:terminal-history:';
 
 function loadPersistedTerminalHistory(kind: TerminalSessionKind): string[] {
   if (kind === 'shell' || typeof window === 'undefined') {

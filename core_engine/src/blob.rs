@@ -428,7 +428,7 @@ mod tests {
     use std::fs;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("spatial-os-blob-test-{}", ulid::Ulid::new()));
+        let dir = std::env::temp_dir().join(format!("humanist-blob-test-{}", ulid::Ulid::new()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }

@@ -13,7 +13,7 @@
   ],
   "scope": {
     "opener": {
-      "path": ["$HOME/.local/share/spatial-os/**"]
+      "path": ["$HOME/.local/share/humanist/**"]
     }
   }
 }

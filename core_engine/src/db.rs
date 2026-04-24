@@ -17,7 +17,7 @@ pub struct SurrealDbAdapter {
 
 impl SurrealDbAdapter {
     /// Opens (or creates) the shared on-disk database.
-    /// Path: $HOME/.local/share/spatial-os/db
+    /// Path: $HOME/.local/share/humanist/db
     /// Both the CLI and GUI call this, so they share the same data.
     pub async fn new() -> Result<Self, String> {
         let path = default_db_path();
@@ -25,7 +25,7 @@ impl SurrealDbAdapter {
         let db = Surreal::new::<SurrealKv>(path)
             .await
             .map_err(|e| e.to_string())?;
-        db.use_ns("spatial_os")
+        db.use_ns("humanist")
             .use_db("core")
             .await
             .map_err(|e| e.to_string())?;
@@ -960,14 +960,14 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 }
 
-/// Returns the conventional store path: `$SPATIAL_OS_STORE` -> `~/.local/share/spatial-os/store` -> `/tmp/spatial-os-store`
+/// Returns the conventional store path: `$HUMANIST_STORE` -> `~/.local/share/humanist/store` -> `/tmp/humanist-store`
 pub fn store_path() -> PathBuf {
-    std::env::var("SPATIAL_OS_STORE")
+    std::env::var("HUMANIST_STORE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             std::env::var("HOME")
-                .map(|h| PathBuf::from(h).join(".local/share/spatial-os/store"))
-                .unwrap_or_else(|_| PathBuf::from("/tmp/spatial-os-store"))
+                .map(|h| PathBuf::from(h).join(".local/share/humanist/store"))
+                .unwrap_or_else(|_| PathBuf::from("/tmp/humanist-store"))
         })
 }
 

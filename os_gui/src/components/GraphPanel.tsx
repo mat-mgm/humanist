@@ -129,7 +129,7 @@ export const GraphPanel = memo(function GraphPanel() {
 
   // searchQuery mirrors exploreQuery for canvas highlight
   const [searchQuery, setSearchQuery] = useState('');
-  const TOGGLED_NODES_KEY = 'spatial-os:toggled-image-nodes';
+  const TOGGLED_NODES_KEY = 'humanist:toggled-image-nodes';
   const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(TOGGLED_NODES_KEY);
