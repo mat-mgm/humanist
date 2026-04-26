@@ -50,6 +50,8 @@ const selectUpdateNodePosition = (s: any) => s.updateNodePosition;
 const selectNodePositions = (s: any) => s.nodePositions;
 const selectFilterKinds = (s: any) => s.filterKinds;
 const selectFilterEdgeLabels = (s: any) => s.filterEdgeLabels;
+const selectShowDerivedEdges = (s: any) => s.showDerivedEdges;
+const selectOverlayEdges = (s: any) => s.overlayEdges;
 const selectHighlightedPath = (s: any) => s.highlightedPath;
 const selectHighlightedEdgeKeys = (s: any) => s.highlightedEdgeKeys;
 const selectLoadExactIds = (s: any) => s.loadExactIds;
@@ -105,6 +107,8 @@ export const GraphPanel = memo(function GraphPanel() {
   const nodePositions = useOsStore(selectNodePositions);
   const filterKinds = useOsStore(selectFilterKinds);
   const filterEdgeLabels = useOsStore(selectFilterEdgeLabels);
+  const showDerivedEdges = useOsStore(selectShowDerivedEdges);
+  const overlayEdges = useOsStore(selectOverlayEdges);
   const highlightedPath = useOsStore(selectHighlightedPath);
   const highlightedEdgeKeys = useOsStore(selectHighlightedEdgeKeys);
   const loadExactIds = useOsStore(selectLoadExactIds);
@@ -222,6 +226,8 @@ export const GraphPanel = memo(function GraphPanel() {
   useEffect(() => { focusedNodeIdRef.current = focusedNodeId; }, [focusedNodeId]);
   useEffect(() => { backgroundStyleRef.current = backgroundStyle; }, [backgroundStyle]);
   useEffect(() => { regionStyleRef.current = regionStyle; }, [regionStyle]);
+  const overlayEdgesRef = useRef<typeof overlayEdges>([]);
+  useEffect(() => { overlayEdgesRef.current = overlayEdges; }, [overlayEdges]);
   useEffect(() => {
     relationshipTypesRef.current = relationshipTypes;
     invisibleLabelsRef.current = new Set(
@@ -920,6 +926,36 @@ export const GraphPanel = memo(function GraphPanel() {
 
         // 3. (Marquee rect is now a React div overlay — no canvas drawing needed)
       })
+      .onRenderFramePost((ctx: CanvasRenderingContext2D) => {
+        // Phase 58 — overlay edges from inference dialog. Drawn after the
+        // standard graph render so they sit on top of ground edges and
+        // stand out via dashed strokes in the accent colour.
+        const overlay = overlayEdgesRef.current;
+        if (!overlay || overlay.length === 0) return;
+        const { nodes } = graphRef.current?.graphData() ?? { nodes: [] };
+        const nodeMap = new Map<string, any>();
+        for (const n of nodes) nodeMap.set(n.id, n);
+        const accent = getComputedStyle(document.documentElement)
+          .getPropertyValue('--accent').trim() || '#7aa2f7';
+        ctx.save();
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.globalAlpha = 0.85;
+        for (const ov of overlay) {
+          const fromKey = ov.from.replace('entity:', '');
+          const toKey = ov.to.replace('entity:', '');
+          const fn = nodeMap.get(fromKey);
+          const tn = nodeMap.get(toKey);
+          if (!fn || !tn) continue;
+          if (fn.x == null || fn.y == null || tn.x == null || tn.y == null) continue;
+          ctx.beginPath();
+          ctx.moveTo(fn.x, fn.y);
+          ctx.lineTo(tn.x, tn.y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      })
       .cooldownTicks(300)
       .d3AlphaDecay(0.02)
       .d3VelocityDecay(0.3);
@@ -1115,11 +1151,13 @@ export const GraphPanel = memo(function GraphPanel() {
       const targetId = e.to.replace('entity:', '');
       if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) return false;
       if (filterEdgeLabels.length > 0 && filterEdgeLabels.includes(e.label)) return false;
+      // Phase 58 derived-edge filter: hide edges flagged metadata.derived === true
+      if (!showDerivedEdges && e.metadata && (e.metadata as any).derived === true) return false;
       return true;
     });
 
     return { nodes: kindNodes, edges: kindEdges };
-  }, [entities, edges, filterKinds, filterEdgeLabels]);
+  }, [entities, edges, filterKinds, filterEdgeLabels, showDerivedEdges]);
 
   useEffect(() => {
     logFrontend('debug', `[graph/panel] graphLoading changed → ${graphLoading} (prev=${prevLoadingRef.current})`);

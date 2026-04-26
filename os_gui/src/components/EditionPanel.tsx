@@ -14,6 +14,7 @@ import { html } from '@codemirror/lang-html';
 import { css } from '@codemirror/lang-css';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
+import { prolog } from '../lib/prolog-mode';
 import { useOsStore } from '../store';
 import { PtyCanvas } from './PtyCanvas';
 import { ThreeViewer } from './ThreeViewer';
@@ -45,6 +46,7 @@ function langExtension(mime: string, format: 'yaml' | 'json') {
   if (mime === 'text/html') return html();
   if (mime === 'text/css' || mime === 'text/x-scss') return css();
   if (mime === 'text/x-tex') return StreamLanguage.define(stex);
+  if (mime === 'application/x-prolog') return prolog();
   // entity doc fallback
   if (format === 'json') return json();
   return yaml();

@@ -5,6 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
 pub mod io;
+pub mod rules;
 pub mod schema;
 pub mod synchronizer;
 
@@ -17,14 +18,47 @@ pub struct ScryerMachine {
 impl ScryerMachine {
     pub fn new() -> Self {
         let mut machine = Machine::new_lib();
-        machine.consult_module_string(
-            "humanist_runtime",
-            ":- use_module(library(charsio)).\n:- dynamic(entity/4).\n:- dynamic(label_trait/4).\n:- dynamic(spatial_trait/8).\n:- dynamic(temporal_trait/6).\n:- dynamic(blob_trait/6).\n:- dynamic(blob_file/4).\n:- dynamic(relationship_type/8).\n:- dynamic(edge/3).\n:- dynamic(edge_payload/5).\n".to_string(),
-        );
+        machine.consult_module_string("humanist_runtime", Self::runtime_source());
         tracing::info!("prolog engine ready");
         Self {
             machine: Arc::new(Mutex::new(machine)),
         }
+    }
+
+    /// Initial Prolog text consulted into every fresh machine. Declares
+    /// every canonical predicate as `dynamic`, pulls in standard libraries
+    /// the schema tokenizer relies on, and exposes a `haversine/5` helper
+    /// so spatial rules (e.g. `near/2`) don't need to reinvent the math.
+    fn runtime_source() -> String {
+        r#"
+:- use_module(library(charsio)).
+:- use_module(library(lists)).
+:- dynamic(entity/4).
+:- dynamic(label_trait/4).
+:- dynamic(spatial_trait/8).
+:- dynamic(temporal_trait/6).
+:- dynamic(blob_trait/6).
+:- dynamic(blob_file/4).
+:- dynamic(relationship_type/8).
+:- dynamic(edge/3).
+:- dynamic(edge_payload/5).
+
+% deg2rad(+Deg, -Rad)
+deg2rad(D, R) :- R is D * 0.017453292519943295.
+
+% haversine(+Lat1, +Lon1, +Lat2, +Lon2, -KmDistance)
+% Great-circle distance between two WGS84 points in kilometres.
+haversine(Lat1, Lon1, Lat2, Lon2, Km) :-
+    deg2rad(Lat1, Phi1),
+    deg2rad(Lat2, Phi2),
+    deg2rad(Lat2 - Lat1, DPhi),
+    deg2rad(Lon2 - Lon1, DLam),
+    A is sin(DPhi / 2.0) ** 2.0
+       + cos(Phi1) * cos(Phi2) * sin(DLam / 2.0) ** 2.0,
+    C is 2.0 * atan2(sqrt(A), sqrt(1.0 - A)),
+    Km is 6371.0088 * C.
+"#
+        .to_string()
     }
 
     /// Asserts a single Prolog clause (fact or rule) into the live machine.
@@ -399,6 +433,27 @@ mod tests {
             Some(PrologValue::EntityId(s)) => assert_eq!(s, "entity:01"),
             other => panic!("expected EntityId, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_user_rule_via_bindings_api() {
+        // Mirrors the GUI flow: load ground facts, consult a multi-clause
+        // user rule, query its head via the structured bindings API.
+        let machine = ScryerMachine::new();
+        machine.ingest_facts(
+            "edge('entity:a', 'entity:b', 'contains').\nedge('entity:b', 'entity:c', 'contains').\n",
+        )
+        .unwrap();
+        let rule_body = "descendant(X, Y) :- edge(X, Y, contains).\ndescendant(X, Y) :- edge(X, Z, contains), descendant(Z, Y).\n";
+        crate::rules::enable(&machine, rule_body).unwrap();
+
+        let ie = InferenceEngine::new(machine);
+        let bindings = ie.query_bindings("descendant(X, Y).").unwrap();
+        assert!(
+            !bindings.is_empty(),
+            "expected at least one descendant solution; got {:?}",
+            bindings
+        );
     }
 
     #[test]

@@ -65,7 +65,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **Relational Tagging**: Tags are no longer static string arrays inside an entity's record. Instead, they are independent `Abstract` entities. 
   - Tagging an entity creates a directed edge (`tagged_as`) from the target to the tag node. This allows for complex graph traversal using tags as central hubs, rather than simple metadata filtering. 
   - Removing a tag merely deletes the relationship edge, preserving the tag's identity as a first-class citizen in the knowledge graph.
-* Rules Engine: Integrates Scryer Prolog through a single canonical fact schema in `prolog_engine::schema` (one declared arity per predicate). Ground facts mirror the database; bridging rules expose per-label dynamic predicates as a Model 2 view layer for ergonomic user rules. The `StateSynchronizerTask` keeps the live machine in sync via `EventBus` events using `assertz/1` and `retractall/1` against the canonical predicates. The same schema doubles as a deterministic interchange format: `prolog_engine::io` writes a `snapshot.pl` plus a sibling `blobs/` directory and reads them back symmetrically through the existing `BlobStore` port.
+* Rules Engine: Integrates Scryer Prolog through a single canonical fact schema in `prolog_engine::schema` (one declared arity per predicate). Ground facts mirror the database; bridging rules expose per-label dynamic predicates as a Model 2 view layer for ergonomic user rules. The `StateSynchronizerTask` keeps the live machine in sync via `EventBus` events using `assertz/1` and `retractall/1` against the canonical predicates. The same schema doubles as a deterministic interchange format: `prolog_engine::io` writes a `snapshot.pl` plus a sibling `blobs/` directory and reads them back symmetrically through the existing `BlobStore` port. User-authored rules persist as `digital` entities tagged with the `rule` abstract entity, carrying a `.pl` `BlobTrait` editable in the Edition panel; the **Rules** right-panel picker (Brain icon) lists them and runs inference inline. Rule queries reload ground facts from the DB before each Run via `synchronizer::reload_facts`, so out-of-band writes (CLI seeds, raw SurrealQL, snapshot imports) are picked up automatically. Results render as dashed accent-coloured overlay edges on the graph; a "Persist as edges" inline confirmation writes them to the DB with `metadata.derived = true`/`derived_from = <rule_id>` (replacing prior derivations from the same rule). A `humanist_runtime` consult string ships a `haversine/5` helper so spatial rules don't reinvent the math.
 * **CLI Interactivity & Data Management (`os_cli`)**:
   - **Create Entities**: `cargo run -p os_cli -- entity add <KIND> <LABEL>` (e.g., `entity add physical "Main Server"`)
   - **Read/Search Entities**: `cargo run -p os_cli -- entity ls` or `entity search "Server"`
@@ -1336,42 +1336,76 @@ Promote Prolog from a sidecar query box into a proper adapter over the core onto
 
 ### Phase 58: Prolog Rules & Inference Workbench
 **Description**
-Build on the canonical schema and structured bindings landed in Phase 57 to give Prolog rules first-class status in the GUI. Users author rules as ordinary `digital` entities tagged with the `rule` abstract entity, carrying a `.pl` `BlobTrait` — leveraging the existing Edition panel, CodeMirror editing, CAS versioning, and external-tool access. A new Rules panel (or right-panel picker entry) lists rule entities, lets users enable/disable them in the live machine, and triggers inference. Query results render as a transient overlay on top of the Knowledge Graph (dashed accent-coloured edges, separate from ground edges); a "Persist as edges" button writes the current overlay set to the database with `metadata.derived = true` for the rare case where the user wants the deduction to outlive the rule.
+Build on Phase 57's canonical schema and structured bindings to give Prolog rules first-class status in the GUI. Users author rules as ordinary `digital` entities tagged with the `rule` abstract tag, carrying a `.pl` `BlobTrait` — reusing the existing Edition panel, CodeMirror editing, CAS versioning, and external-editor pipeline (no new schema, no new editor, no new persistence layer). A right-panel picker entry **Rules** lists rule entities and lets users enable/disable them in the live `ScryerMachine` and trigger inference. Inference results render as a transient overlay on the Knowledge Graph (dashed accent-coloured edges, separate from ground edges); a "Persist as edges" action writes the current overlay set to the database with `metadata.derived = true` for the rare case where the user wants the deduction to outlive the rule.
+
+The phase deliberately stays narrow: only graph-edge inference (rules whose head is exactly 2-arity over entity ids) is supported. Globe markers, Timeline bands, and validation lists from boolean rules are out of scope and earn their own follow-up phases. Three pre-seeded example rules ship with the GUI so the empty state is immediately exploratory.
 
 **Design decisions**
-- Decision: User rules persist as `BlobTrait` Prolog blobs attached to abstract `rule`-tagged entities.
-  Rationale: Reuses Edition + CAS + GC + external editor pipeline. No new schema; rules edit, version, and round-trip identically to notes.
-- Decision: Inference results render as a transient overlay by default; the user may explicitly persist a snapshot via "Materialize as edges".
-  Rationale: Overlay avoids consistency drift when ground facts change. Persist is opt-in for the (rare) case where the user wants the deduction to outlive the rule.
-- Decision: Derived edges are distinguished by `metadata.derived = true` rather than a separate table.
-  Rationale: Keeps the edge model uniform; the Relationships panel and graph filter expose a "derived" flag, mirroring the existing `visible` flag pattern.
+- Decision: User rules persist as `digital` entities tagged with the `rule` abstract entity, carrying a `.pl` `BlobTrait`.
+  Rationale: The rule *is* a software resource (it carries data — a `.pl` blob), which fits `digital` semantics. The `rule` tag (an abstract entity) marks the role. Reuses Edition + CAS + GC + external-editor pipeline; rules edit, version, and round-trip identically to notes.
+- Decision: Rules panel is a right-panel picker entry (`Brain` Lucide icon), not a primary activity.
+  Rationale: Rules are a power-user tool. A primary activity inflates the activity bar for a feature most users will not touch daily; the right panel's tools role fits.
+- Decision: Inference dialog accepts only strict 2-arity rule heads with both arguments unifying to entity ids.
+  Rationale: That's the shape the graph overlay can render. Higher-arity heads, boolean head rules, and non-edge result kinds (Globe markers, Timeline bands, validation lists) are deferred to follow-up phases. The dialog rejects non-conforming heads with a clear message.
+- Decision: Head functor detection v1 parses the rule body (first clause's head functor and arity); a `% @head foo/2` directive is documented as a fallback if v1 proves brittle.
+  Rationale: Most rules have a single head predicate; parsing the first clause covers them. Multi-head rules are rare and can use the directive when needed.
+- Decision: Inference results are a transient overlay by default; "Persist as edges" replaces (not accumulates) prior derived edges from the same rule.
+  Rationale: Overlay avoids consistency drift when ground facts change. Replace-on-persist matches the "rule defines a relationship class" intuition; accumulation would leave stale ghost edges after rule edits.
+- Decision: Derived edges are distinguished by `metadata.derived = true` and `metadata.derived_from = <rule_id>` rather than a separate table.
+  Rationale: Keeps the edge model uniform. The Relationships panel and graph filter expose a "derived" flag, mirroring the existing `visible` flag pattern.
 
 **Tasks**
 
 *Rule entity convention*
-- [ ] **Rule tag bootstrap**: On startup, ensure the `rule` abstract tag entity exists (idempotent insertion). Document the convention in the Architecture section.
-- [ ] **Prolog MIME + CodeMirror language**: Extend `infer_mime_from_path` with `.pl → application/x-prolog`. Add `lang-prolog` (or `legacy-modes` Prolog StreamLanguage) to the Edition panel CodeMirror language list so `.pl` blobs open with syntax highlighting.
+- [✓] **`rule` tag bootstrap**: On Rules-panel mount, an abstract entity with label `rule` is idempotently inserted (via `create_entity`) so rule entities can edge to it via `tagged_as`.
+- [✓] **Prolog MIME + extension hint**: `infer_mime_from_path` already covered `.pl → application/x-prolog`; verified in [core_engine/src/blob.rs](core_engine/src/blob.rs).
+- [✓] **CodeMirror Prolog highlighting**: A custom Prolog `StreamLanguage` lives in [os_gui/src/lib/prolog-mode.ts](os_gui/src/lib/prolog-mode.ts) (legacy-modes ship no Prolog mode); covers comments, quoted atoms, variables, numbers, builtins, operators. Edition panel dispatches `application/x-prolog` to it.
 
 *Rules panel*
-- [ ] **`RulesPanel.tsx`**: Right-panel picker entry (`Brain` or `FlaskConical` Lucide icon) listing all rule entities. Per-row controls: name, enabled toggle, Edit (opens Edition panel on the rule's `.pl` blob), Run (opens an inference dialog).
-- [ ] **"New Rule" action**: Creates an abstract entity tagged `rule` with an auto-attached `<snake_case_label>.pl` BlobTrait pre-populated with a `% head(X, Y) :- body.` template; opens directly in the Edition panel.
-- [ ] **Rule loader**: On startup and after any rule-content edit, the rule's body is `consult`ed into the live `ScryerMachine` after ground facts and bridging rules. Disabling a rule calls `retractall/1` for every predicate the rule defines (parsed from the body's clause heads).
+- [✓] **Right-panel picker entry**: New `rules` picker entry (`Brain` Lucide icon) in `App.tsx`'s `RIGHT_PANEL_PICKER`; the panel is registered in `ALL_PANES`.
+- [✓] **`RulesPanel.tsx`**: Lists every entity that is `digital` AND has an outgoing `tagged_as` edge to the `rule` tag entity. Endpoints normalise to bare ULIDs before comparison since `get_edges` strips the `entity:` prefix internally. Per-row controls: rule name, **Edit** (jumps to the Edition activity on the rule's `.pl`), **Run**.
+- [✓] **Inline "New Rule" form**: Replaces the original `window.prompt` design. Clicking **+ New** toggles an inline form inside the panel (label input + Create / Cancel; Esc cancels, Enter submits). On submit the entity, `tagged_as → rule` edge, and pre-populated `<snake_case_label>.pl` blob (with `% @head <functor>/2` template) are created, then the Edition panel opens on the new blob.
 
-*Inference visualization*
-- [ ] **Inference dialog**: Pick a rule, choose a head predicate (auto-detected from the rule body), pick which variables map to entity ids, run via `prolog_query_bindings`.
-- [ ] **Overlay edges in `GraphPanel`**: Results render as dashed, accent-coloured edges with the rule label; live in local React state, not the regular `edges` store; cleared on dialog close, rule change, or explicit Clear action.
-- [ ] **Materialize action**: "Persist as edges" button writes the overlay set to the DB via `add_edge_with_payload` with `metadata.derived = true` and `metadata.derived_from = <rule_id>`. Confirmation prompt before write.
-- [ ] **Derived-edge filter**: Relationships panel and graph filter expose a "derived" flag so users can hide/show persisted derivations independently of authored edges.
+*Rule loader*
+- [✓] **Loader IPC commands**: `enable_rule(rule_id) -> { functor, arity }` and `disable_rule(rule_id, functor, arity)`. Both run on a dedicated `RuleOp` mpsc channel multiplexed with the existing query/bindings channels via `tokio::select!` on the Prolog thread.
+- [✓] **Run is the only user-facing action; on/off toggle removed**: The original toggle was confusing (its only real value was letting power users co-load multiple rules for cross-rule sub-goal calls — a niche use case). Now **Run** always (a) refreshes ground facts from the DB, (b) retracts the rule's prior head clauses, (c) consults the body. So rule edits and out-of-band DB writes (CLI seeds, raw SQL, snapshot imports) are picked up automatically.
+- [✓] **`reload_facts` helper in `prolog_engine::synchronizer`**: Retracts every canonical predicate (`entity/4`, `edge/3`, `spatial_trait/8`, …) then re-asserts a fresh snapshot built from the database, plus regenerated bridging rules. Called by the rule channel handler before every `enable_rule` so rule queries see the live DB regardless of how it got populated.
+
+*Inference + overlay (inline, no modals)*
+- [✓] **Inline result block**: Replaces the original modal `InferenceDialog`. Clicking **Run** expands a result section directly under the rule row inside the panel. Shows head signature, overlay edge count, the actual `from → to` list (with entity labels, scrollable, capped at 80 with overflow indicator), and an inline **Persist as edges** button. An `×` clears the result and graph overlay. Rules with arity ≠ 2 surface a clear "Phase 58 supports only 2-arity heads" message inline.
+- [✓] **Overlay edges in `GraphPanel`**: `overlayEdges` lives in the Zustand store. Rendered via `onRenderFramePost` with `setLineDash([6, 4])` strokes in the accent colour, on top of ground edges. Looks up live node positions from `graphRef.current.graphData()`.
+- [✓] **Inline persist confirmation**: Replaces the original `window.confirm`. Clicking **Persist as edges** swaps the button for a Confirm / Cancel pair with a one-line explanation right inside the result block.
+- [✓] **`persist_rule_overlay` IPC**: First runs `DELETE edge WHERE metadata.derived_from = $rid` (replace semantics), then writes each overlay edge via `add_edge_with_payload` with label = rule head functor and `metadata = { derived: true, derived_from: <rule_id> }`. Overlay clears on success; graph and entity list re-fetch.
+- [✓] **Derived-edge filter**: New "Show Derived Edges" checkbox in the Graph side panel. `GraphPanel.filteredData` excludes edges whose `metadata.derived === true` when the toggle is off. Backed by `showDerivedEdges` + `toggleShowDerivedEdges` in the store.
+
+*Seed rules + helpers*
+- [✓] **Three example rules** seeded idempotently when no rule entities exist (per-rule existence check by label, in-memory mount-once guard so partial successes self-heal):
+  1. **descendant** (`descendant.pl`) — transitive closure of `contains`. Class A.
+  2. **co_tagged** (`co_tagged.pl`) — entities sharing ≥ 2 tags. Class E. Body explicitly grounds `A` and `B` via `entity/4` before `findall` so per-pair counting actually works.
+  3. **near** (`near.pl`) — entities within 50 km using `haversine/5`. Class B.
+- [✓] **`humanist_runtime` haversine helper**: `deg2rad/2` and `haversine(Lat1, Lon1, Lat2, Lon2, Km)` baked into the runtime consult string in [prolog_engine/src/lib.rs::ScryerMachine::runtime_source](prolog_engine/src/lib.rs).
+- [✓] **`test/rules_demo.sh`**: Hierarchical seed (Earth → Europe → Spain/France → cities) with spatial traits and shared tags so all three rules produce visible overlay edges (descendant: 20, co_tagged: 1, near: 3).
+- [✓] **`create_rule_blob` IPC**: Sibling of `create_entity_notes` accepting arbitrary filename + content + inferred MIME, used to bootstrap `.pl` rule blobs without going through the markdown-default notes path.
+
+*Bug fixes uncovered during this phase*
+- [✓] **Synchronizer event ulid prefix**: Event payloads carry only the bare ULID; the dispatch now prefixes with `entity:` before `get_entity` to avoid SurrealDB tokenizer errors on digit-leading ULIDs.
+- [✓] **`add_edge_with_payload` existence check**: Cast `id` to string in the SELECT (`SELECT type::string(id) AS id FROM edge ...`) so `Vec<serde_json::Value>::deserialize` doesn't trip on RecordId enum variants when the second persist of the same rule revisits an existing edge.
 
 **Checks**
-- [ ] Creating a new rule entity from the Rules panel produces an abstract entity with a `rule` tag and a `.pl` blob editable inline with Prolog syntax highlighting.
-- [ ] Loading a rule asserts it into the machine; querying its head from the inference dialog returns derived bindings; unloading retracts it.
-- [ ] Inference overlay renders dashed edges visually distinct from ground edges; clearing the dialog selection removes the overlay without disturbing real edges.
-- [ ] "Persist as edges" writes the overlay to the DB; reloading the graph shows them as real edges with `metadata.derived = true`; the "derived" filter in the Relationships panel toggles their visibility independently.
-- [ ] `cargo check --workspace` passes with zero warnings.
-- [ ] `npm run build` passes with zero TypeScript errors.
+- [✓] Creating a new rule via the inline form produces a `digital` entity tagged `rule` with a `.pl` blob; the entity opens in the Edition panel with Prolog syntax highlighting.
+- [✓] The inline result rejects rules whose head arity is not exactly 2 with a clear message.
+- [✓] Running a 2-arity entity-id rule produces overlay edges visually distinct from ground edges (dashed, accent colour); the `×` button clears them without disturbing real edges.
+- [✓] **Persist as edges** with inline confirmation writes the overlay to the DB; the graph shows them as real edges flagged `metadata.derived = true`. Re-running and re-persisting replaces (does not accumulate) the prior derived set.
+- [✓] The Graph side panel "Show Derived Edges" toggle hides/shows persisted derived edges without touching authored edges.
+- [✓] On a fresh database, the three seed rules appear in the Rules panel; running each against the `test/rules_demo.sh` dataset produces the documented overlay counts (descendant 20, co_tagged 1, near 3).
+- [✓] Editing a rule's `.pl` body in the Edition panel and clicking **Run** picks up the new clauses (no separate save-then-reload step).
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `cargo test -p prolog_engine -p core_engine` passes (25/25 — added `test_user_rule_via_bindings_api` and `rules::tests::*` covering head detection, head pattern formatting, comment/directive handling, and parser edge cases).
+- [✓] `npm run build` passes with zero TypeScript errors.
 
 **Notes / Risks / Resources**
-- This phase depends on Phase 57's canonical schema, structured `query_bindings` API, and the bridging-rule generator already being live.
-- Detecting which predicates a rule body defines (for retraction on disable) is non-trivial in pathological cases (rules with computed heads). A first iteration can require rules to declare their head functors via a top-of-file `% @head foo/2` comment.
-- Derived-edge garbage collection: re-running a rule should ideally retract previously-derived edges from that rule before writing new ones; the simplest implementation deletes all edges with `metadata.derived_from = <rule_id>` before persisting the new overlay.
+- The on/off toggle decision was reversed during implementation: Run is now a one-step action that always re-loads ground facts and the rule body. The `disable_rule` IPC stays in the backend for future power-user UIs but has no surface in v1.
+- `reload_facts` is the load-bearing piece for correctness: any time the DB is mutated outside the EventBus path (CLI seeds, raw SQL, snapshot imports), the live machine becomes stale. Calling it before every Run is the simplest path to "Run always shows the truth"; cost is one full ground-fact retract+assert per query, which is fast for the dataset sizes the system targets.
+- The `co_tagged` seed body required explicit `entity/4` grounding before `findall`. With unbound `A`, `B` the goal aggregates across all triples instead of per-pair; this pattern is documented in the seed rule's comment so users adapting the rule are warned.
+- Class B / D / F / G use cases (Globe markers, Timeline bands, validation lists, multi-hop pivots) remain deferred. The schema and `PrologValue` API already accommodate them; only the renderers are missing.
+- LLM rule-authoring prompt is shipped as [docs/notes/prolog_rules_prompt.md](docs/notes/prolog_rules_prompt.md) and gives an external model enough context (vocabulary, arity contract, examples, idioms) to generate new rules directly.

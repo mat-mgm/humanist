@@ -2,10 +2,51 @@ use core_engine::bus::events::EventResponse;
 use core_engine::db::SurrealDbAdapter;
 use core_engine::models::DomainSnapshot;
 use core_engine::ports::GraphDatabase;
+use core_engine::snapshot::build_snapshot;
 use std::sync::Arc;
 
 use crate::schema;
 use crate::ScryerMachine;
+
+/// Canonical predicate patterns that get cleared then re-asserted by
+/// `reload_facts`. Kept in lockstep with the runtime declarations in
+/// `ScryerMachine::new`.
+const GROUND_PATTERNS: &[&str] = &[
+    "entity(_, _, _, _)",
+    "label_trait(_, _, _, _)",
+    "spatial_trait(_, _, _, _, _, _, _, _)",
+    "temporal_trait(_, _, _, _, _, _)",
+    "blob_trait(_, _, _, _, _, _)",
+    "blob_file(_, _, _, _)",
+    "relationship_type(_, _, _, _, _, _, _, _)",
+    "edge(_, _, _)",
+    "edge_payload(_, _, _, _, _)",
+];
+
+/// Replaces every canonical ground fact in the live machine with a fresh
+/// snapshot built from the database. Necessary before user-rule inference
+/// because the synchronizer only mirrors EventBus traffic; out-of-band
+/// writes (CLI seed scripts, raw SurrealQL via the SQL terminal,
+/// imported snapshots) bypass it entirely.
+///
+/// Bridging rules are also regenerated so any newly-added relationship
+/// types are reflected in the Model 2 view.
+pub async fn reload_facts(
+    machine: &ScryerMachine,
+    db: &SurrealDbAdapter,
+) -> Result<(), String> {
+    for pattern in GROUND_PATTERNS {
+        machine.retract_all(pattern)?;
+    }
+    let snapshot = build_snapshot(db).await?;
+    let text = schema::to_facts(&snapshot);
+    machine.ingest_facts(&text)?;
+    let bridging = schema::bridging_rules(&snapshot.relationship_types);
+    if !bridging.is_empty() {
+        machine.ingest_facts(&bridging)?;
+    }
+    Ok(())
+}
 
 /// Maps EventBus signals into the live Prolog machine via the canonical
 /// schema layer. Owns no fact-string formatting of its own — every clause
@@ -50,7 +91,8 @@ impl StateSynchronizerTask {
     async fn dispatch(&self, event: &EventResponse) -> Result<(), String> {
         match event.topic.as_str() {
             "entity.created" | "entity.updated" => {
-                let entity = self.db.get_entity(&event.ulid).await?;
+                let id = canonical_entity_id(&event.ulid);
+                let entity = self.db.get_entity(&id).await?;
                 let id_atom = single_quote(&entity.id);
                 self.machine
                     .retract_all(&format!("entity({}, _, _, _)", id_atom))?;
@@ -63,7 +105,7 @@ impl StateSynchronizerTask {
                 }
             }
             "entity.deleted" => {
-                let id = format!("entity:{}", event.ulid);
+                let id = canonical_entity_id(&event.ulid);
                 let id_atom = single_quote(&id);
                 self.machine
                     .retract_all(&format!("entity({}, _, _, _)", id_atom))?;
@@ -106,6 +148,16 @@ impl StateSynchronizerTask {
     }
 }
 
+/// Ensures the event ulid carries the `entity:` table prefix expected by
+/// `GraphDatabase::get_entity`. Event payloads carry only the bare ULID.
+fn canonical_entity_id(ulid_or_full: &str) -> String {
+    if ulid_or_full.starts_with("entity:") {
+        ulid_or_full.to_string()
+    } else {
+        format!("entity:{}", ulid_or_full)
+    }
+}
+
 /// Quotes a string as a Prolog atom for use in a retract pattern. Mirrors
 /// the schema module's quoting (kept private there since the schema module
 /// is the only normal-path producer of atoms).
@@ -123,15 +175,3 @@ fn single_quote(s: &str) -> String {
     out
 }
 
-async fn build_snapshot(db: &SurrealDbAdapter) -> Result<DomainSnapshot, String> {
-    Ok(DomainSnapshot {
-        entities: db.list_entities().await?,
-        label_traits: db.get_all_label_traits().await?,
-        spatial_traits: db.get_spatial_traits().await?,
-        temporal_traits: db.get_temporal_traits().await?,
-        blob_traits: db.get_blob_traits().await?,
-        relationship_types: db.list_relationship_types().await?,
-        edges: db.get_edges().await?,
-        blob_files: Vec::new(),
-    })
-}

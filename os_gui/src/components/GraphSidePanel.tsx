@@ -19,6 +19,8 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
   const filterKinds     = useOsStore(s => s.filterKinds);
   const filterEdgeLabels = useOsStore(s => s.filterEdgeLabels);
   const showRegions     = useOsStore(s => s.showRegions);
+  const showDerivedEdges = useOsStore(s => s.showDerivedEdges);
+  const toggleShowDerivedEdges = useOsStore(s => s.toggleShowDerivedEdges);
   const highlightedPath = useOsStore(s => s.highlightedPath);
   const graphMode       = useOsStore(s => s.graphMode);
   const hopCount        = useOsStore(s => s.hopCount);
@@ -451,6 +453,16 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
               </div>
             )}
           </div>
+
+          {/* Derived edges toggle */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={showDerivedEdges}
+              onChange={() => toggleShowDerivedEdges()}
+            />
+            Show Derived Edges
+          </label>
 
           {/* Regions toggle + style switcher */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

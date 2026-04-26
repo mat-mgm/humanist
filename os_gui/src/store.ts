@@ -229,6 +229,8 @@ interface OsStore {
   filterEdgeLabels: string[];       // Edge labels to HIDE (empty = show all)   
   highlightedPath: string[];        // Node IDs on active BFS path
   highlightedEdgeKeys: Set<string>; // "from|to" keys of edges on active path
+  overlayEdges: { from: string; to: string; ruleId: string; ruleLabel: string }[];
+  showDerivedEdges: boolean;        // false hides edges with metadata.derived === true
   activePtySession: string | null;
   terminalSessions: TerminalSession[];
   activeTerminalSessionId: string | null;
@@ -312,6 +314,8 @@ interface OsStore {
   toggleFilterEdgeLabel: (label: string) => void;
   setHighlightedPath: (path: string[], edgeKeys: Set<string>) => void;
   clearHighlightedPath: () => void;
+  setOverlayEdges: (edges: { from: string; to: string; ruleId: string; ruleLabel: string }[]) => void;
+  toggleShowDerivedEdges: () => void;
   addCreateInputDraft: () => string;
   addImportDraftsFromPaths: (paths: string[]) => string[];
   addImportDraftsFromFiles: (files: PickedInputFile[]) => string[];
@@ -405,6 +409,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
   filterKinds: [],
   filterEdgeLabels: [],
   highlightedPath: [],
+  overlayEdges: [],
+  showDerivedEdges: true,
   highlightedEdgeKeys: new Set<string>(),
   activePtySession: INITIAL_TERMINAL_SESSION_ID,
   terminalSessions: [createTerminalSessionRecord('shell', 1, INITIAL_TERMINAL_SESSION_ID)],
@@ -1219,6 +1225,14 @@ export const useOsStore = create<OsStore>((set, get) => ({
 
   clearHighlightedPath: () => {
     set({ highlightedPath: [], highlightedEdgeKeys: new Set() });
+  },
+
+  setOverlayEdges: (edges) => {
+    set({ overlayEdges: edges });
+  },
+
+  toggleShowDerivedEdges: () => {
+    set(state => ({ showDerivedEdges: !state.showDerivedEdges }));
   },
 
   // ── Phase 43: Multilingual labels ────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } fro
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { DndProvider } from 'react-dnd';
-import { Minus, Square, X, SplitSquareHorizontal, Search, Globe, Clock, Calendar, Terminal, Info, Database, PencilLine } from 'lucide-react';
+import { Minus, Square, X, SplitSquareHorizontal, Search, Globe, Clock, Calendar, Terminal, Info, Database, PencilLine, Brain } from 'lucide-react';
 import './App.css';
 
 import { useOsStore } from './store';
@@ -24,6 +24,7 @@ import { EntityInspectorPanel } from './components/EntityInspector';
 import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { EditionPanel } from './components/EditionPanel';
+import { RulesPanel } from './components/RulesPanel';
 
 const GlobeFallback = <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>;
 
@@ -38,6 +39,7 @@ const ALL_PANES: PaneConfig[] = [
   { id: 'inspector', label: 'Properties',           icon: 'inspector', content: <ErrorBoundary label="Properties"><EntityInspectorPanel /></ErrorBoundary> },
   { id: 'registry',  label: 'Entities & Relations', icon: 'registry',  content: <ErrorBoundary label="Entities & Relations"><EntityKnowledgePanel /></ErrorBoundary> },
   { id: 'edition',   label: 'Edition',              icon: 'edition',   content: <ErrorBoundary label="Edition"><EditionPanel /></ErrorBoundary> },
+  { id: 'rules',     label: 'Rules',                icon: 'rules',     content: <ErrorBoundary label="Rules"><RulesPanel /></ErrorBoundary> },
 ];
 
 // Globe/Timeline/Calendar appear separately in the right panel picker even though
@@ -46,6 +48,7 @@ const RIGHT_PANEL_PICKER = [
   { id: 'inspector', icon: <Info       size={13} />, title: 'Properties' },
   { id: 'registry',  icon: <Database   size={13} />, title: 'Entities & Relations' },
   { id: 'edition',   icon: <PencilLine size={13} />, title: 'Edition' },
+  { id: 'rules',     icon: <Brain      size={13} />, title: 'Rules' },
   { id: 'graph',     icon: <Search     size={13} />, title: 'Knowledge Graph' },
   { id: 'globe',     icon: <Globe      size={13} />, title: 'Globe' },
   { id: 'timeline',  icon: <Clock      size={13} />, title: 'Timeline' },

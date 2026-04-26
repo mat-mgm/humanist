@@ -31,7 +31,22 @@ pub struct AppState {
             Result<Vec<HashMap<String, prolog_engine::PrologValue>>, String>,
         >,
     )>,
+    pub rule_tx: mpsc::Sender<RuleOp>,
     pub pty_sessions: std::sync::Mutex<HashMap<String, PtyHost>>,
+}
+
+/// Operations the Prolog thread accepts on the rule channel.
+pub enum RuleOp {
+    /// Consult a rule body and return its detected head signature.
+    Enable {
+        body: String,
+        resp: oneshot::Sender<Result<prolog_engine::rules::HeadSignature, String>>,
+    },
+    /// Retract every clause matching the given head signature.
+    Disable {
+        head: prolog_engine::rules::HeadSignature,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -972,6 +987,128 @@ async fn run_prolog_query(
         .map_err(|_| "Inference engine thread died".to_string())?;
     rx.await
         .map_err(|_| "Failed to recv response".to_string())?
+}
+
+async fn read_rule_body(
+    db: &SurrealDbAdapter,
+    blob: &LocalBlobAdapter,
+    rule_id: &str,
+) -> Result<String, String> {
+    let traits = db.get_blob_traits().await?;
+    let bt = traits
+        .into_iter()
+        .find(|t| t.owner == rule_id)
+        .ok_or_else(|| format!("rule {} has no attached blob", rule_id))?;
+    let path = blob.base_dir.join(&bt.storage_id);
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn enable_rule(
+    rule_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<prolog_engine::rules::HeadSignature, String> {
+    let st = state.lock().await;
+    let body = read_rule_body(&st.db, &st.blob, &rule_id).await?;
+    let mut entity = st.db.get_entity(&rule_id).await?;
+    let (tx, rx) = oneshot::channel();
+    st.rule_tx
+        .send(RuleOp::Enable { body, resp: tx })
+        .await
+        .map_err(|_| "rule channel closed".to_string())?;
+    let head = rx
+        .await
+        .map_err(|_| "rule channel dropped".to_string())??;
+    entity
+        .metadata
+        .insert("rule_enabled".to_string(), serde_json::Value::Bool(true));
+    entity.metadata.insert(
+        "rule_head_functor".to_string(),
+        serde_json::Value::String(head.functor.clone()),
+    );
+    entity.metadata.insert(
+        "rule_head_arity".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(head.arity as u64)),
+    );
+    st.db.save_entity(entity).await?;
+    Ok(head)
+}
+
+#[tauri::command]
+async fn disable_rule(
+    rule_id: String,
+    head_functor: String,
+    head_arity: usize,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let mut entity = st.db.get_entity(&rule_id).await?;
+    let head = prolog_engine::rules::HeadSignature {
+        functor: head_functor,
+        arity: head_arity,
+    };
+    let (tx, rx) = oneshot::channel();
+    st.rule_tx
+        .send(RuleOp::Disable { head, resp: tx })
+        .await
+        .map_err(|_| "rule channel closed".to_string())?;
+    rx.await.map_err(|_| "rule channel dropped".to_string())??;
+    entity
+        .metadata
+        .insert("rule_enabled".to_string(), serde_json::Value::Bool(false));
+    st.db.save_entity(entity).await?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct OverlayEdgeInput {
+    from: String,
+    to: String,
+}
+
+#[tauri::command]
+async fn persist_rule_overlay(
+    rule_id: String,
+    head_functor: String,
+    edges: Vec<OverlayEdgeInput>,
+    state: State<'_, Mutex<AppState>>,
+    app: AppHandle,
+) -> Result<usize, String> {
+    let st = state.lock().await;
+    // Replace previous derivations from this rule.
+    st.db
+        .db
+        .query("DELETE edge WHERE metadata.derived_from = $rid;")
+        .bind(("rid", rule_id.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut written = 0usize;
+    for edge in &edges {
+        let metadata = serde_json::json!({
+            "derived": true,
+            "derived_from": rule_id,
+        });
+        st.db
+            .add_edge_with_payload(
+                &edge.from,
+                &edge.to,
+                &head_functor,
+                None,
+                None,
+                Some(metadata),
+            )
+            .await?;
+        written += 1;
+    }
+    drop(st);
+    let _ = app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "edge.created", "ulid": rule_id}),
+    );
+    Ok(written)
 }
 
 #[tauri::command]
@@ -1920,6 +2057,62 @@ async fn create_entity_notes(
     Ok(trait_)
 }
 
+/// Creates a fresh blob trait attached to `entity_id` carrying the given
+/// `content` with a specific `extension` and `mime`. Idempotent on
+/// `(owner, filename)` — re-creating with the same name returns the existing
+/// trait. Used by the Rules panel to bootstrap a `.pl` rule body without
+/// going through the markdown-default `create_entity_notes` path.
+#[tauri::command]
+async fn create_rule_blob(
+    entity_id: String,
+    filename: String,
+    content: String,
+    state: State<'_, Mutex<AppState>>,
+    app: AppHandle,
+) -> Result<core_engine::models::BlobTrait, String> {
+    let st = state.lock().await;
+    if let Some(existing) = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.owner == entity_id && t.filename == filename)
+    {
+        return Ok(existing);
+    }
+    let entity = st.db.get_entity(&entity_id).await?;
+    let extension = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(String::from);
+    let stored = st
+        .blob
+        .store_bytes(
+            content.into_bytes(),
+            extension.clone(),
+            Some(entity.label.clone()),
+        )
+        .await?;
+    let mime = core_engine::blob::infer_mime_from_path(&filename);
+    let ulid = Ulid::new().to_string();
+    let trait_ = core_engine::models::BlobTrait {
+        id: format!("blob_trait:{}", ulid),
+        owner: entity_id.clone(),
+        filename,
+        storage_id: stored.storage_id,
+        bucket: "local".to_string(),
+        mime,
+        hash: stored.hash,
+        size: stored.size,
+    };
+    st.db.save_blob_trait(trait_.clone()).await?;
+    let _ = app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": entity_id}),
+    );
+    Ok(trait_)
+}
+
 // ── Phase 43: Multilingual label commands ─────────────────────────────────────
 
 #[tauri::command]
@@ -2043,7 +2236,7 @@ pub fn run() {
             // future resolves, keeping the setup closure synchronous from Tauri's POV.
             // app.manage() is called after block_on returns, guaranteeing the state is
             // registered before any frontend command can fire.
-            let (db, bus, blob, query_tx, bindings_tx) = tauri::async_runtime::block_on(async {
+            let (db, bus, blob, query_tx, bindings_tx, rule_tx) = tauri::async_runtime::block_on(async {
                 let db = SurrealDbAdapter::new()
                     .await
                     .expect("SurrealDB init failed");
@@ -2080,6 +2273,7 @@ pub fn run() {
                         Result<Vec<HashMap<String, prolog_engine::PrologValue>>, String>,
                     >,
                 )>(32);
+                let (rule_tx, mut rule_rx) = mpsc::channel::<RuleOp>(32);
                 let db_p = db.clone();
                 let bus_p = bus.clone();
 
@@ -2123,13 +2317,49 @@ pub fn run() {
                                     let res = inference.query_bindings(&query).map_err(|e| e.to_string());
                                     let _ = resp_tx.send(res);
                                 }
+                                Some(op) = rule_rx.recv() => {
+                                    match op {
+                                        RuleOp::Enable { body, resp } => {
+                                            // 1. Refresh ground facts so the rule sees the
+                                            //    current DB state (covers CLI seeds, raw SQL
+                                            //    writes, snapshot imports — anything that
+                                            //    bypasses the EventBus sync path).
+                                            if let Err(e) = prolog_engine::synchronizer::reload_facts(&machine, &db_p).await {
+                                                let _ = resp.send(Err(format!("ground fact reload failed: {}", e)));
+                                                continue;
+                                            }
+                                            // 2. Detect head, retract any prior clauses for it,
+                                            //    then assert the rule body. This makes Run
+                                            //    idempotent across re-runs and editor saves.
+                                            let detected = prolog_engine::rules::detect_head(&body);
+                                            let head = match detected {
+                                                Ok(h) => h,
+                                                Err(e) => {
+                                                    let _ = resp.send(Err(e));
+                                                    continue;
+                                                }
+                                            };
+                                            if let Err(e) = prolog_engine::rules::disable(&machine, &head) {
+                                                let _ = resp.send(Err(e));
+                                                continue;
+                                            }
+                                            let result = prolog_engine::rules::enable(&machine, &body)
+                                                .map(|_| head);
+                                            let _ = resp.send(result);
+                                        }
+                                        RuleOp::Disable { head, resp } => {
+                                            let res = prolog_engine::rules::disable(&machine, &head);
+                                            let _ = resp.send(res);
+                                        }
+                                    }
+                                }
                                 else => break,
                             }
                         }
                     });
                 });
 
-                (db, bus, blob, query_tx, bindings_tx)
+                (db, bus, blob, query_tx, bindings_tx, rule_tx)
             });
 
             // Manage state after block_on — guaranteed before any Tauri command fires
@@ -2139,6 +2369,7 @@ pub fn run() {
                 blob,
                 query_tx,
                 bindings_tx,
+                rule_tx,
                 pty_sessions: std::sync::Mutex::new(HashMap::new()),
             }));
 
@@ -2184,6 +2415,9 @@ pub fn run() {
             get_edges,
             run_prolog_query,
             prolog_query_bindings,
+            enable_rule,
+            disable_rule,
+            persist_rule_overlay,
             export_prolog_snapshot,
             import_prolog_snapshot,
             execute_sql,
@@ -2216,6 +2450,7 @@ pub fn run() {
             get_entity_text,
             apply_entity_text,
             create_entity_notes,
+            create_rule_blob,
             delete_blob_trait,
             rename_blob_trait,
             pick_icon_file,

@@ -529,7 +529,7 @@ impl GraphDatabase for SurrealDbAdapter {
         // Skip insert if this exact (from, to, label) edge already exists.
         // Use type::string() cast so the WHERE comparison is string-vs-string and the
         // tokenizer never tries to parse a record id literal that begins with digits.
-        let check_qs = "SELECT id FROM edge \
+        let check_qs = "SELECT type::string(id) AS id FROM edge \
             WHERE type::string(in) = $from AND type::string(out) = $to AND label = $label \
             LIMIT 1;";
         let mut check_resp = self
@@ -577,7 +577,7 @@ impl GraphDatabase for SurrealDbAdapter {
         metadata: Option<serde_json::Value>,
     ) -> Result<(), String> {
         // Skip insert if this exact (from, to, label) edge already exists.
-        let check_qs = "SELECT id FROM edge \
+        let check_qs = "SELECT type::string(id) AS id FROM edge \
             WHERE type::string(in) = $from AND type::string(out) = $to AND label = $label \
             LIMIT 1;";
         let mut check_resp = self
