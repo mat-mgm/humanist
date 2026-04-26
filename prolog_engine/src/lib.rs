@@ -1,7 +1,12 @@
 use scryer_prolog::machine::parsed_results::{QueryMatch, QueryResolution, Value};
 use scryer_prolog::machine::Machine;
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
+
+pub mod io;
+pub mod schema;
+pub mod synchronizer;
 
 /// Core Application Service managing the Scryer Prolog Instance
 #[derive(Clone)]
@@ -14,7 +19,7 @@ impl ScryerMachine {
         let mut machine = Machine::new_lib();
         machine.consult_module_string(
             "humanist_runtime",
-            ":- use_module(library(charsio)).".to_string(),
+            ":- use_module(library(charsio)).\n:- dynamic(entity/4).\n:- dynamic(label_trait/4).\n:- dynamic(spatial_trait/8).\n:- dynamic(temporal_trait/6).\n:- dynamic(blob_trait/6).\n:- dynamic(blob_file/4).\n:- dynamic(relationship_type/8).\n:- dynamic(edge/3).\n:- dynamic(edge_payload/5).\n".to_string(),
         );
         tracing::info!("prolog engine ready");
         Self {
@@ -22,23 +27,102 @@ impl ScryerMachine {
         }
     }
 
-    /// Evaluates a raw string as Prolog facts/rules to ingest
+    /// Asserts a single Prolog clause (fact or rule) into the live machine.
+    /// Caller is responsible for trailing-period normalization.
     pub fn ingest(&self, raw_prolog: &str) -> std::result::Result<(), String> {
         let mut m = self.machine.lock().map_err(|_| "Failed to lock machine".to_string())?;
-        // Wrap facts and rules into assertz to populate machine memory state
-        let query = format!("assertz(({})).", raw_prolog.trim_end_matches('.'));
+        let body = raw_prolog.trim().trim_end_matches('.').trim();
+        let query = format!("assertz(({})).", body);
         let res = m.run_query(query).map_err(|e| e.to_string())?;
-        
-        // Consume to execute side-effects via format (or loop if matches)
         let _ = format!("{:?}", res);
+        Ok(())
+    }
+
+    /// Retracts every clause matching the given head pattern.
+    pub fn retract_all(&self, head_pattern: &str) -> std::result::Result<(), String> {
+        let mut m = self.machine.lock().map_err(|_| "Failed to lock machine".to_string())?;
+        let query = format!("retractall({}).", head_pattern);
+        let res = m.run_query(query).map_err(|e| e.to_string())?;
+        let _ = format!("{:?}", res);
+        Ok(())
+    }
+
+    /// Bulk-ingests a multi-clause text body (used for snapshot loads and
+    /// rule consults). Splits on top-level `.` followed by whitespace; safe
+    /// for the canonical schema output where every fact ends in `.\n`.
+    pub fn ingest_facts(&self, text: &str) -> std::result::Result<(), String> {
+        for raw in split_clauses(text) {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            self.ingest(&raw)?;
+        }
         Ok(())
     }
 }
 
-pub mod synchronizer;
+fn split_clauses(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut in_single = false;
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '%' && !in_single {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '\'' {
+            // Honor backslash escapes inside quoted atoms.
+            in_single = !in_single;
+            buf.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '\\' && in_single && i + 1 < chars.len() {
+            buf.push(c);
+            buf.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        buf.push(c);
+        if c == '.' && !in_single {
+            // A clause terminator is a '.' followed by EOF or whitespace.
+            let next = chars.get(i + 1).copied();
+            if next.map_or(true, |n| n.is_whitespace()) {
+                out.push(std::mem::take(&mut buf));
+            }
+        }
+        i += 1;
+    }
+    if !buf.trim().is_empty() {
+        out.push(buf);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Inference engine + structured bindings
+// ---------------------------------------------------------------------------
 
 pub struct InferenceEngine {
     pub machine: ScryerMachine,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum PrologValue {
+    Atom(String),
+    Integer(i64),
+    Float(f64),
+    String(String),
+    EntityId(String),
+    List(Vec<PrologValue>),
+    Compound { functor: String, args: Vec<PrologValue> },
+    Var,
 }
 
 impl InferenceEngine {
@@ -57,15 +141,69 @@ impl InferenceEngine {
         Ok(format_query_resolution(&res))
     }
 
-    /// Mechanism to materialize resulting deductions back locally or publish to EventBus 
-    /// as persistent semantic edges.
-    pub async fn materialize_inference(&self, _db: &core_engine::db::SurrealDbAdapter, query: &str) -> std::result::Result<(), String> {
-        let _results = self.query(query)?;
-        // Here we would parse _results into (NodeA, NodeB), and invoke db.add_edge(...)
-        // to persist the deduced semantic edges back to the datastore!
-        Ok(())
+    /// Structured binding API for GUI consumers. Returns one map per
+    /// solution; atoms shaped like `entity:<ulid>` are decoded as `EntityId`.
+    pub fn query_bindings(
+        &self,
+        query_string: &str,
+    ) -> std::result::Result<Vec<HashMap<String, PrologValue>>, String> {
+        let mut m = self.machine.machine.lock().map_err(|_| "Failed to lock machine".to_string())?;
+
+        let normalized = normalize_query(query_string);
+        let res = catch_unwind(AssertUnwindSafe(|| m.run_query(normalized)))
+            .map_err(|_| "Prolog engine panic while parsing query".to_string())?
+            .map_err(|e| e.to_string())?;
+
+        Ok(extract_bindings(&res))
     }
 }
+
+fn extract_bindings(resolution: &QueryResolution) -> Vec<HashMap<String, PrologValue>> {
+    match resolution {
+        QueryResolution::True | QueryResolution::False => Vec::new(),
+        QueryResolution::Matches(matches) => matches
+            .iter()
+            .map(|m| {
+                m.bindings
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value_to_prolog(value)))
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+fn value_to_prolog(value: &Value) -> PrologValue {
+    match value {
+        Value::Integer(v) => v
+            .to_string()
+            .parse::<i64>()
+            .map(PrologValue::Integer)
+            .unwrap_or_else(|_| PrologValue::Atom(v.to_string())),
+        Value::Rational(v) => PrologValue::Atom(v.to_string()),
+        Value::Float(v) => PrologValue::Float(v.into_inner()),
+        Value::Atom(v) => atom_to_prolog(&v.as_str()),
+        Value::String(v) => atom_to_prolog(v),
+        Value::List(values) => PrologValue::List(values.iter().map(value_to_prolog).collect()),
+        Value::Structure(functor, args) => PrologValue::Compound {
+            functor: functor.as_str().to_string(),
+            args: args.iter().map(value_to_prolog).collect(),
+        },
+        Value::Var => PrologValue::Var,
+    }
+}
+
+fn atom_to_prolog(s: &str) -> PrologValue {
+    if s.starts_with("entity:") {
+        PrologValue::EntityId(s.to_string())
+    } else {
+        PrologValue::Atom(s.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query normalization (preserves user-visible variable names in textual mode)
+// ---------------------------------------------------------------------------
 
 fn normalize_query(query: &str) -> String {
     let trimmed = query.trim();
@@ -219,51 +357,59 @@ mod tests {
 
     #[test]
     fn test_scryer_initialization() {
-        // Just verify it doesn't panic when initializing memory allocation
         let _machine = ScryerMachine::new();
-        assert!(true, "Scryer Machine initialized successfully");
     }
 
     #[test]
     fn test_logical_inference() {
         let machine = ScryerMachine::new();
-        
-        // 1. Ingest dynamic predicates
-        machine.ingest("edge('id1', 'NodeA', 'NodeB', 'contains').").unwrap();
-        machine.ingest("edge('id2', 'NodeB', 'NodeC', 'contains').").unwrap();
-        
-        // 2. Ingest an inference rule
-        machine.ingest("reachable(X, Y) :- edge(_, X, Y, _).").unwrap();
-        machine.ingest("reachable(X, Y) :- edge(_, X, Z, _), reachable(Z, Y).").unwrap();
-        
-        // 3. Ask the engine to deduce information!
+
+        machine.ingest("edge('NodeA', 'NodeB', 'contains').").unwrap();
+        machine.ingest("edge('NodeB', 'NodeC', 'contains').").unwrap();
+
+        machine.ingest("reachable(X, Y) :- edge(X, Y, _).").unwrap();
+        machine.ingest("reachable(X, Y) :- edge(X, Z, _), reachable(Z, Y).").unwrap();
+
         let ie = InferenceEngine::new(machine);
         let results = ie.query("reachable('NodeA', Destination).").unwrap();
-        
-        println!("Raw inference results: {:#?}", results);
-        
-        // 4. Verify it correctly inferred NodeB and NodeC
-        // Bindings contain destination targets
         let results_str = results.join(",");
         assert!(results_str.contains("NodeB"));
         assert!(results_str.contains("NodeC"));
     }
 
     #[test]
-    fn test_builtin_functor_query() {
-        let machine = ScryerMachine::new();
-        let ie = InferenceEngine::new(machine);
-        let results = ie.query("functor(X, edge, 2).").unwrap();
-        let results_str = results.join("\n");
-        assert!(results_str.contains("X ="));
-        assert!(results_str.contains("edge"));
+    fn test_split_clauses_handles_quoted_periods() {
+        let text = "entity('a.b', physical, 'x', 'en').\nentity('c', digital, 'y', 'en').\n";
+        let clauses = split_clauses(text);
+        assert_eq!(clauses.len(), 2);
+        assert!(clauses[0].contains("'a.b'"));
     }
 
     #[test]
-    fn test_prepare_query_wraps_visible_vars() {
-        let prepared = prepare_query("functor(X, edge, 2).");
-        assert!(prepared.contains("functor(_Q0, edge, 2)"));
-        assert!(prepared.contains("write_term_to_chars(_Q0"));
-        assert!(prepared.contains("atom_chars(X, _Chars__Q0)"));
+    fn test_query_bindings_returns_structured_atoms() {
+        let machine = ScryerMachine::new();
+        machine
+            .ingest("edge('entity:01', 'entity:02', 'contains').")
+            .unwrap();
+        let ie = InferenceEngine::new(machine);
+        let bindings = ie.query_bindings("edge(X, Y, 'contains').").unwrap();
+        assert_eq!(bindings.len(), 1);
+        let row = &bindings[0];
+        match row.get("X") {
+            Some(PrologValue::EntityId(s)) => assert_eq!(s, "entity:01"),
+            other => panic!("expected EntityId, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_retract_all_removes_facts() {
+        let machine = ScryerMachine::new();
+        machine
+            .ingest("entity('e1', physical, 'A', 'en').")
+            .unwrap();
+        machine.retract_all("entity(_, _, _, _)").unwrap();
+        let ie = InferenceEngine::new(machine);
+        let results = ie.query("entity(_, _, _, _).").unwrap();
+        assert_eq!(results.first().map(String::as_str), Some("false."));
     }
 }

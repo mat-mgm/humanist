@@ -161,3 +161,46 @@ pub struct TraitSnapshot {
     pub data: serde_json::Value,
     pub changed_at: String,
 }
+
+/// A complete in-memory mirror of the domain state: every entity, trait, edge,
+/// and relationship type the system holds. Used as the boundary type for
+/// import/export and as the input to the Prolog fact serializer. Has no
+/// dependency on Prolog or any storage backend.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DomainSnapshot {
+    #[serde(default)]
+    pub entities: Vec<Entity>,
+    #[serde(default)]
+    pub label_traits: Vec<LabelTrait>,
+    #[serde(default)]
+    pub spatial_traits: Vec<SpatialTrait>,
+    #[serde(default)]
+    pub temporal_traits: Vec<TemporalTrait>,
+    #[serde(default)]
+    pub blob_traits: Vec<BlobTrait>,
+    #[serde(default)]
+    pub relationship_types: Vec<RelationshipType>,
+    #[serde(default)]
+    pub edges: Vec<EdgeRecord>,
+    /// Optional sidecar entries describing where each blob's content can be
+    /// loaded from on disk during import. Present in interchange snapshots,
+    /// absent in pure in-memory snapshots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blob_files: Vec<BlobFile>,
+}
+
+/// A pointer from a `BlobTrait` to a content file on disk. Used in the
+/// interchange format so an importer knows which file holds the bytes for
+/// a given blob. Paths are interpreted relative to the snapshot file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobFile {
+    pub blob_id: String,
+    pub relative_path: String,
+    pub hash: String,
+    pub mime: String,
+}
+
+/// The output of an import: an additive merge target. Has the same shape as
+/// `DomainSnapshot` but is semantically distinct — applying a patch should
+/// be idempotent (UPSERT semantics) rather than wholesale replacement.
+pub type DomainPatch = DomainSnapshot;

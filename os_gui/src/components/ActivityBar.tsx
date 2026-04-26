@@ -1,14 +1,14 @@
 import {
-  ArrowDownToLine, Search, Globe, Terminal,
+  ArrowDownToLine, ArrowUpFromLine, Search, Globe, Terminal,
   Settings, PencilLine,
 } from 'lucide-react';
 import { useOsStore } from '../store';
 
 export type ActivityId =
-  | 'inputs' | 'edition' | 'graph' | 'causal' | 'terminal'
+  | 'inputs' | 'outputs' | 'edition' | 'graph' | 'causal' | 'terminal'
   | 'settings';
 
-const PRIMARY_CANVAS_IDS = new Set<ActivityId>(['inputs', 'edition', 'graph', 'causal', 'terminal']);
+const PRIMARY_CANVAS_IDS = new Set<ActivityId>(['inputs', 'outputs', 'edition', 'graph', 'causal', 'terminal']);
 
 interface ActivityItem {
   id: ActivityId;
@@ -23,6 +23,7 @@ const ACTIVITIES: ActivityItem[] = [
   { id: 'graph',    icon: <Search  size={18} />,          title: 'Knowledge Graph', group: 'primary' },
   { id: 'causal',   icon: <Globe   size={18} />,          title: 'Causal Panel',    group: 'primary' },
   { id: 'terminal', icon: <Terminal size={18} />,         title: 'Terminal',        group: 'primary' },
+  { id: 'outputs',  icon: <ArrowUpFromLine size={18} />, title: 'Outputs',        group: 'primary' },
 ];
 
 export function ActivityBar() {

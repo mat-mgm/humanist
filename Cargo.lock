@@ -6107,6 +6107,7 @@ version = "0.1.0"
 dependencies = [
  "core_engine",
  "scryer-prolog",
+ "serde",
  "tokio",
  "tracing",
 ]

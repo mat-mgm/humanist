@@ -6,6 +6,7 @@ import { EntityKnowledgePanel } from './EntityKnowledgePanel';
 import { AssetPreview } from './AssetPreview';
 import { ErrorBoundary } from './ErrorBoundary';
 import { InputsSidePanel } from './InputsSidePanel';
+import { OutputsSidePanel } from './OutputsSidePanel';
 import { TerminalSidePanel } from './TerminalSidePanel';
 import { EditionSidePanel } from './EditionSidePanel';
 
@@ -21,6 +22,7 @@ interface SidePanelProps {
 
 const PANEL_TITLES: Record<string, string> = {
   inputs:    'Inputs',
+  outputs:   'Outputs',
   edition:   'Edition',
   graph:     'Knowledge Graph',
   causal:    'Causal Panel',
@@ -39,6 +41,7 @@ function SidePanelContent({ activity, themeSearch, onThemeChange, onThemeSearchC
 }) {
   switch (activity) {
     case 'inputs':    return <InputsSidePanel />;
+    case 'outputs':   return <ErrorBoundary label="Outputs"><OutputsSidePanel /></ErrorBoundary>;
     case 'edition':   return <EditionSidePanel />;
     case 'graph':     return <GraphSidePanel />;
     case 'causal':    return (

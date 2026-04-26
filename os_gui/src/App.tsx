@@ -22,6 +22,7 @@ import { DraggablePane } from './components/DraggablePane';
 import { CommandPalette } from './components/CommandPalette';
 import { EntityInspectorPanel } from './components/EntityInspector';
 import { InputsPanel } from './components/InputsPanel';
+import { OutputsPanel } from './components/OutputsPanel';
 import { EditionPanel } from './components/EditionPanel';
 
 const GlobeFallback = <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>;
@@ -145,12 +146,13 @@ function removeIdFromSlots(slots: SlotNode[], id: string): SlotNode[] {
 }
 
 // Primary-canvas activities — tool/settings clicks must not affect the canvas
-const PRIMARY_CANVAS_IDS = new Set(['inputs', 'edition', 'graph', 'causal', 'terminal']);
+const PRIMARY_CANVAS_IDS = new Set(['inputs', 'outputs', 'edition', 'graph', 'causal', 'terminal']);
 
 // ── Primary canvas (activity bar mode) ───────────────────────────────────────
 function PrimaryCanvas({ activityId }: { activityId: string }) {
   switch (activityId) {
     case 'inputs':   return <ErrorBoundary label="Inputs"><InputsPanel /></ErrorBoundary>;
+    case 'outputs':  return <ErrorBoundary label="Outputs"><OutputsPanel /></ErrorBoundary>;
     case 'edition':  return <ErrorBoundary label="Edition"><EditionPanel /></ErrorBoundary>;
     case 'graph':    return <ErrorBoundary label="Knowledge Graph"><GraphPanel /></ErrorBoundary>;
     case 'causal':   return <ErrorBoundary label="Causal Panel"><CausalPanel /></ErrorBoundary>;

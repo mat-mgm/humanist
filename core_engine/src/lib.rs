@@ -6,6 +6,7 @@ pub mod gc;
 pub mod logging;
 pub mod models;
 pub mod ports;
+pub mod snapshot;
 
 #[cfg(test)]
 mod tests {

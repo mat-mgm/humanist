@@ -1,4 +1,6 @@
-import { CheckCircle2, Circle } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCircle2, Circle, FileCode } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
 import type { InputJobStage } from '../models';
 import { StoreStatePanel } from './StoreStatePanel';
@@ -31,6 +33,30 @@ export function InputsSidePanel() {
 
   const editableDrafts = inputDrafts.filter(draft => ['draft', 'error'].includes(draft.stage));
 
+  const [snapshotStatus, setSnapshotStatus] = useState<string | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+
+  async function importPrologSnapshot() {
+    if (snapshotBusy) return;
+    const picked = await invoke<string | null>('pick_prolog_snapshot_file');
+    if (!picked) return;
+    setSnapshotBusy(true);
+    setSnapshotStatus('Importing snapshot…');
+    try {
+      const summary = await invoke<{ entities: number; edges: number; blobs: number }>(
+        'import_prolog_snapshot',
+        { plPath: picked },
+      );
+      setSnapshotStatus(
+        `Imported ${summary.entities} entities, ${summary.edges} edges, ${summary.blobs} blobs.`,
+      );
+    } catch (err) {
+      setSnapshotStatus(`Import failed: ${err}`);
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
   async function handleSubmitSelected() {
     for (const draft of inputDrafts) {
       if (!selectedInputDraftIds.includes(draft.jobId)) continue;
@@ -45,6 +71,37 @@ export function InputsSidePanel() {
         <StoreStatePanel embedded />
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+            Prolog Snapshot
+          </div>
+          <button
+            onClick={() => void importPrologSnapshot()}
+            disabled={snapshotBusy}
+            style={{
+              width: '100%',
+              background: snapshotBusy ? 'var(--bg-secondary)' : 'none',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: '6px 8px',
+              fontSize: 11,
+              cursor: snapshotBusy ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+            }}
+          >
+            <FileCode size={13} />
+            {snapshotBusy ? 'Importing…' : 'Import .pl Snapshot'}
+          </button>
+          {snapshotStatus && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.5 }}>
+              {snapshotStatus}
+            </div>
+          )}
+        </div>
         <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
             Draft Queue

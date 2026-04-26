@@ -8,3 +8,4 @@ scryer-prolog = "0.9.4"
 tracing = "0.1"
 tokio = { version = "1.43", features = ["full"] }
 core_engine = { path = "../core_engine" }
+serde = { version = "1.0", features = ["derive"] }

@@ -25,6 +25,12 @@ pub struct AppState {
     pub bus: EventBus,
     pub blob: LocalBlobAdapter,
     pub query_tx: mpsc::Sender<(String, oneshot::Sender<Result<Vec<String>, String>>)>,
+    pub bindings_tx: mpsc::Sender<(
+        String,
+        oneshot::Sender<
+            Result<Vec<HashMap<String, prolog_engine::PrologValue>>, String>,
+        >,
+    )>,
     pub pty_sessions: std::sync::Mutex<HashMap<String, PtyHost>>,
 }
 
@@ -387,6 +393,18 @@ async fn pick_native_import_files() -> Result<Vec<String>, String> {
             .into_iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect::<Vec<_>>()
+    });
+    handle.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn pick_prolog_snapshot_file() -> Result<Option<String>, String> {
+    let handle = async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Select Prolog snapshot (.pl)")
+            .add_filter("Prolog snapshot", &["pl"])
+            .pick_file()
+            .map(|path| path.to_string_lossy().to_string())
     });
     handle.await.map_err(|e| e.to_string())
 }
@@ -954,6 +972,123 @@ async fn run_prolog_query(
         .map_err(|_| "Inference engine thread died".to_string())?;
     rx.await
         .map_err(|_| "Failed to recv response".to_string())?
+}
+
+#[tauri::command]
+async fn prolog_query_bindings(
+    query: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<HashMap<String, prolog_engine::PrologValue>>, String> {
+    let st = state.lock().await;
+    let (tx, rx) = oneshot::channel();
+    st.bindings_tx
+        .send((query, tx))
+        .await
+        .map_err(|_| "Inference engine thread died".to_string())?;
+    rx.await
+        .map_err(|_| "Failed to recv response".to_string())?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PrologExportSummary {
+    snapshot_path: String,
+    entities: usize,
+    edges: usize,
+    blobs: usize,
+}
+
+#[tauri::command]
+async fn export_prolog_snapshot(
+    out_dir: String,
+    job_id: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<PrologExportSummary, String> {
+    let st = state.lock().await;
+    let db = st.db.clone();
+    let blob = st.blob.clone();
+    drop(st);
+
+    let job = job_id.unwrap_or_else(|| format!("export-{}", Ulid::new()));
+    emit_import_progress(&app, &job, "building_snapshot", "Reading database state");
+
+    let path = Path::new(&out_dir).to_path_buf();
+    let pl_path = prolog_engine::io::export_to_dir(&db, &blob, &path).await?;
+    emit_import_progress(&app, &job, "writing_pl", "Writing snapshot.pl");
+
+    let snapshot = core_engine::snapshot::build_snapshot(&db).await?;
+    let summary = PrologExportSummary {
+        snapshot_path: pl_path.to_string_lossy().to_string(),
+        entities: snapshot.entities.len(),
+        edges: snapshot.edges.len(),
+        blobs: snapshot.blob_traits.len(),
+    };
+    emit_import_finished(
+        &app,
+        &job,
+        None,
+        "ready",
+        &format!(
+            "Exported {} entities, {} edges, {} blobs",
+            summary.entities, summary.edges, summary.blobs
+        ),
+        None,
+    );
+    Ok(summary)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PrologImportSummary {
+    entities: usize,
+    edges: usize,
+    blobs: usize,
+}
+
+#[tauri::command]
+async fn import_prolog_snapshot(
+    pl_path: String,
+    job_id: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<PrologImportSummary, String> {
+    let st = state.lock().await;
+    let db = st.db.clone();
+    let blob = st.blob.clone();
+    let bus = st.bus.clone();
+    drop(st);
+
+    let job = job_id.unwrap_or_else(|| format!("import-{}", Ulid::new()));
+    emit_import_progress(&app, &job, "reading_pl", "Reading snapshot file");
+
+    let path = PathBuf::from(&pl_path);
+    let report = prolog_engine::io::import_from_file(&db, &blob, &path).await?;
+
+    bus.on_event("entity.created".to_string(), 1, "snapshot-import".to_string())
+        .await;
+    let _ = app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "snapshot.imported", "ulid": "snapshot-import"}),
+    );
+
+    let summary = PrologImportSummary {
+        entities: report.entities,
+        edges: report.edges,
+        blobs: report.blob_traits,
+    };
+    emit_import_finished(
+        &app,
+        &job,
+        None,
+        "ready",
+        &format!(
+            "Imported {} entities, {} edges, {} blobs",
+            summary.entities, summary.edges, summary.blobs
+        ),
+        None,
+    );
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1908,7 +2043,7 @@ pub fn run() {
             // future resolves, keeping the setup closure synchronous from Tauri's POV.
             // app.manage() is called after block_on returns, guaranteeing the state is
             // registered before any frontend command can fire.
-            let (db, bus, blob, query_tx) = tauri::async_runtime::block_on(async {
+            let (db, bus, blob, query_tx, bindings_tx) = tauri::async_runtime::block_on(async {
                 let db = SurrealDbAdapter::new()
                     .await
                     .expect("SurrealDB init failed");
@@ -1939,6 +2074,12 @@ pub fn run() {
                 // Prolog Machine in its own dedicated thread
                 let (query_tx, mut query_rx) =
                     mpsc::channel::<(String, oneshot::Sender<Result<Vec<String>, String>>)>(32);
+                let (bindings_tx, mut bindings_rx) = mpsc::channel::<(
+                    String,
+                    oneshot::Sender<
+                        Result<Vec<HashMap<String, prolog_engine::PrologValue>>, String>,
+                    >,
+                )>(32);
                 let db_p = db.clone();
                 let bus_p = bus.clone();
 
@@ -1972,14 +2113,23 @@ pub fn run() {
 
                         let inference = prolog_engine::InferenceEngine::new((*machine).clone());
 
-                        while let Some((query, resp_tx)) = query_rx.recv().await {
-                            let res = inference.query(&query).map_err(|e| e.to_string());
-                            let _ = resp_tx.send(res);
+                        loop {
+                            tokio::select! {
+                                Some((query, resp_tx)) = query_rx.recv() => {
+                                    let res = inference.query(&query).map_err(|e| e.to_string());
+                                    let _ = resp_tx.send(res);
+                                }
+                                Some((query, resp_tx)) = bindings_rx.recv() => {
+                                    let res = inference.query_bindings(&query).map_err(|e| e.to_string());
+                                    let _ = resp_tx.send(res);
+                                }
+                                else => break,
+                            }
                         }
                     });
                 });
 
-                (db, bus, blob, query_tx)
+                (db, bus, blob, query_tx, bindings_tx)
             });
 
             // Manage state after block_on — guaranteed before any Tauri command fires
@@ -1988,6 +2138,7 @@ pub fn run() {
                 bus,
                 blob,
                 query_tx,
+                bindings_tx,
                 pty_sessions: std::sync::Mutex::new(HashMap::new()),
             }));
 
@@ -2004,6 +2155,7 @@ pub fn run() {
             open_external_path,
             pick_native_import_files,
             pick_native_import_directory,
+            pick_prolog_snapshot_file,
             expand_import_sources,
             complete_input_path,
             begin_import,
@@ -2031,6 +2183,9 @@ pub fn run() {
             add_edge,
             get_edges,
             run_prolog_query,
+            prolog_query_bindings,
+            export_prolog_snapshot,
+            import_prolog_snapshot,
             execute_sql,
             exit_app,
             create_entity,

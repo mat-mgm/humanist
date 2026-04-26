@@ -9,7 +9,7 @@ A spatial operating system interface and backend.
 ## Status
 Current status: in-progress
 Start date: 
-Last updated: 2026-04-24
+Last updated: 2026-04-26
 Priority: High
 
 State rules:
@@ -53,8 +53,8 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
 * Components / assets:
   - **`core_engine` (Library)**: The embedded database logic using SurrealDB, an immutable local content-addressed blob store (with an S3-style adapter boundary preserved behind the blob port), background garbage collection (simulating `git gc`), and a unified Tokio `EventBus`. Exposes operations exclusively via traits like `GraphDatabase`.
   - **`os_cli` (Binary)**: Fast, headless terminal interface built with `clap` for automations and mass data ingestion.
-  - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine, interoperating with the Core EventBus.
-  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, and **Terminal**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel. The **Settings panel** additionally exposes theme selection, a multi-locale language dropdown (en, de, fr, pt, es, ca, it, nl, zh, ja, ko, ar, ru), keyboard shortcut reference, and destructive data-management commands (`clear_database`, `clear_blob_store`) backed by Tauri IPC — each gated by an inline confirmation step. The right panel (toggled via `Ctrl+\`) surfaces Properties, Entities & Relations, and Edition as the first three pickers, followed by the visualisation panels.
+  - **`prolog_engine` (Library)**: Dedicated standalone component executing the Scryer Prolog Inference Engine and owning every translation between Rust domain types and Prolog text. A canonical fixed-arity fact schema (`schema.rs`) is the single source of fact strings — used by the synchronizer for live state mirroring, by `io.rs` for snapshot import/export, and by inference features for round-tripping derived bindings. `core_engine` itself has no `prolog_engine` dependency: a `DomainSnapshot`/`DomainPatch` boundary in `core_engine::models` plus `core_engine::snapshot::{build_snapshot, populate_blob_files, apply_patch}` are the Prolog-free surface that `prolog_engine::io` builds on. Bridging rules generated from the live `relationship_type` table expose ergonomic per-label predicates (e.g. `contains(X,Y)`) on top of the canonical `edge/3` ground facts. A structured `query_bindings` API alongside the existing string-query surface returns typed `PrologValue` rows (atoms shaped `entity:<ulid>` decoded as `EntityId`) for direct GUI consumption.
+  - **`os_gui` (Binary)**: Tauri 2.0 app with a Rust backend handling IPC commands. React frontend using atomic Zustand selectors for high-performance reactive UI updates, allowing 3D WebGL scenes to run isolated without stalling the main loop. Uses React Error Boundaries. Default shell is a VS Code-style activity bar layout (`ActivityBar` | resizable `SidePanel` | `PrimaryCanvas` | optional resizable right panel) with `lucide-react` icons throughout. The primary activities are **Inputs**, **Edition**, **Graph**, **Causal**, **Terminal**, and **Outputs**. The **InputsPanel** serves as the primary gateway for entity creation and data ingestion, featuring a draft queue with stage-based progress tracking and storage maintenance tools (GC). It also exposes a one-click "Import .pl Snapshot" action that round-trips canonical Prolog snapshots through the existing CAS. The **OutputsPanel** is the symmetric export workbench: the side panel hosts a destination picker and a target list (currently Prolog `.pl + blobs/`), and emits the same `input-job-progress`/`input-job-finished` events as imports for unified live feedback. The **Edition** activity is a single-canvas document workbench: the side panel manages entity/document selection and mode toggles, while the main canvas hosts either CodeMirror (with syntax highlighting for YAML, JSON, Markdown, and source-code formats including Python, Rust, C/C++, JavaScript/TypeScript, HTML, CSS, and more), inline binary preview renderers (PDF with natural/theme-color toggle, images, GLB/GLTF), or an embedded PTY running `$EDITOR`. The standalone Preview panel has been removed; all asset viewing is handled inline within the Edition canvas. `BlobTrait.mime` is the dispatch key for viewer selection; `infer_mime_from_path` in `core_engine` maps file extensions to MIME types for all common text and binary formats. The **Terminal** activity is a session workbench: the side panel launches and selects user-managed Shell / SQL / Prolog sessions, while the main canvas multiplexes one xterm surface across the active runtime session; editor-driven PTY sessions remain hidden from that selector. The **CausalPanel** merges Globe, Timeline, and Calendar into a single resizable-split view. The **EntityKnowledgePanel** merges Entities and Relationships into a tabbed view. The DWM tiling layout (`TilingLayout` via `react-dnd`) is preserved and activatable via the Settings panel. The **Settings panel** additionally exposes theme selection, a multi-locale language dropdown (en, de, fr, pt, es, ca, it, nl, zh, ja, ko, ar, ru), keyboard shortcut reference, and destructive data-management commands (`clear_database`, `clear_blob_store`) backed by Tauri IPC — each gated by an inline confirmation step. The right panel (toggled via `Ctrl+\`) surfaces Properties, Entities & Relations, and Edition as the first three pickers, followed by the visualisation panels.
 * Ontology & Traits: Uses client-generated ULIDs and soft deletes. Data is generic and augmented by traits (`Entity`, `Spatial Trait`, `Blob Trait`, `Temporal Trait`). `BlobTrait` is the canonical file-content attachment layer and carries externally accessible blob metadata such as `filename`, `mime`, `hash`, `size`, and content-addressed `storage_id`, rather than duplicating path information in generic entity metadata. Context entities emit semantic edges. Entities may carry an `icon` key in their `metadata` JSON object (absolute file path) that renders as a circular icon overlay on the node in `GraphPanel`, set via the right-click "Set Icon…" action.
 * **Relationship Type Visual Properties**: `RelationshipType` in `core_engine/src/models.rs` carries three optional visual fields: `flow: Option<String>` (directional layout bias: `down`, `right`, `up`, `left`), `routing: Option<String>` (edge path style: `straight`, `step`, `arc`), and `color: Option<String>` (CSS hex color). The flow field drives a per-tick d3-force velocity bias that decays with the simulation's alpha parameter. The routing field selects between ForceGraph2D's default straight line, an orthogonal L-path, and a quadratic bezier arc; non-straight edges suppress the default renderer (transparent `linkColor`, zero `linkWidth`) and are drawn entirely in `linkCanvasObject`. All arrowheads are snapped to the nearest cardinal axis (H or V) rather than following diagonal src→tgt vectors; when flow is set, the exact flow direction is used instead. Relationship types are auto-registered on first edge use (except `tagged_as`) so they appear in the Relationships panel without manual creation. `(from, to, label)` triples are deduplicated at write time so repeated calls (e.g. repeated tagging) do not create duplicate edges.
 * **Graph Interaction**: Clicking a node selects it; double-clicking toggles its media preview. Edge click selects the edge, highlights it with the accent color, and shows a context menu with "Reify to Node" and "Delete Edge" actions. Edge reification (`reify_edge` Tauri command) atomically creates a new `abstract` entity, adds edges from source → node → target, and deletes the original edge. The node `val` (d3 repulsion / click-surface radius) is dynamically set to match the image footprint when a preview is active. Media preview open/closed state is persisted in `localStorage`. PDF previews render in natural colors (no theme recoloring). The background grid/dot matrix adapts to zoom level by stepping the world-space interval in multiples of 5 to keep screen-space spacing in the ~[30, 150] px range.
@@ -65,7 +65,7 @@ You are a pragmatic systems fullstack engineer who strictly adheres to the suckl
   - **Relational Tagging**: Tags are no longer static string arrays inside an entity's record. Instead, they are independent `Abstract` entities. 
   - Tagging an entity creates a directed edge (`tagged_as`) from the target to the tag node. This allows for complex graph traversal using tags as central hubs, rather than simple metadata filtering. 
   - Removing a tag merely deletes the relationship edge, preserving the tag's identity as a first-class citizen in the knowledge graph.
-* Rules Engine: Integrates Scryer Prolog using a Dynamic Predicates model naturally representing entities and edges for complex deductive inference synced via external state changes on the EventBus.
+* Rules Engine: Integrates Scryer Prolog through a single canonical fact schema in `prolog_engine::schema` (one declared arity per predicate). Ground facts mirror the database; bridging rules expose per-label dynamic predicates as a Model 2 view layer for ergonomic user rules. The `StateSynchronizerTask` keeps the live machine in sync via `EventBus` events using `assertz/1` and `retractall/1` against the canonical predicates. The same schema doubles as a deterministic interchange format: `prolog_engine::io` writes a `snapshot.pl` plus a sibling `blobs/` directory and reads them back symmetrically through the existing `BlobStore` port.
 * **CLI Interactivity & Data Management (`os_cli`)**:
   - **Create Entities**: `cargo run -p os_cli -- entity add <KIND> <LABEL>` (e.g., `entity add physical "Main Server"`)
   - **Read/Search Entities**: `cargo run -p os_cli -- entity ls` or `entity search "Server"`
@@ -1255,3 +1255,123 @@ Rename the product identity from `Spatial OS` to `Humanist` across the codebase,
 - [✓] `rg -n "Spatial OS|Spatial-OS|Spatial-Analytical Knowledge OS|spatial_os|spatial-os|SPATIAL_OS" .` returns no remaining branded references.
 - [✓] The roadmap itself records the rename as an explicit completed phase.
 - [✓] CLI, GUI, and backend identifiers now use `Humanist` / `humanist` consistently.
+
+### Phase 57: Prolog Snapshot I/O & Canonical Schema
+**Description**
+Promote Prolog from a sidecar query box into a proper adapter over the core ontology. The `core_engine` stays Prolog-free: a new `DomainSnapshot` boundary type aggregates the entire authoritative state (entities, all traits, edges, relationship types, optional blob-file pointers) without depending on Scryer. All translation between domain types and Prolog text lives inside `prolog_engine` behind a single canonical schema layer with one declared arity per predicate. The synchronizer is rewritten on top of that vocabulary, replacing every ad-hoc `format!` call. A symmetric `.pl + blobs/` interchange format becomes a fully reversible round-trip: export writes a deterministic `snapshot.pl` with a sibling `blobs/` directory; import parses the file, re-ingests blob bytes through the existing CAS, and applies the patch via existing port methods. The GUI gains a new **Outputs** activity bar entry (last in the primary group, mirroring Inputs) that hosts the export form, and a one-click "Import .pl Snapshot" entry inside the Inputs side panel. A structured `query_bindings` API joins the existing string-query path so future GUI inference features can consume typed Prolog values.
+
+**Design decisions**
+- Decision: Hybrid fact vocabulary — Model 1 (fixed-arity DB-mirror) for ground facts in interchange files; Model 2 (dynamic per-label predicates) generated as a runtime view via bridging rules.
+  Rationale: Fixed arity gives a deterministic round-trip and a trivial parser/serializer; the dynamic view keeps user-written rules ergonomic (`contains(X,Y)` vs `edge(X,Y,contains)`). The bridging rule is one line per relationship type and is regenerated from the live `relationship_type` table on every change.
+  Alternatives: Model 1 only (less ergonomic rules), Model 2 only (round-trip needs a label↔functor mapping table and `current_predicate/1` enumeration).
+- Decision: Outputs is a new top-level activity bar entry, placed last in the primary group (just above Settings).
+  Rationale: Symmetry with Inputs; export jobs deserve the same first-class shell home as imports. Future export targets (JSON, GraphML) plug into the same dispatcher without re-thinking the activity layout.
+- Decision: Edge endpoints in the snapshot are normalised to `entity:<ulid>` regardless of internal storage form.
+  Rationale: `get_edges` strips the prefix for GUI compatibility, but the interchange format must be self-consistent so `RELATE` accepts it on import without ambiguity.
+- Decision: Defer Rules panel and inference overlay to a separate phase.
+  Rationale: The schema + I/O slice is independently demoable and unblocks goals 1+2 immediately. The inference workbench (rule entities, overlay rendering, persist action) is its own coherent surface and earns its own phase.
+
+**Tasks**
+
+*Canonical schema layer (`prolog_engine`)*
+- [✓] **`schema.rs` module**: Canonical Model 1 fact vocabulary (`entity/4`, `edge/3`, `edge_payload/5`, `spatial_trait/8`, `temporal_trait/6`, `label_trait/4`, `relationship_type/8`, `blob_trait/6`, `blob_file/4`). One declared arity per predicate; `none` for `Option::None`; quoted-atom escaping for embedded apostrophes/backslashes/control chars.
+- [✓] **`DomainSnapshot` and `DomainPatch` in `core_engine/src/models.rs`**: Aggregate type for entities, traits, edges, relationship types, and `BlobFile` sidecar entries. No Prolog dependency.
+- [✓] **`to_facts(&DomainSnapshot) -> String`**: Pure serializer producing canonical fact text. Sorted within each predicate group for byte-deterministic exports.
+- [✓] **`from_facts(&str) -> Result<DomainPatch, String>`**: Hand-written tokenizer/parser; tolerates `%` comments and blank lines; rejects unknown predicates.
+- [✓] **Bridging-rule generator (`bridging_rules`)**: Emits Model 2 view rules (one per relationship label, plus the reverse clause for symmetric labels). Functor sanitization handles non-identifier-friendly labels.
+
+*Synchronizer rewrite*
+- [✓] **Single source of facts**: `synchronizer.rs` calls the new `schema.rs` for every assertion; no `format!` strings remain.
+- [✓] **Incremental events**: Handles `entity.created`, `entity.updated`, `entity.deleted`, `edge.created/updated/deleted`, and `relationship_type.*` with `retractall/1` symmetry so the live machine never grows duplicate facts.
+- [✓] **Bridging-rule reload**: Any `relationship_type.*` event regenerates and reloads the Model 2 view rules.
+
+*Snapshot I/O with blobs*
+- [✓] **`core_engine::snapshot::build_snapshot(db)`**: Reads the authoritative state into a `DomainSnapshot`. Edge endpoints canonicalised to `entity:<ulid>` so the snapshot is self-consistent even when the underlying `get_edges` strips the prefix.
+- [✓] **`core_engine::snapshot::populate_blob_files(snapshot, cas, out_dir)`**: Copies referenced blobs into `out_dir/blobs/<hash-prefix>.<ext>` and adds matching `BlobFile` entries to the snapshot.
+- [✓] **`core_engine::snapshot::apply_patch(db, cas, patch, snapshot_root)`**: Applies the patch via existing port methods (`save_entity`, `save_*_trait`, `save_relationship_type`, `add_edge`/`add_edge_with_payload`). Blob bytes are re-ingested through the CAS so import is hash-deduplicating; trait records pick up the canonical local `storage_id`/`hash`/`size`.
+- [✓] **`prolog_engine::io::export_to_dir(db, cas, out_dir)`**: Writes `out_dir/snapshot.pl` plus `out_dir/blobs/` and returns the path to the `.pl`.
+- [✓] **`prolog_engine::io::import_from_file(db, cas, pl_path)`**: Parses, re-ingests blobs (relative paths resolved against the file's directory), applies the patch, returns an `ApplyReport`.
+- [✓] **Round-trip determinism**: Sorted serialization by id; round-trip test verifies counts, ids, and payload preservation.
+
+*Tauri commands & Inputs integration*
+- [✓] **IPC commands**: `import_prolog_snapshot(plPath, jobId?)`, `export_prolog_snapshot(outDir, jobId?)`, both emit `input-job-progress` / `input-job-finished` events for live UI feedback.
+- [✓] **`pick_prolog_snapshot_file` rfd helper**: Native file picker filtered to `.pl`.
+- [✓] **`prolog_query_bindings` IPC command**: Surfaces structured bindings to the GUI; routed through a second mpsc channel running on the existing Prolog thread via `tokio::select!` alongside the string-query channel.
+- [✓] **Inputs side panel hook**: "Import .pl Snapshot" button at the top of the Inputs side panel opens the picker and calls `import_prolog_snapshot` directly with status feedback.
+- [✓] **Edge SELECT bug fix**: `add_edge` and `add_edge_with_payload` duplicate-edge SELECT now uses `type::string(in)`/`type::string(out)` casting with parameter binding instead of raw record-id interpolation that the SurrealDB tokenizer choked on for digit-leading ULIDs.
+
+*Outputs panel*
+- [✓] **`outputs` activity entry**: Added to `ActivityBar.tsx` as the last primary entry (after Terminal, just above Settings) with the `ArrowUpFromLine` Lucide icon.
+- [✓] **`OutputsPanel.tsx` (main canvas)**: Quiet guide explaining the side-panel-driven export flow.
+- [✓] **`OutputsSidePanel.tsx`**: Destination directory input with native picker, "Export Prolog Snapshot" action, live stage/message readout, and post-export summary card (entities, edges, blobs).
+
+*Structured query API*
+- [✓] **`PrologValue` enum in `prolog_engine`**: Variants `Atom`, `Integer`, `Float`, `String`, `EntityId`, `List`, `Compound { functor, args }`, `Var`. Atoms shaped `entity:<ulid>` decoded as `EntityId` for direct use as graph node references.
+- [✓] **`InferenceEngine::query_bindings(query)`**: Returns `Vec<HashMap<String, PrologValue>>` alongside today's `query() -> Vec<String>`. `Value::String` atoms (Scryer's representation of quoted atoms with non-identifier characters) are decoded the same way.
+- [✓] **`ScryerMachine::ingest_facts(text)` and `retract_all(head_pattern)`**: Bulk ingest splits canonical fact text on top-level `.` (honoring quoted-atom contexts and backslash escapes); retract-all is the symmetric counterpart for incremental updates.
+
+*Tests*
+- [✓] **Round-trip test (`schema::tests::round_trip_preserves_structure`)**: Serialize then parse a populated snapshot; entity/trait/edge fields preserved including escaped apostrophes and bbox lists.
+- [✓] **Byte-determinism test (`schema::tests::export_is_byte_deterministic`)**: Two serializations of the same snapshot are byte-equal.
+- [✓] **Bridging rule test (`schema::tests::bridging_rules_emit_one_per_label`)**: One clause per label, plus reverse clause for symmetric types.
+- [✓] **Functor sanitization test (`schema::tests::sanitize_functor_normalizes_label`)**: Non-Prolog-friendly labels normalised; leading-digit labels get an `r` prefix.
+- [✓] **Parser tolerance tests**: Comments and blank lines accepted; unknown predicates rejected.
+- [✓] **Structured bindings test (`tests::test_query_bindings_returns_structured_atoms`)**: `entity:<ulid>` atoms decode as `PrologValue::EntityId`.
+- [✓] **Retract test (`tests::test_retract_all_removes_facts`)**: `retract_all` clears matching clauses from the live machine.
+- [✓] **DB-level round-trip** (`io::tests::pure_round_trip_preserves_counts_and_ids`): Pure schema round-trip through `to_facts`/`from_facts`.
+
+**Checks**
+- [✓] `cargo check --workspace` passes with zero warnings.
+- [✓] `cargo test -p prolog_engine -p core_engine` passes (17/17 tests).
+- [✓] `npm run build` passes with zero TypeScript errors.
+- [✓] `grep -n 'format!("entity\|format!("edge' prolog_engine/src` returns zero matches outside `schema.rs` and `synchronizer.rs` retract patterns.
+- [✓] Exporting a populated DB and importing it into a wiped DB+blob-store yields the same entity/edge counts and the same `BlobTrait` hashes; blob previews work after re-import.
+- [✓] The Outputs panel produces a directory containing `snapshot.pl` and a populated `blobs/` subdirectory; opening `snapshot.pl` in any text editor shows the canonical fact format.
+
+**Notes / Risks / Resources**
+- Reference notes: [docs/notes/prolog_current_state.md](docs/notes/prolog_current_state.md), [docs/notes/prolog_data_models.md](docs/notes/prolog_data_models.md).
+- Functor sanitization for relationship labels: bridging rules quote labels in the body, so labels with non-identifier characters round-trip through the Model 1 path; the Model 2 functor name is sanitized but the label atom on the right-hand side is preserved verbatim.
+- Blob copy strategy: plain `std::fs::copy`; future iteration could prefer hardlinks where the destination shares a filesystem with the CAS.
+- The previous `materialize_inference` stub in `prolog_engine/src/lib.rs` was superseded by the structured-binding API; it is removed.
+
+### Phase 58: Prolog Rules & Inference Workbench
+**Description**
+Build on the canonical schema and structured bindings landed in Phase 57 to give Prolog rules first-class status in the GUI. Users author rules as ordinary `digital` entities tagged with the `rule` abstract entity, carrying a `.pl` `BlobTrait` — leveraging the existing Edition panel, CodeMirror editing, CAS versioning, and external-tool access. A new Rules panel (or right-panel picker entry) lists rule entities, lets users enable/disable them in the live machine, and triggers inference. Query results render as a transient overlay on top of the Knowledge Graph (dashed accent-coloured edges, separate from ground edges); a "Persist as edges" button writes the current overlay set to the database with `metadata.derived = true` for the rare case where the user wants the deduction to outlive the rule.
+
+**Design decisions**
+- Decision: User rules persist as `BlobTrait` Prolog blobs attached to abstract `rule`-tagged entities.
+  Rationale: Reuses Edition + CAS + GC + external editor pipeline. No new schema; rules edit, version, and round-trip identically to notes.
+- Decision: Inference results render as a transient overlay by default; the user may explicitly persist a snapshot via "Materialize as edges".
+  Rationale: Overlay avoids consistency drift when ground facts change. Persist is opt-in for the (rare) case where the user wants the deduction to outlive the rule.
+- Decision: Derived edges are distinguished by `metadata.derived = true` rather than a separate table.
+  Rationale: Keeps the edge model uniform; the Relationships panel and graph filter expose a "derived" flag, mirroring the existing `visible` flag pattern.
+
+**Tasks**
+
+*Rule entity convention*
+- [ ] **Rule tag bootstrap**: On startup, ensure the `rule` abstract tag entity exists (idempotent insertion). Document the convention in the Architecture section.
+- [ ] **Prolog MIME + CodeMirror language**: Extend `infer_mime_from_path` with `.pl → application/x-prolog`. Add `lang-prolog` (or `legacy-modes` Prolog StreamLanguage) to the Edition panel CodeMirror language list so `.pl` blobs open with syntax highlighting.
+
+*Rules panel*
+- [ ] **`RulesPanel.tsx`**: Right-panel picker entry (`Brain` or `FlaskConical` Lucide icon) listing all rule entities. Per-row controls: name, enabled toggle, Edit (opens Edition panel on the rule's `.pl` blob), Run (opens an inference dialog).
+- [ ] **"New Rule" action**: Creates an abstract entity tagged `rule` with an auto-attached `<snake_case_label>.pl` BlobTrait pre-populated with a `% head(X, Y) :- body.` template; opens directly in the Edition panel.
+- [ ] **Rule loader**: On startup and after any rule-content edit, the rule's body is `consult`ed into the live `ScryerMachine` after ground facts and bridging rules. Disabling a rule calls `retractall/1` for every predicate the rule defines (parsed from the body's clause heads).
+
+*Inference visualization*
+- [ ] **Inference dialog**: Pick a rule, choose a head predicate (auto-detected from the rule body), pick which variables map to entity ids, run via `prolog_query_bindings`.
+- [ ] **Overlay edges in `GraphPanel`**: Results render as dashed, accent-coloured edges with the rule label; live in local React state, not the regular `edges` store; cleared on dialog close, rule change, or explicit Clear action.
+- [ ] **Materialize action**: "Persist as edges" button writes the overlay set to the DB via `add_edge_with_payload` with `metadata.derived = true` and `metadata.derived_from = <rule_id>`. Confirmation prompt before write.
+- [ ] **Derived-edge filter**: Relationships panel and graph filter expose a "derived" flag so users can hide/show persisted derivations independently of authored edges.
+
+**Checks**
+- [ ] Creating a new rule entity from the Rules panel produces an abstract entity with a `rule` tag and a `.pl` blob editable inline with Prolog syntax highlighting.
+- [ ] Loading a rule asserts it into the machine; querying its head from the inference dialog returns derived bindings; unloading retracts it.
+- [ ] Inference overlay renders dashed edges visually distinct from ground edges; clearing the dialog selection removes the overlay without disturbing real edges.
+- [ ] "Persist as edges" writes the overlay to the DB; reloading the graph shows them as real edges with `metadata.derived = true`; the "derived" filter in the Relationships panel toggles their visibility independently.
+- [ ] `cargo check --workspace` passes with zero warnings.
+- [ ] `npm run build` passes with zero TypeScript errors.
+
+**Notes / Risks / Resources**
+- This phase depends on Phase 57's canonical schema, structured `query_bindings` API, and the bridging-rule generator already being live.
+- Detecting which predicates a rule body defines (for retraction on disable) is non-trivial in pathological cases (rules with computed heads). A first iteration can require rules to declare their head functors via a top-of-file `% @head foo/2` comment.
+- Derived-edge garbage collection: re-running a rule should ideally retract previously-derived edges from that rule before writing new ones; the simplest implementation deletes all edges with `metadata.derived_from = <rule_id>` before persisting the new overlay.

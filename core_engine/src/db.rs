@@ -527,13 +527,16 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn add_edge(&self, from_id: &str, to_id: &str, label: &str) -> Result<(), String> {
         // Skip insert if this exact (from, to, label) edge already exists.
-        let check_qs = format!(
-            "SELECT id FROM edge WHERE in = {} AND out = {} AND label = $label LIMIT 1;",
-            from_id, to_id
-        );
+        // Use type::string() cast so the WHERE comparison is string-vs-string and the
+        // tokenizer never tries to parse a record id literal that begins with digits.
+        let check_qs = "SELECT id FROM edge \
+            WHERE type::string(in) = $from AND type::string(out) = $to AND label = $label \
+            LIMIT 1;";
         let mut check_resp = self
             .db
             .query(check_qs)
+            .bind(("from", from_id.to_string()))
+            .bind(("to", to_id.to_string()))
             .bind(("label", label.to_string()))
             .await
             .map_err(|e| e.to_string())?;
@@ -574,13 +577,14 @@ impl GraphDatabase for SurrealDbAdapter {
         metadata: Option<serde_json::Value>,
     ) -> Result<(), String> {
         // Skip insert if this exact (from, to, label) edge already exists.
-        let check_qs = format!(
-            "SELECT id FROM edge WHERE in = {} AND out = {} AND label = $label LIMIT 1;",
-            from_id, to_id
-        );
+        let check_qs = "SELECT id FROM edge \
+            WHERE type::string(in) = $from AND type::string(out) = $to AND label = $label \
+            LIMIT 1;";
         let mut check_resp = self
             .db
             .query(check_qs)
+            .bind(("from", from_id.to_string()))
+            .bind(("to", to_id.to_string()))
             .bind(("label", label.to_string()))
             .await
             .map_err(|e| e.to_string())?;
