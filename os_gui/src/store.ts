@@ -24,6 +24,26 @@ import {
   TerminalSessionStatus,
 } from './models';
 import { logFrontend } from './lib/log';
+import {
+  loadPersistedSettings,
+  persistSettings,
+  DEFAULT_GRAPH_MODE,
+  DEFAULT_TEXT_SCALE,
+  TEXT_SCALE_MIN,
+  TEXT_SCALE_MAX,
+} from './config';
+
+const TOGGLED_NODES_STORAGE_KEY = 'humanist:toggled-image-nodes';
+function loadToggledImageNodes(): Set<string> {
+  try {
+    const raw = localStorage.getItem(TOGGLED_NODES_STORAGE_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
+  } catch { return new Set<string>(); }
+}
+function persistToggledImageNodes(set: Set<string>): void {
+  try { localStorage.setItem(TOGGLED_NODES_STORAGE_KEY, JSON.stringify([...set])); }
+  catch { /* best-effort */ }
+}
 
 // ── Event payload types ───────────────────────────────────────────────────────
 
@@ -322,6 +342,7 @@ interface OsStore {
   addImportDraftsFromSources: (sources: ImportSourceDraft[]) => string[];
   updateInputDraft: (jobId: string, patch: Partial<InputDraft>) => void;
   toggleInputDraftExpanded: (jobId: string) => void;
+  setAllInputDraftsExpanded: (expanded: boolean) => void;
   removeInputDraft: (jobId: string) => void;
   clearInputDrafts: () => void;
   toggleSelectedInputDraft: (jobId: string) => void;
@@ -362,6 +383,33 @@ interface OsStore {
   setBackgroundStyle: (s: 'grid' | 'dots') => void;
   regionStyle: 'hatch' | 'fill';
   setRegionStyle: (s: 'hatch' | 'fill') => void;
+
+  // Force-graph runtime preferences (persisted via humanist:settings)
+  graphLayoutMode: import('./config').GraphLayoutMode;
+  setGraphLayoutMode: (m: import('./config').GraphLayoutMode) => void;
+  graphSimulationPaused: boolean;
+  setGraphSimulationPaused: (paused: boolean) => void;
+  graphShowNodeLabels: boolean;
+  setGraphShowNodeLabels: (show: boolean) => void;
+  graphShowEdgeLabels: boolean;
+  setGraphShowEdgeLabels: (show: boolean) => void;
+  graphHiddenLabelCategories: import('./config').EntityCategory[];
+  toggleGraphHiddenLabelCategory: (c: import('./config').EntityCategory) => void;
+
+  // Per-node toggled image / PDF previews. Lifted from GraphPanel so the side
+  // panel can offer a "collapse all" action; persisted to localStorage.
+  toggledImageNodes: Set<string>;
+  toggleImageNode: (nodeId: string) => void;
+  clearToggledImageNodes: () => void;
+
+  // Cross-panel delete confirmation flag — drives the inline confirm row in
+  // the Graph side panel's selection actions.
+  showDeleteConfirm: boolean;
+  setShowDeleteConfirm: (show: boolean) => void;
+
+  // Global UI font scale (multiplier applied to documentElement font-size).
+  uiTextScale: number;
+  setUiTextScale: (scale: number) => void;
 
   // ── Edition Panel state ───────────────────────────────────────
   editionEntityId: string | null;
@@ -452,6 +500,47 @@ export const useOsStore = create<OsStore>((set, get) => ({
   graphLoading: false,
   backgroundStyle: 'grid' as const,
   setBackgroundStyle: (s) => set({ backgroundStyle: s }),
+
+  graphLayoutMode: (loadPersistedSettings().graphLayoutMode ?? DEFAULT_GRAPH_MODE),
+  setGraphLayoutMode: (m) => { set({ graphLayoutMode: m }); persistSettings({ graphLayoutMode: m }); },
+  graphSimulationPaused: loadPersistedSettings().graphSimulationPaused ?? false,
+  setGraphSimulationPaused: (paused) => { set({ graphSimulationPaused: paused }); persistSettings({ graphSimulationPaused: paused }); },
+  graphShowNodeLabels: loadPersistedSettings().graphShowNodeLabels ?? true,
+  setGraphShowNodeLabels: (show) => { set({ graphShowNodeLabels: show }); persistSettings({ graphShowNodeLabels: show }); },
+  graphShowEdgeLabels: loadPersistedSettings().graphShowEdgeLabels ?? true,
+  setGraphShowEdgeLabels: (show) => { set({ graphShowEdgeLabels: show }); persistSettings({ graphShowEdgeLabels: show }); },
+  graphHiddenLabelCategories: (loadPersistedSettings().graphHiddenLabelCategories ?? []),
+  toggleGraphHiddenLabelCategory: (c) => {
+    const current = get().graphHiddenLabelCategories;
+    const next = current.includes(c) ? current.filter(x => x !== c) : [...current, c];
+    set({ graphHiddenLabelCategories: next });
+    persistSettings({ graphHiddenLabelCategories: next });
+  },
+
+  toggledImageNodes: loadToggledImageNodes(),
+  toggleImageNode: (nodeId) => {
+    const next = new Set(get().toggledImageNodes);
+    if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+    set({ toggledImageNodes: next });
+    persistToggledImageNodes(next);
+  },
+  clearToggledImageNodes: () => {
+    set({ toggledImageNodes: new Set<string>() });
+    persistToggledImageNodes(new Set<string>());
+  },
+
+  showDeleteConfirm: false,
+  setShowDeleteConfirm: (show) => set({ showDeleteConfirm: show }),
+
+  uiTextScale: (() => {
+    const raw = loadPersistedSettings().uiTextScale ?? DEFAULT_TEXT_SCALE;
+    return Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, raw));
+  })(),
+  setUiTextScale: (scale) => {
+    const clamped = Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, scale));
+    set({ uiTextScale: clamped });
+    persistSettings({ uiTextScale: clamped });
+  },
   regionStyle: 'fill' as const,
   setRegionStyle: (s) => set({ regionStyle: s }),
 
@@ -460,7 +549,15 @@ export const useOsStore = create<OsStore>((set, get) => ({
   editionDocKey: null,
   editionMode: 'web' as const,
   editionFormat: 'yaml' as const,
-  setEditionEntity: (id) => set({ editionEntityId: id, editionDocKey: 'entity' }),
+  setEditionEntity: (id) => {
+    if (!id) { set({ editionEntityId: null, editionDocKey: null }); return; }
+    // Default to the first attachment if any exist; otherwise fall back to
+    // the synthetic 'entity' document. Keeps blob-bearing entities opening
+    // straight to their content rather than the YAML wrapper.
+    const own = get().blobTraits.filter(t => t.owner === id);
+    const docKey = own.length > 0 ? own[0].id : 'entity';
+    set({ editionEntityId: id, editionDocKey: docKey });
+  },
   setEditionDoc: (key) => set({ editionDocKey: key ?? null }),
   setEditionMode: (mode) => set({ editionMode: mode }),
   setEditionFormat: (fmt) => set({ editionFormat: fmt }),
@@ -598,7 +695,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
           category: 'digital',
           stage: 'draft',
           progressMessage: 'Draft entity',
-          expanded: true,
+          expanded: false,
           spatialTrait: null,
           temporalTrait: null,
           blobAttachment: null,
@@ -625,7 +722,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         fileName,
         stage: 'draft' as const,
         progressMessage: 'Import draft',
-        expanded: true,
+        expanded: false,
         spatialTrait: null,
         temporalTrait: null,
         blobAttachment: null,
@@ -654,7 +751,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
         bytes: file.bytes,
         stage: 'draft' as const,
         progressMessage: 'Import draft',
-        expanded: true,
+        expanded: false,
         spatialTrait: null,
         temporalTrait: null,
         blobAttachment: null,
@@ -678,7 +775,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       fileName: source.fileName,
       stage: 'draft' as const,
       progressMessage: 'Import draft',
-      expanded: true,
+      expanded: false,
       spatialTrait: null,
       temporalTrait: null,
       blobAttachment: null,
@@ -700,6 +797,12 @@ export const useOsStore = create<OsStore>((set, get) => ({
   toggleInputDraftExpanded: (jobId) => {
     set(state => ({
       inputDrafts: state.inputDrafts.map(d => d.jobId === jobId ? { ...d, expanded: !d.expanded } : d),
+    }));
+  },
+
+  setAllInputDraftsExpanded: (expanded) => {
+    set(state => ({
+      inputDrafts: state.inputDrafts.map(d => ({ ...d, expanded })),
     }));
   },
 

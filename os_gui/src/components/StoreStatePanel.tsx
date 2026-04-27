@@ -2,7 +2,7 @@ import { Database, HardDrive, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useEffect, type CSSProperties } from 'react';
 import { useOsStore } from '../store';
 
-function formatBytes(bytes?: number | null): string {
+export function formatBytes(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let value = bytes;
@@ -17,10 +17,7 @@ function formatBytes(bytes?: number | null): string {
 export function StoreStatePanel({ embedded = false }: { embedded?: boolean }) {
   const storageHealth = useOsStore(s => s.storageHealth);
   const storageHealthLoading = useOsStore(s => s.storageHealthLoading);
-  const gcRunning = useOsStore(s => s.gcRunning);
-  const lastGcResult = useOsStore(s => s.lastGcResult);
   const fetchStorageHealth = useOsStore(s => s.fetchStorageHealth);
-  const runInputGc = useOsStore(s => s.runInputGc);
 
   useEffect(() => {
     fetchStorageHealth();
@@ -56,16 +53,6 @@ export function StoreStatePanel({ embedded = false }: { embedded?: boolean }) {
     fontSize: 12,
     color: 'var(--text-primary)',
     wordBreak: 'break-word',
-  };
-  const buttonBase: CSSProperties = {
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    color: 'var(--text-primary)',
-    padding: '3px 8px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 11,
-    height: 24,
   };
 
   return (
@@ -108,27 +95,6 @@ export function StoreStatePanel({ embedded = false }: { embedded?: boolean }) {
         </div>
       </div>
 
-      <div style={{ ...section, borderBottom: 'none' }}>
-        <span style={label}>Maintenance</span>
-        <div style={{ fontSize: 12, color: 'var(--text-hint)', lineHeight: 1.5, marginBottom: 8 }}>
-          {lastGcResult
-            ? `Last GC swept ${lastGcResult.swept_entities} entities, removed ${lastGcResult.removed_blobs} blobs, and reclaimed ${formatBytes(lastGcResult.reclaimed_bytes)}.`
-            : 'Manual GC sweeps expired soft-deleted entities and unreferenced blobs.'}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <button
-            onClick={() => runInputGc()}
-            disabled={gcRunning}
-            style={{
-              ...buttonBase,
-              opacity: gcRunning ? 0.7 : 1,
-              cursor: gcRunning ? 'wait' : 'pointer',
-            }}
-          >
-            {gcRunning ? 'Running GC…' : 'Run GC'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
