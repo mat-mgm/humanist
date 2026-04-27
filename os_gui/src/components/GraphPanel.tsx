@@ -9,8 +9,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 import { useOsStore, resolvedLabel } from '../store';
 import { logFrontend } from '../lib/log';
 import { RelateDialog } from './RelateDialog';
-import { KEYBINDS } from '../App';
 import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
+import {
+  KEYBINDS,
+  KIND_COLORS,
+  REGION_STYLE,
+  GRAPH_PRESETS,
+  GRAPH_PERF,
+  type GraphLayoutMode,
+} from '../config';
 
 interface GNode {
   id: string;
@@ -28,13 +35,6 @@ interface GNode {
   __imgH?: number;
   metadata?: any;
 }
-
-const KIND_COLORS: Record<string, string> = {
-  physical: '#6de096',
-  digital:  '#7eb0ff',
-  abstract: '#f5d060',
-  persona:  '#d680ff',
-};
 
 const selectEntities = (s: any) => s.entities;
 const selectEdges = (s: any) => s.edges;
@@ -67,23 +67,11 @@ const selectRelationshipTypes = (s: any) => s.relationshipTypes;
 const selectGraphLoading = (s: any) => s.graphLoading;
 const selectBackgroundStyle = (s: any) => s.backgroundStyle;
 const selectRegionStyle = (s: any) => s.regionStyle;
-
-/**
- * Visual configuration for Tag Regions
- */
-const REGION_STYLE = {
-  dilationRadius: 15,    // Space around node center included in region hull
-  borderWidth: 1.0,      // Boundary stroke thickness
-  borderAlpha: 0.85,      // Boundary stroke opacity
-  hatchSpacing: 5,      // Distance between diagonal lines (pixels)
-  hatchAlpha: 0.5,      // Opacity of the diagonal hatch lines (controls "faintness")
-  hatchLineWidth: 0.5,   // Integer for maximum sharpness
-  roundness: 0.7,        // Corner roundness factor (0.0 to 1.0)
-  labelVOffset: 12,      // Vertical offset for the tag label above the hull
-  labelAlpha: 0.85,      // Opacity of the tag label
-  labelFont: 'bold 6px "JetBrains Mono", sans-serif',
-};
-
+const selectGraphLayoutMode = (s: any) => s.graphLayoutMode;
+const selectGraphSimulationPaused = (s: any) => s.graphSimulationPaused;
+const selectGraphShowNodeLabels = (s: any) => s.graphShowNodeLabels;
+const selectGraphShowEdgeLabels = (s: any) => s.graphShowEdgeLabels;
+const selectGraphHiddenLabelCategories = (s: any) => s.graphHiddenLabelCategories;
 
 export const GraphPanel = memo(function GraphPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -121,6 +109,11 @@ export const GraphPanel = memo(function GraphPanel() {
   const graphLoading       = useOsStore(selectGraphLoading);
   const backgroundStyle    = useOsStore(selectBackgroundStyle);
   const regionStyle        = useOsStore(selectRegionStyle);
+  const graphLayoutMode    = useOsStore(selectGraphLayoutMode);
+  const simulationPaused   = useOsStore(selectGraphSimulationPaused);
+  const showNodeLabels     = useOsStore(selectGraphShowNodeLabels);
+  const showEdgeLabels     = useOsStore(selectGraphShowEdgeLabels);
+  const hiddenLabelCategories = useOsStore(selectGraphHiddenLabelCategories);
   const clearSelection     = useOsStore((s: any) => s.clearSelection);
 
   // Toolbar state — now lives in the store so GraphSidePanel can share it
@@ -133,13 +126,8 @@ export const GraphPanel = memo(function GraphPanel() {
 
   // searchQuery mirrors exploreQuery for canvas highlight
   const [searchQuery, setSearchQuery] = useState('');
-  const TOGGLED_NODES_KEY = 'humanist:toggled-image-nodes';
-  const [toggledImageNodes, setToggledImageNodes] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(TOGGLED_NODES_KEY);
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
-    } catch { return new Set<string>(); }
-  });
+  const toggledImageNodes = useOsStore((s: any) => s.toggledImageNodes);
+  const toggleImageNode = useOsStore((s: any) => s.toggleImageNode);
   // Keyboard focus cursor — moves with arrow keys, independent of selection
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const focusedNodeIdRef = useRef<string | null>(null);
@@ -161,7 +149,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const [showRelate, setShowRelate] = useState(false);
   const [quickTagNode, setQuickTagNode] = useState<{ id: string; label: string } | null>(null);
   const [quickTagInput, setQuickTagInput] = useState('');
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const setShowDeleteConfirm = useOsStore((s: any) => s.setShowDeleteConfirm);
 
   // Marquee selection state
   const selectionBoxRef = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
@@ -187,6 +175,48 @@ export const GraphPanel = memo(function GraphPanel() {
   const invisibleLabelsRef = useRef<Set<string>>(new Set());
   // label → RelationshipType for O(1) lookup during rendering
   const relTypeMapRef = useRef<Map<string, any>>(new Map());
+  // Live label-visibility refs (read by canvas object callbacks each frame)
+  const showNodeLabelsRef = useRef<boolean>(showNodeLabels);
+  const showEdgeLabelsRef = useRef<boolean>(showEdgeLabels);
+  const hiddenLabelCategoriesRef = useRef<Set<string>>(new Set(hiddenLabelCategories));
+  // Captures the rect-collide resolver so the render-post hook (set up at
+  // graph bootstrap) can re-run it each frame without rebuilding the closure.
+  const resolveRectCollisionsRef = useRef<(() => void) | null>(null);
+  // Live-tunable gravity strength. The d3Force callback (registered once at
+  // bootstrap) reads from this ref so layout-mode changes apply without
+  // tearing down the simulation.
+  const gravityStrengthRef = useRef<number>(GRAPH_PRESETS.default.gravityStrength);
+  // Cached theme color lookups, refreshed on theme transitions. Avoids
+  // calling `getComputedStyle(document.documentElement)` on every drawn node
+  // and edge — that's the single biggest hot-path cost in dense graphs.
+  const themeColorsRef = useRef({
+    accent: '#5b8af0',
+    textPrimary: '#e4e6f0',
+    textSecondary: '#a0a0a0',
+    border: '#444',
+    bgPanel: '#1a1b26',
+    graphPath: '#f5a623',
+  });
+  useEffect(() => {
+    const refreshColors = () => {
+      const cs = getComputedStyle(document.documentElement);
+      themeColorsRef.current = {
+        accent:        cs.getPropertyValue('--accent').trim()         || '#5b8af0',
+        textPrimary:   cs.getPropertyValue('--text-primary').trim()   || '#e4e6f0',
+        textSecondary: cs.getPropertyValue('--text-secondary').trim() || '#a0a0a0',
+        border:        cs.getPropertyValue('--border').trim()         || '#444',
+        bgPanel:       cs.getPropertyValue('--bg-panel').trim()       || '#1a1b26',
+        graphPath:     cs.getPropertyValue('--graph-path').trim()     || '#f5a623',
+      };
+      if (readyRef.current && graphRef.current) {
+        graphRef.current.nodeColor(graphRef.current.nodeColor());
+      }
+    };
+    refreshColors();
+    const observer = new MutationObserver(refreshColors);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    return () => observer.disconnect();
+  }, []);
 
   // Phase 44: SQL passthrough — debounced only for SELECT queries; dropdown uses local filter
   useEffect(() => {
@@ -215,9 +245,6 @@ export const GraphPanel = memo(function GraphPanel() {
     }, 250);
   }, [exploreQuery]);
 
-  useEffect(() => {
-    try { localStorage.setItem(TOGGLED_NODES_KEY, JSON.stringify([...toggledImageNodes])); } catch {}
-  }, [toggledImageNodes]);
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
@@ -226,6 +253,44 @@ export const GraphPanel = memo(function GraphPanel() {
   useEffect(() => { focusedNodeIdRef.current = focusedNodeId; }, [focusedNodeId]);
   useEffect(() => { backgroundStyleRef.current = backgroundStyle; }, [backgroundStyle]);
   useEffect(() => { regionStyleRef.current = regionStyle; }, [regionStyle]);
+  useEffect(() => {
+    showNodeLabelsRef.current = showNodeLabels;
+    if (readyRef.current && graphRef.current) graphRef.current.nodeColor(graphRef.current.nodeColor());
+  }, [showNodeLabels]);
+  useEffect(() => {
+    showEdgeLabelsRef.current = showEdgeLabels;
+    if (readyRef.current && graphRef.current) graphRef.current.linkColor(graphRef.current.linkColor());
+  }, [showEdgeLabels]);
+  useEffect(() => {
+    hiddenLabelCategoriesRef.current = new Set(hiddenLabelCategories);
+    if (readyRef.current && graphRef.current) graphRef.current.nodeColor(graphRef.current.nodeColor());
+  }, [hiddenLabelCategories]);
+
+  // Apply layout-mode preset to the live simulation whenever it changes.
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g || !readyRef.current) return;
+    const p = GRAPH_PRESETS[graphLayoutMode as GraphLayoutMode] ?? GRAPH_PRESETS.default;
+    g.cooldownTicks(p.cooldownTicks).d3AlphaDecay(p.alphaDecay).d3VelocityDecay(p.velocityDecay);
+    const charge = g.d3Force('charge');
+    if (charge) charge.strength(p.chargeStrength).distanceMin(p.chargeDistanceMin).distanceMax(p.chargeDistanceMax);
+    const link = g.d3Force('link');
+    if (link) link.distance(p.linkDistance);
+    gravityStrengthRef.current = p.gravityStrength;
+    g.d3ReheatSimulation();
+  }, [graphLayoutMode]);
+
+  // Pause / resume the d3 simulation when the user toggles the play/pause button.
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g || !readyRef.current) return;
+    if (simulationPaused) {
+      g.pauseAnimation();
+    } else {
+      g.resumeAnimation();
+      g.d3ReheatSimulation();
+    }
+  }, [simulationPaused]);
   const overlayEdgesRef = useRef<typeof overlayEdges>([]);
   useEffect(() => { overlayEdgesRef.current = overlayEdges; }, [overlayEdges]);
   useEffect(() => {
@@ -254,6 +319,9 @@ export const GraphPanel = memo(function GraphPanel() {
     toggledImageNodesRef.current = toggledImageNodes;
     if (readyRef.current && graphRef.current) {
       graphRef.current.nodeColor(graphRef.current.nodeColor());
+      // Reheat so the rectCollide force can resolve any new overlaps the
+      // freshly opened (or freshly closed) preview rectangle introduces.
+      graphRef.current.d3ReheatSimulation();
     }
   }, [toggledImageNodes]);
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
@@ -274,12 +342,7 @@ export const GraphPanel = memo(function GraphPanel() {
     const last = lastClickRef.current;
     if (last && last.id === fullId && now - last.time < 400) {
       lastClickRef.current = null;
-      setToggledImageNodes(prev => {
-        const next = new Set(prev);
-        if (next.has(fullId)) next.delete(fullId);
-        else next.add(fullId);
-        return next;
-      });
+      toggleImageNode(fullId);
       return;
     }
     lastClickRef.current = { id: fullId, time: now };
@@ -287,7 +350,7 @@ export const GraphPanel = memo(function GraphPanel() {
     selectEntity(fullId);
     setCtxMenu(null);
     setSelectedLinkMenu(null);
-  }, [selectEntity, toggleSelection]);
+  }, [selectEntity, toggleSelection, toggleImageNode]);
 
   const onNodeRightClick = useCallback((node: any, event: MouseEvent) => {
     event.preventDefault();
@@ -340,6 +403,23 @@ export const GraphPanel = memo(function GraphPanel() {
         return highlightedEdgeKeysRef.current.has(edgeKey) ? 4 : 2;
       })
       .linkDirectionalArrowLength(0)
+      // Precise click hit-area. ForceGraph2D's default uses node.val (a
+      // squared radius), which for an open preview produces a circle far
+      // bigger than the displayed image — clicks on neighbouring nodes that
+      // happen to fall inside that circle get hijacked. Painting a rect
+      // matching __imgW × __imgH for previewed nodes (and a small disc for
+      // everything else) keeps each node's hitbox exactly its visible area.
+      .nodePointerAreaPaint((node: any, color: string, ctx: CanvasRenderingContext2D) => {
+        if (node.x == null || node.y == null) return;
+        ctx.fillStyle = color;
+        if (node.__imgW && node.__imgH) {
+          ctx.fillRect(node.x - node.__imgW / 2, node.y - node.__imgH / 2, node.__imgW, node.__imgH);
+        } else {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI, false);
+          ctx.fill();
+        }
+      })
       .onNodeClick(onNodeClick)
       .onNodeRightClick(onNodeRightClick)
       .onLinkClick((link: any, event: MouseEvent) => {
@@ -373,6 +453,13 @@ export const GraphPanel = memo(function GraphPanel() {
         ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
         const radius = 6;
         let isImageReady = false;
+        // Clear footprint each frame; image / icon branches will set it again
+        // if active. Without this, untoggling a preview leaves __imgW/__imgH
+        // populated and the rect-collide keeps reserving a preview-sized
+        // rectangle around a now-tiny node.
+        n.__imgW = undefined;
+        n.__imgH = undefined;
+        n.val = 1;
 
         const bTraits = blobTraitsRef.current;
         const fullId = `entity:${n.id}`;
@@ -436,7 +523,15 @@ export const GraphPanel = memo(function GraphPanel() {
             n.val = Math.max(1, ((Math.max(w, h) / 2) / 4) ** 2);
 
             ctx.save();
-            ctx.drawImage(n.img, n.x - w / 2, n.y - h / 2, w, h);
+            // Image LOD: at low zoom, drawing a full-resolution bitmap is wasted
+            // pixels. Draw a placeholder kind-color rect of the same footprint
+            // so layout/click surface is unchanged but the GPU/CPU cost is small.
+            if (globalScale < GRAPH_PERF.imageLodZoomThreshold) {
+              ctx.fillStyle = KIND_COLORS[n.category] ?? '#8b91a8';
+              ctx.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+            } else {
+              ctx.drawImage(n.img, n.x - w / 2, n.y - h / 2, w, h);
+            }
             ctx.restore();
 
             ctx.beginPath();
@@ -522,19 +617,22 @@ export const GraphPanel = memo(function GraphPanel() {
           ctx.globalAlpha = (!sq || isMatch) ? 1 : 0.2;
         }
 
-        if (globalScale > 0.8) {
+        if (
+          globalScale > 0.8
+          && showNodeLabelsRef.current
+          && !hiddenLabelCategoriesRef.current.has(n.category)
+        ) {
           const fontSize = 4;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          const txtCol = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#e4e6f0';
-          ctx.fillStyle = txtCol;
+          ctx.fillStyle = themeColorsRef.current.textPrimary;
           ctx.font = `${fontSize}px "JetBrains Mono", sans-serif`;
           ctx.fillText(n.label, n.x, n.y + (isImageReady ? (n.__imgH! / 2 + 5) : radius + 3.5));
         }
         ctx.globalAlpha = 1;
       })
       .linkCanvasObjectMode(() => 'after')
-      .linkCanvasObject((link: any, ctx: CanvasRenderingContext2D) => {
+      .linkCanvasObject((link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         // Suppress invisible-type edges entirely
         if (invisibleLabelsRef.current.has(link.label)) return;
 
@@ -548,6 +646,25 @@ export const GraphPanel = memo(function GraphPanel() {
         if (link.target.x == null || link.target.y == null || Number.isNaN(link.target.x) || Number.isNaN(link.target.y)) return;
         if (link.source.id === link.target.id) return;
 
+        // Off-screen culling: skip edges where both endpoints are outside the
+        // visible viewport (with a small margin so partially visible curves
+        // still render their visible portion via the routing branch).
+        {
+          const canvas = ctx.canvas;
+          const t = (canvas as any).__zoom ?? { x: 0, y: 0, k: globalScale };
+          const k = t.k || globalScale || 1;
+          const vx0 = (-t.x) / k;
+          const vy0 = (-t.y) / k;
+          const vw = canvas.width  / k;
+          const vh = canvas.height / k;
+          const margin = 80;
+          const sX = link.source.x, sY = link.source.y;
+          const tX = link.target.x, tY = link.target.y;
+          const sOut = sX < vx0 - margin || sX > vx0 + vw + margin || sY < vy0 - margin || sY > vy0 + vh + margin;
+          const tOut = tX < vx0 - margin || tX > vx0 + vw + margin || tY < vy0 - margin || tY > vy0 + vh + margin;
+          if (sOut && tOut) return;
+        }
+
         const sourceId = link.source.id;
         const targetId = link.target.id;
         const edgeKey = `${sourceId}|${targetId}`;
@@ -559,11 +676,11 @@ export const GraphPanel = memo(function GraphPanel() {
         const routing: string = rt?.routing ?? 'straight';
         const pathAlpha = (sq && !sm && !tm) ? 0.15 : 1;
 
-        const baseColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#a0a0a0';
+        const baseColor = themeColorsRef.current.textSecondary;
         const edgeColor = isSelectedLink
-          ? (getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5b8af0')
+          ? themeColorsRef.current.accent
           : isPath
-            ? (getComputedStyle(document.documentElement).getPropertyValue('--graph-path').trim() || '#f5a623')
+            ? themeColorsRef.current.graphPath
             : (rt?.color ?? baseColor);
 
         const sx = link.source.x, sy = link.source.y;
@@ -667,6 +784,7 @@ export const GraphPanel = memo(function GraphPanel() {
         ctx.globalAlpha = 1;
 
         // ── Edge label ──────────────────────────────────────────
+        if (!showEdgeLabelsRef.current) return;
         const label = link.label;
         if (!label) return;
 
@@ -696,12 +814,11 @@ export const GraphPanel = memo(function GraphPanel() {
           lby = (sy + ty2) / 2;
         }
 
-        const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#1a1b26';
-        ctx.fillStyle = bgColor;
+        ctx.fillStyle = themeColorsRef.current.bgPanel;
         ctx.fillRect(lbx - bckgDimensions[0] / 2, lby - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = rt?.color ?? (getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#8b91a8');
+        ctx.fillStyle = rt?.color ?? themeColorsRef.current.textSecondary;
         ctx.fillText(label, lbx, lby);
       })
       .onRenderFramePre((ctx: CanvasRenderingContext2D, _globalScale: number) => {
@@ -927,6 +1044,12 @@ export const GraphPanel = memo(function GraphPanel() {
         // 3. (Marquee rect is now a React div overlay — no canvas drawing needed)
       })
       .onRenderFramePost((ctx: CanvasRenderingContext2D) => {
+        // Hold the rect-collide invariant continuously: even when the d3
+        // simulation has cooled (alpha=0, no ticks), every render frame
+        // re-resolves overlapping AABBs so a preview rect can never be
+        // invaded by a stray node.
+        resolveRectCollisionsRef.current?.();
+
         // Phase 58 — overlay edges from inference dialog. Drawn after the
         // standard graph render so they sit on top of ground edges and
         // stand out via dashed strokes in the accent colour.
@@ -956,19 +1079,39 @@ export const GraphPanel = memo(function GraphPanel() {
         }
         ctx.restore();
       })
-      .cooldownTicks(300)
-      .d3AlphaDecay(0.02)
-      .d3VelocityDecay(0.3);
+      .cooldownTicks(GRAPH_PRESETS[(graphLayoutMode as GraphLayoutMode) ?? 'default'].cooldownTicks)
+      .d3AlphaDecay(GRAPH_PRESETS[(graphLayoutMode as GraphLayoutMode) ?? 'default'].alphaDecay)
+      .d3VelocityDecay(GRAPH_PRESETS[(graphLayoutMode as GraphLayoutMode) ?? 'default'].velocityDecay);
 
-    g.d3Force('charge').strength(-50).distanceMin(8).distanceMax(300);
-    g.d3Force('link').distance(40);
+    {
+      const p = GRAPH_PRESETS[(graphLayoutMode as GraphLayoutMode) ?? 'default'];
+      g.d3Force('charge').strength(p.chargeStrength).distanceMin(p.chargeDistanceMin).distanceMax(p.chargeDistanceMax);
+      g.d3Force('link').distance(p.linkDistance);
+      // Mild positional gravity toward (0, 0). With hard collide preventing
+      // overlap, this pulls disconnected sub-components close together
+      // without merging them — they pack against the central region until
+      // their bounding rectangles touch. Applied as a custom velocity-bias
+      // force (alpha-scaled, decays naturally).
+      gravityStrengthRef.current = p.gravityStrength;
+      g.d3Force('gravity', (alpha: number) => {
+        const { nodes } = g.graphData();
+        const k = gravityStrengthRef.current * alpha;
+        if (k <= 0) return;
+        for (const n of nodes as any[]) {
+          if (n.x == null || n.y == null) continue;
+          if (n.fx != null || n.fy != null) continue;
+          n.vx -= n.x * k;
+          n.vy -= n.y * k;
+        }
+      });
+    }
 
     // Flow force: soft directional bias for relationship types with a flow direction.
     // d3-force passes `alpha` (1→0) to the function each tick — velocity changes must
     // be proportional to alpha so they naturally decay to zero as the sim cools.
     g.d3Force('flow', (alpha: number) => {
       const { links } = g.graphData();
-      const bias = 0.6 * alpha;
+      const bias = (GRAPH_PRESETS[(graphLayoutMode as GraphLayoutMode) ?? 'default'].flowBias) * alpha;
       for (const link of links) {
         const rt = relTypeMapRef.current.get((link as any).label);
         if (!rt?.flow || rt.flow === 'none') continue;
@@ -983,6 +1126,74 @@ export const GraphPanel = memo(function GraphPanel() {
         }
       }
     });
+
+    // Hard collision for every pair of nodes. Position correction, ignores
+    // alpha, runs both in-tick and on every render frame so the no-overlap
+    // invariant is held continuously — even after the simulation cools, even
+    // for pinned/dragged nodes. Two shapes:
+    //   • Pair of normal nodes: circular collide at NORMAL_NODE_RADIUS so
+    //     separation aligns with the line between centres (cooperates with
+    //     the link force instead of fighting it on a single axis).
+    //   • Either side has an open preview: AABB rect exclusion using the
+    //     image footprint so the preview rectangle stays fully clear.
+    const COLLIDE_PADDING = 2;
+    const NORMAL_NODE_RADIUS = 8;
+    const resolveAllCollisions = () => {
+      const { nodes } = g.graphData();
+      for (let i = 0; i < nodes.length; i++) {
+        const a: any = nodes[i];
+        if (a.x == null || a.y == null) continue;
+        const aPreview = !!(a.__imgW && a.__imgH);
+        const aFixed = a.fx != null || a.fy != null;
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b: any = nodes[j];
+          if (b.x == null || b.y == null) continue;
+          const bPreview = !!(b.__imgW && b.__imgH);
+          const bFixed = b.fx != null || b.fy != null;
+          const aShare = bFixed && !aFixed ? 1 : aFixed && !bFixed ? 0 : 0.5;
+          const bShare = 1 - aShare;
+          if (aPreview || bPreview) {
+            // Rect AABB resolution
+            const ahw = (a.__imgW ? a.__imgW / 2 : NORMAL_NODE_RADIUS) + COLLIDE_PADDING / 2;
+            const ahh = (a.__imgH ? a.__imgH / 2 : NORMAL_NODE_RADIUS) + COLLIDE_PADDING / 2;
+            const bhw = (b.__imgW ? b.__imgW / 2 : NORMAL_NODE_RADIUS) + COLLIDE_PADDING / 2;
+            const bhh = (b.__imgH ? b.__imgH / 2 : NORMAL_NODE_RADIUS) + COLLIDE_PADDING / 2;
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const overlapX = (ahw + bhw) - Math.abs(dx);
+            if (overlapX <= 0) continue;
+            const overlapY = (ahh + bhh) - Math.abs(dy);
+            if (overlapY <= 0) continue;
+            if (overlapX < overlapY) {
+              const dir = dx >= 0 ? 1 : -1;
+              a.x -= dir * overlapX * aShare;
+              b.x += dir * overlapX * bShare;
+            } else {
+              const dir = dy >= 0 ? 1 : -1;
+              a.y -= dir * overlapY * aShare;
+              b.y += dir * overlapY * bShare;
+            }
+          } else {
+            // Circular collide along center line, plays nice with link force
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const minDist = NORMAL_NODE_RADIUS * 2 + COLLIDE_PADDING;
+            const dist2 = dx * dx + dy * dy;
+            if (dist2 >= minDist * minDist || dist2 === 0) continue;
+            const dist = Math.sqrt(dist2);
+            const overlap = minDist - dist;
+            const ux = dx / dist, uy = dy / dist;
+            a.x -= ux * overlap * aShare;
+            a.y -= uy * overlap * aShare;
+            b.x += ux * overlap * bShare;
+            b.y += uy * overlap * bShare;
+          }
+        }
+      }
+    };
+
+    g.d3Force('nodeCollide', () => resolveAllCollisions());
+    // Render-post hook re-runs the resolver each frame so the invariant
+    // holds even after the d3 simulation has cooled.
+    resolveRectCollisionsRef.current = resolveAllCollisions;
 
     g.onNodeDragEnd((node: any) => {
       if (node.id) updateNodePosition(node.id, node.x, node.y);
@@ -1423,8 +1634,19 @@ export const GraphPanel = memo(function GraphPanel() {
               { label: 'Relate…', action: () => { setShowRelate(true); setCtxMenu(null); } },
               { label: 'Tag…', action: () => { setQuickTagNode({ id: ctxMenu.nodeId, label: ctxMenu.nodeLabel }); setCtxMenu(null); } },
               { label: 'Set Icon…', action: async () => {
-                const iconPath = await invoke<string | null>('pick_icon_file');
-                if (iconPath) {
+                const picked = await invoke<string | null>('pick_icon_file');
+                if (picked) {
+                  // Import to CAS so the resolved path lands inside the asset
+                  // protocol scope; otherwise convertFileSrc on a random
+                  // user path returns a URL the WebView refuses to load.
+                  let iconPath: string;
+                  try {
+                    iconPath = await invoke<string>('import_to_store', { filePath: picked });
+                  } catch (e) {
+                    console.error('Icon import failed', e);
+                    setCtxMenu(null);
+                    return;
+                  }
                   const ent = entities.find((e: any) => e.id === ctxMenu.nodeId);
                   if (ent) {
                     await invoke('update_metadata', {
@@ -1535,34 +1757,10 @@ export const GraphPanel = memo(function GraphPanel() {
         </div>
       )}
 
-      {showDeleteConfirm && (
-        <div
-          style={{
-            position: 'absolute', inset: 0, zIndex: 1000,
-            background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}
-        >
-          <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 9, padding: '20px 24px', minWidth: 250, boxShadow: '0 6px 32px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-primary)', textAlign: 'center' }}>
-              Delete {selectedIds.length > 0 ? selectedIds.length : 1} selected entit{(selectedIds.length > 0 ? selectedIds.length : 1) > 1 ? 'ies' : 'y'}?
-            </p>
-            <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: '#ff6b6b', fontWeight: 600 }}>Sure?</span>
-              <button 
-                onClick={() => { 
-                  const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedId ? [selectedId] : []);
-                  deleteEntities(idsToDelete); 
-                  setShowDeleteConfirm(false); 
-                }} 
-                style={{ background: '#ff6b6b', border: 'none', borderRadius: 5, padding: '6px 14px', cursor: 'pointer', color: '#fff', fontSize: 13, fontWeight: 700 }}
-              >Yes</button>
-              <button onClick={() => setShowDeleteConfirm(false)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 13, fontWeight: 600 }}>No</button>
-            </span>
-          </div>
-        </div>
-      )}
+      {/* Delete confirmation moved inline into the Graph side panel's
+          selection actions block. The Delete key still toggles
+          showDeleteConfirm via the store; the side panel renders the
+          inline Yes/No row when it's true. */}
 
       {showRelate && ctxMenu && (
         <RelateDialog sourceEntityId={ctxMenu.nodeId} sourceLabel={ctxMenu.nodeLabel} onClose={() => setShowRelate(false)} />

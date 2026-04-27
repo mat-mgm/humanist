@@ -1,17 +1,11 @@
 import { memo, useMemo, useState, useCallback } from 'react';
-import { X, Grid, Circle, ArrowRight, ArrowLeft, ArrowLeftRight } from 'lucide-react';
+import { X, Grid, Circle, ArrowRight, ArrowLeft, ArrowLeftRight, Play, Pause } from 'lucide-react';
 import { useOsStore, resolvedLabel } from '../store';
 import { SearchableDropdown } from './SearchableDropdown';
 import { findShortestPath, pathEdgeKeys } from '../utils/graphUtils';
+import { KIND_COLORS, type EntityCategory, type GraphLayoutMode } from '../config';
 
-const KIND_COLORS: Record<string, string> = {
-  physical: '#6de096',
-  digital:  '#7eb0ff',
-  abstract: '#f5d060',
-  persona:  '#d680ff',
-};
-
-const ENTITY_KINDS = ['physical', 'digital', 'abstract', 'persona'];
+const ENTITY_KINDS: EntityCategory[] = ['physical', 'digital', 'abstract', 'persona'];
 
 export const GraphSidePanel = memo(function GraphSidePanel() {
   const entities        = useOsStore(s => s.entities);
@@ -32,6 +26,24 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
   const selectedIds     = useOsStore(s => s.selectedIds);
   const backgroundStyle = useOsStore(s => s.backgroundStyle);
   const regionStyle     = useOsStore(s => s.regionStyle);
+
+  const toggledImageNodes        = useOsStore(s => s.toggledImageNodes);
+  const clearToggledImageNodes   = useOsStore(s => s.clearToggledImageNodes);
+  const showDeleteConfirm        = useOsStore(s => s.showDeleteConfirm);
+  const setShowDeleteConfirm     = useOsStore(s => s.setShowDeleteConfirm);
+  const selectedEntityId         = useOsStore(s => s.selectedEntityId);
+  const deleteEntities           = useOsStore(s => s.deleteEntities);
+
+  const layoutMode               = useOsStore(s => s.graphLayoutMode);
+  const setLayoutMode            = useOsStore(s => s.setGraphLayoutMode);
+  const simulationPaused         = useOsStore(s => s.graphSimulationPaused);
+  const setSimulationPaused      = useOsStore(s => s.setGraphSimulationPaused);
+  const showNodeLabels           = useOsStore(s => s.graphShowNodeLabels);
+  const setShowNodeLabels        = useOsStore(s => s.setGraphShowNodeLabels);
+  const showEdgeLabels           = useOsStore(s => s.graphShowEdgeLabels);
+  const setShowEdgeLabels        = useOsStore(s => s.setGraphShowEdgeLabels);
+  const hiddenLabelCategories    = useOsStore(s => s.graphHiddenLabelCategories);
+  const toggleHiddenLabelCategory = useOsStore(s => s.toggleGraphHiddenLabelCategory);
 
   const exploreQuery    = useOsStore(s => s.graphExploreQuery);
   const exploreStatus   = useOsStore(s => s.graphExploreStatus);
@@ -95,7 +107,7 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
     if (isTagQuery) return []; // handled by tagDropdown
     return allEntities.filter((e: any) => {
       if (q.length === 0) return true;
-      if (ENTITY_KINDS.includes(q)) return e.category === q;
+      if ((ENTITY_KINDS as readonly string[]).includes(q)) return e.category === q;
       if ((e.category as string).startsWith(q)) return true;
       const label = resolvedLabel(e, allLabelTraits, activeLocale).toLowerCase();
       if (label.includes(q)) return true;
@@ -496,10 +508,97 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
             )}
           </div>
 
+          {/* Collapse all node previews */}
+          <button
+            onClick={() => clearToggledImageNodes()}
+            disabled={toggledImageNodes.size === 0}
+            title="Collapse every toggled image / PDF preview on graph nodes"
+            style={{
+              ...btnBase,
+              alignSelf: 'flex-start',
+              opacity: toggledImageNodes.size === 0 ? 0.5 : 1,
+              cursor: toggledImageNodes.size === 0 ? 'default' : 'pointer',
+            }}
+          >
+            Collapse previews{toggledImageNodes.size > 0 ? ` (${toggledImageNodes.size})` : ''}
+          </button>
+
           {/* Reset view */}
           <button onClick={() => resetViewFn?.()} style={{ ...btnBase, alignSelf: 'flex-start' }} title="Reset zoom and fit graph">
             Reset View
           </button>
+        </div>
+      </div>
+
+      {/* ── Simulation ────────────────────────────────────────── */}
+      <div style={section}>
+        <span style={label}>Simulation</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setSimulationPaused(!simulationPaused)}
+            title={simulationPaused ? 'Resume layout simulation' : 'Pause layout simulation'}
+            style={{
+              ...btnBase,
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: simulationPaused ? 'var(--accent)' : 'var(--bg-secondary)',
+              border: `1px solid ${simulationPaused ? 'var(--accent)' : 'var(--border)'}`,
+              color: simulationPaused ? '#fff' : 'var(--text-primary)',
+            }}
+          >
+            {simulationPaused ? <Play size={11} /> : <Pause size={11} />}
+            {simulationPaused ? 'Resume' : 'Pause'}
+          </button>
+          <select
+            value={layoutMode}
+            onChange={e => setLayoutMode(e.target.value as GraphLayoutMode)}
+            title="Force-graph layout preset"
+            style={{
+              flex: 1, height: 24, fontSize: 11,
+              background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              color: 'var(--text-primary)', borderRadius: 4, padding: '0 6px',
+              outline: 'none', cursor: 'pointer',
+            }}
+          >
+            <option value="default">Default</option>
+            <option value="clustered">Clustered (dense subgraphs)</option>
+            <option value="hairball">Hairball (single hub)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ── Labels ────────────────────────────────────────────── */}
+      <div style={section}>
+        <span style={label}>Labels</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showNodeLabels} onChange={e => setShowNodeLabels(e.target.checked)} />
+            Node labels
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showEdgeLabels} onChange={e => setShowEdgeLabels(e.target.checked)} />
+            Edge labels
+          </label>
+          {showNodeLabels && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>By category</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {ENTITY_KINDS.map(kind => {
+                  const hidden = hiddenLabelCategories.includes(kind);
+                  return (
+                    <button key={kind} onClick={() => toggleHiddenLabelCategory(kind)} title={hidden ? `Show ${kind} labels` : `Hide ${kind} labels`} style={{
+                      background: hidden ? 'transparent' : KIND_COLORS[kind],
+                      border: `1px solid ${hidden ? 'var(--border)' : KIND_COLORS[kind]}`,
+                      color: hidden ? 'var(--text-hint)' : '#000',
+                      fontSize: 10, padding: '2px 8px', borderRadius: 10, cursor: 'pointer',
+                      textDecoration: hidden ? 'line-through' : 'none',
+                    }}>
+                      {kind}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -536,6 +635,39 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
           {pathError && <span style={{ fontSize: 11, color: 'var(--error)' }}>{pathError}</span>}
         </div>
       </div>
+
+      {/* ── Inline delete confirm (shows for single or multi selection) ── */}
+      {showDeleteConfirm && (
+        <div style={{ ...section, borderTop: '1px solid #ff6b6b' }}>
+          <span style={{ ...label, color: '#ff6b6b' }}>Delete</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+              {(() => {
+                const n = selectedIds.length > 0 ? selectedIds.length : (selectedEntityId ? 1 : 0);
+                return `Delete ${n} selected entit${n === 1 ? 'y' : 'ies'}?`;
+              })()}
+            </span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => {
+                  const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+                  if (ids.length > 0) deleteEntities(ids);
+                  setShowDeleteConfirm(false);
+                }}
+                style={{ ...btnBase, flex: 1, background: '#ff6b6b', border: 'none', color: '#fff', fontWeight: 700 }}
+              >
+                Yes, delete
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                style={{ ...btnBase, flex: 1 }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Selection actions ─────────────────────────────────── */}
       {selectedIds.length > 0 && (
@@ -702,6 +834,13 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
                 </div>
               </div>
             )}
+            {/* Delete trigger — opens the inline confirm above this section */}
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              style={{ ...btnBase, width: '100%', textAlign: 'center', color: '#ff6b6b', borderColor: 'rgba(255,107,107,0.4)' }}
+            >
+              Delete selected
+            </button>
           </div>
         </div>
       )}
