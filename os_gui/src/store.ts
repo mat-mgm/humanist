@@ -393,6 +393,10 @@ interface OsStore {
   setGraphShowNodeLabels: (show: boolean) => void;
   graphShowEdgeLabels: boolean;
   setGraphShowEdgeLabels: (show: boolean) => void;
+  graphHiddenRelationshipLabels: string[];
+  setRelationshipLabelVisible: (label: string, visible: boolean) => void;
+  renameRelationshipLabelVisibility: (fromLabel: string, toLabel: string) => void;
+  clearRelationshipLabelVisibility: (label: string) => void;
   graphHiddenLabelCategories: import('./config').EntityCategory[];
   toggleGraphHiddenLabelCategory: (c: import('./config').EntityCategory) => void;
 
@@ -509,6 +513,37 @@ export const useOsStore = create<OsStore>((set, get) => ({
   setGraphShowNodeLabels: (show) => { set({ graphShowNodeLabels: show }); persistSettings({ graphShowNodeLabels: show }); },
   graphShowEdgeLabels: loadPersistedSettings().graphShowEdgeLabels ?? true,
   setGraphShowEdgeLabels: (show) => { set({ graphShowEdgeLabels: show }); persistSettings({ graphShowEdgeLabels: show }); },
+  graphHiddenRelationshipLabels: loadPersistedSettings().graphHiddenRelationshipLabels ?? [],
+  setRelationshipLabelVisible: (label, visible) => {
+    const key = label.trim();
+    if (!key) return;
+    const current = get().graphHiddenRelationshipLabels;
+    const next = visible
+      ? current.filter(x => x !== key)
+      : current.includes(key) ? current : [...current, key];
+    set({ graphHiddenRelationshipLabels: next });
+    persistSettings({ graphHiddenRelationshipLabels: next });
+  },
+  renameRelationshipLabelVisibility: (fromLabel, toLabel) => {
+    const from = fromLabel.trim();
+    const to = toLabel.trim();
+    if (!from || !to || from === to) return;
+    const current = get().graphHiddenRelationshipLabels;
+    if (!current.includes(from)) return;
+    const next = current.filter(x => x !== from);
+    if (!next.includes(to)) next.push(to);
+    set({ graphHiddenRelationshipLabels: next });
+    persistSettings({ graphHiddenRelationshipLabels: next });
+  },
+  clearRelationshipLabelVisibility: (label) => {
+    const key = label.trim();
+    if (!key) return;
+    const current = get().graphHiddenRelationshipLabels;
+    if (!current.includes(key)) return;
+    const next = current.filter(x => x !== key);
+    set({ graphHiddenRelationshipLabels: next });
+    persistSettings({ graphHiddenRelationshipLabels: next });
+  },
   graphHiddenLabelCategories: (loadPersistedSettings().graphHiddenLabelCategories ?? []),
   toggleGraphHiddenLabelCategory: (c) => {
     const current = get().graphHiddenLabelCategories;
@@ -1405,6 +1440,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       color: rel.color ?? null,
     });
     await get().fetchRelationshipTypes();
+    await get().fetchEdges();
   },
 
   deleteRelationshipType: async (label) => {

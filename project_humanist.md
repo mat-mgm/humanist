@@ -1556,24 +1556,28 @@ Two cross-cutting UI improvements. First, native `<select>` popups on Linux WebK
 - [✓] Zoom stepper changes text + padding + borders proportionally; persists across reload.
 - [✓] `npm run build` passes with zero TypeScript errors.
 
-### Phase 65: Per-RelationshipType Label Visibility (deferred from Phase 61)
+### Phase 65: Per-RelationshipType Label Visibility
 **Description**
-Add a `show_label: Option<bool>` field to `RelationshipType` in the core schema so the user can hide labels for selected relationship types (e.g. structural `tagged_as` edges) without hiding the edges themselves. Bumps the canonical Prolog `relationship_type` arity from 8 to 9. The Relationships panel exposes a per-row checkbox; the Graph renderer reads the flag at edge-label paint time. Existing snapshots without the field default to `true`.
+Add a frontend-only, per-relationship-label visibility preference so the user can hide labels for selected relationship types (e.g. structural `tagged_as` edges) without hiding the edges themselves. Persist the preference in `humanist:settings`, expose it as an icon toggle in the Relationships panel, and apply it only at graph edge-label paint time.
 
 **Tasks**
-- [ ] **Model**: `pub show_label: Option<bool>` on `RelationshipType` with `#[serde(default = "default_show_label")] -> true`.
-- [ ] **DB schema migration**: `DEFINE FIELD IF NOT EXISTS show_label ON relationship_type TYPE option<bool> DEFAULT true;` in `core_engine/src/db.rs`.
-- [ ] **Prolog schema**: `relationship_type/8` → `/9`; `to_facts` / `from_facts` updated; `bridging_rules` unchanged; round-trip tests amended.
-- [ ] **IPC**: `update_relationship_type` accepts the new field; existing callers default to `true`.
-- [ ] **Relationships panel UI**: a small "Show label" checkbox per row.
-- [ ] **GraphPanel**: read `rt?.show_label !== false` before drawing the edge label; arrowhead and stroke unaffected.
-- [ ] **Snapshot interop**: `prolog_engine::io` round-trips the new arity; existing `.pl` files without the field parse as `true`.
+- [✓] **Frontend persistence**: store hidden relationship labels in `humanist:settings` as a graph UI preference keyed by relationship label.
+- [✓] **Relationships panel UI**: expose a compact icon toggle per row to hide/show labels without editing backend schema.
+- [✓] **GraphPanel**: consult the frontend hidden-label set before drawing each edge label; arrowhead and stroke remain unaffected.
+- [✓] **Rename / delete coherence**: migrate the local preference when a relationship type is renamed and clear it when the type is deleted.
+- [✓] **Rename propagation**: when a relationship type label is renamed, update matching `edge.label` values so the graph and panel stay aligned.
 
 **Checks**
-- [ ] `cargo test -p prolog_engine` passes including a new round-trip test that preserves `show_label`.
-- [ ] Toggling a relationship type's `show_label` off hides every label of that type without removing the edge.
-- [ ] Importing a Phase-57-era snapshot still works; all relationship types come back with `show_label = true`.
+- [✓] `nix develop --command cargo check` passes.
+- [✓] `nix develop --command npm run build` passes.
+- [✓] Toggling a relationship type label off hides every label of that type without removing the edge, and the preference persists across reload.
+- [✓] Renaming a relationship type updates existing graph edge labels and preserves the local label-visibility preference.
+
+**Design decisions**
+- Decision: Keep relationship label visibility frontend-only rather than storing it in `RelationshipType`.
+  Rationale: Label visibility is a view concern, not domain state; keeping it out of the core schema avoids over-modeling and preserves a simpler backend/Prolog surface.
+- Decision: Key the preference by relationship label and persist it in `humanist:settings`.
+  Rationale: The graph renderer already reasons in terms of edge labels, and the preference belongs with other graph presentation settings.
 
 **Notes / Risks / Resources**
-- This is the only remaining "Batch C" item; multi-`BlobTrait` per entity (the other deferred item) shipped in Phase 62.
-- Backwards compatibility for existing snapshots is straightforward: `from_facts` treats a missing 9th argument as `none` and `default_show_label()` resolves it to `true`.
+- This phase intentionally does not alter snapshot, Prolog, or database schema shape.

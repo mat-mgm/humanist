@@ -210,6 +210,7 @@ export interface PersistedSettings {
   graphLayoutMode?: GraphLayoutMode;
   graphShowNodeLabels?: boolean;
   graphShowEdgeLabels?: boolean;
+  graphHiddenRelationshipLabels?: string[];
   graphHiddenLabelCategories?: EntityCategory[];
   graphSimulationPaused?: boolean;
   uiTextScale?: number;

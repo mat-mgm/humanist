@@ -789,6 +789,19 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn save_relationship_type(&self, rel_type: RelationshipType) -> Result<(), String> {
         let id_clean = rel_type.id.replace("relationship_type:", "");
+        let select_qs = format!("SELECT label FROM relationship_type:{};", id_clean);
+        let mut existing_resp = self
+            .db
+            .query(select_qs)
+            .await
+            .map_err(|e| e.to_string())?;
+        let existing: Vec<serde_json::Value> = existing_resp.take(0).map_err(|e| e.to_string())?;
+        let previous_label = existing
+            .first()
+            .and_then(|row| row.get("label"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
         let qs = format!("UPSERT relationship_type:{} CONTENT $data;", id_clean);
         let mut value = serde_json::to_value(&rel_type).map_err(|e| e.to_string())?;
         if let Some(obj) = value.as_object_mut() {
@@ -801,6 +814,19 @@ impl GraphDatabase for SurrealDbAdapter {
             .map_err(|e| e.to_string())?
             .check()
             .map_err(|e| e.to_string())?;
+
+        if let Some(old_label) = previous_label {
+            if old_label != rel_type.label {
+                self.db
+                    .query("UPDATE edge SET label = $new_label WHERE label = $old_label;")
+                    .bind(("old_label", old_label))
+                    .bind(("new_label", rel_type.label))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .check()
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         Ok(())
     }
 

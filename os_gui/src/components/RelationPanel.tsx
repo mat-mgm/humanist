@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect } from 'react';
-import { Trash2, Eye, EyeOff, Pencil, Check, X } from 'lucide-react';
+import { Trash2, Eye, EyeOff, Pencil, Check, X, Type } from 'lucide-react';
 import { useOsStore } from '../store';
 import type { EdgeFlow, EdgeRouting, RelationshipType } from '../models';
 
@@ -133,6 +133,10 @@ export const RelationPanel = memo(function RelationPanel() {
   const saveRelationshipType   = useOsStore(s => s.saveRelationshipType);
   const deleteRelationshipType = useOsStore(s => s.deleteRelationshipType);
   const relationshipTypes      = useOsStore(s => s.relationshipTypes);
+  const hiddenRelationshipLabels = useOsStore(s => s.graphHiddenRelationshipLabels);
+  const setRelationshipLabelVisible = useOsStore(s => s.setRelationshipLabelVisible);
+  const renameRelationshipLabelVisibility = useOsStore(s => s.renameRelationshipLabelVisibility);
+  const clearRelationshipLabelVisibility = useOsStore(s => s.clearRelationshipLabelVisibility);
 
   useEffect(() => { fetchRelationshipTypes(); }, [fetchRelationshipTypes]);
 
@@ -170,9 +174,13 @@ export const RelationPanel = memo(function RelationPanel() {
   }, [newLabel, newTransitive, newSymmetric, newInherits, newVisible, newFlow, newRouting, newColor, saveRelationshipType]);
 
   const handleSaveEdit = useCallback(async (patch: Omit<RelationshipType, 'id'> & { id: string }) => {
+    const original = relationshipTypes.find(rt => rt.id === patch.id);
     await saveRelationshipType(patch);
+    if (original && original.label !== patch.label) {
+      renameRelationshipLabelVisibility(original.label, patch.label);
+    }
     setEditingId(null);
-  }, [saveRelationshipType]);
+  }, [relationshipTypes, saveRelationshipType, renameRelationshipLabelVisibility]);
 
   const filtered = relationshipTypes.filter(rt =>
     rt.label.toLowerCase().includes(search.toLowerCase())
@@ -231,6 +239,7 @@ export const RelationPanel = memo(function RelationPanel() {
             </thead>
             <tbody>
               {filtered.map(rt => {
+                const showsLabel = !hiddenRelationshipLabels.includes(rt.label);
                 if (editingId === rt.id) {
                   return (
                     <EditRow
@@ -261,7 +270,7 @@ export const RelationPanel = memo(function RelationPanel() {
                       ].filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td style={{ fontSize: 10, color: 'var(--text-hint)' }}>
-                      {[rt.transitive && 'trans', rt.symmetric && 'sym', rt.inherits_traits && 'inh'].filter(Boolean).join(' · ') || '—'}
+                      {[rt.transitive && 'trans', rt.symmetric && 'sym', rt.inherits_traits && 'inh', !showsLabel && 'label-off'].filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                       <button
@@ -279,7 +288,17 @@ export const RelationPanel = memo(function RelationPanel() {
                         {rt.visible !== false ? <Eye size={11} /> : <EyeOff size={11} />}
                       </button>
                       <button
-                        onClick={() => deleteRelationshipType(rt.label)}
+                        onClick={() => setRelationshipLabelVisible(rt.label, !showsLabel)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: showsLabel ? 'var(--text-hint)' : 'var(--accent)', padding: '0 3px', display: 'flex', alignItems: 'center' }}
+                        title={showsLabel ? 'Hide label' : 'Show label'}
+                      >
+                        <Type size={11} />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await deleteRelationshipType(rt.label);
+                          clearRelationshipLabelVisibility(rt.label);
+                        }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', padding: '0 3px', display: 'flex', alignItems: 'center' }}
                         title="Delete"
                       >

@@ -71,6 +71,7 @@ const selectGraphLayoutMode = (s: any) => s.graphLayoutMode;
 const selectGraphSimulationPaused = (s: any) => s.graphSimulationPaused;
 const selectGraphShowNodeLabels = (s: any) => s.graphShowNodeLabels;
 const selectGraphShowEdgeLabels = (s: any) => s.graphShowEdgeLabels;
+const selectGraphHiddenRelationshipLabels = (s: any) => s.graphHiddenRelationshipLabels;
 const selectGraphHiddenLabelCategories = (s: any) => s.graphHiddenLabelCategories;
 
 export const GraphPanel = memo(function GraphPanel() {
@@ -113,6 +114,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const simulationPaused   = useOsStore(selectGraphSimulationPaused);
   const showNodeLabels     = useOsStore(selectGraphShowNodeLabels);
   const showEdgeLabels     = useOsStore(selectGraphShowEdgeLabels);
+  const hiddenRelationshipLabels = useOsStore(selectGraphHiddenRelationshipLabels);
   const hiddenLabelCategories = useOsStore(selectGraphHiddenLabelCategories);
   const clearSelection     = useOsStore((s: any) => s.clearSelection);
 
@@ -175,6 +177,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const invisibleLabelsRef = useRef<Set<string>>(new Set());
   // label → RelationshipType for O(1) lookup during rendering
   const relTypeMapRef = useRef<Map<string, any>>(new Map());
+  const hiddenRelationshipLabelsRef = useRef<Set<string>>(new Set(hiddenRelationshipLabels));
   // Live label-visibility refs (read by canvas object callbacks each frame)
   const showNodeLabelsRef = useRef<boolean>(showNodeLabels);
   const showEdgeLabelsRef = useRef<boolean>(showEdgeLabels);
@@ -261,6 +264,10 @@ export const GraphPanel = memo(function GraphPanel() {
     showEdgeLabelsRef.current = showEdgeLabels;
     if (readyRef.current && graphRef.current) graphRef.current.linkColor(graphRef.current.linkColor());
   }, [showEdgeLabels]);
+  useEffect(() => {
+    hiddenRelationshipLabelsRef.current = new Set(hiddenRelationshipLabels);
+    if (readyRef.current && graphRef.current) graphRef.current.linkColor(graphRef.current.linkColor());
+  }, [hiddenRelationshipLabels]);
   useEffect(() => {
     hiddenLabelCategoriesRef.current = new Set(hiddenLabelCategories);
     if (readyRef.current && graphRef.current) graphRef.current.nodeColor(graphRef.current.nodeColor());
@@ -784,7 +791,7 @@ export const GraphPanel = memo(function GraphPanel() {
         ctx.globalAlpha = 1;
 
         // ── Edge label ──────────────────────────────────────────
-        if (!showEdgeLabelsRef.current) return;
+        if (!showEdgeLabelsRef.current || hiddenRelationshipLabelsRef.current.has(link.label)) return;
         const label = link.label;
         if (!label) return;
 
