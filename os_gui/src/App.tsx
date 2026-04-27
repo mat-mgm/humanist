@@ -104,31 +104,10 @@ function loadLayout(): { tiledSlots: SlotNode[]; floatingPaneIds: string[]; layo
   } catch { return null; }
 }
 
-// ── Keybinds ──────────────────────────────────────────────────────────────────
-export const KEYBINDS = {
-  layoutMaster:  (e: KeyboardEvent) => e.ctrlKey && e.key === '1',
-  layoutBstack:  (e: KeyboardEvent) => e.ctrlKey && e.key === '2',
-  layoutMonocle: (e: KeyboardEvent) => e.ctrlKey && e.key === '3',
-  layoutGrid:    (e: KeyboardEvent) => e.ctrlKey && e.key === '4',
-  focusNext:     (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'j',
-  focusPrev:     (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'k',
-  swapMaster:    (e: KeyboardEvent) => e.ctrlKey && e.key === 'Enter',
-  closePane:     (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'q',
-  toggleGraph:   (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'g',
-  toggleInspector: (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'v',
-  toggleTerminal:  (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 't',
-  toggleGlobe:   (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'm',
-  toggleTimeline: (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'l',
-  toggleCalendar: (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'y',
-  toggleSidePanel: (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'b',
-  toggleRightPanel: (e: KeyboardEvent) => e.ctrlKey && e.key === '\\',
-  cycleActivityFwd: (e: KeyboardEvent) => e.ctrlKey && !e.shiftKey && e.key === 'Tab',
-  cycleActivityBwd: (e: KeyboardEvent) => e.ctrlKey && e.shiftKey && e.key === 'Tab',
-  ingestData:    (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'i',
-  createEntity:  (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'n',
-  multiSelectModifier: (e: any) => e.shiftKey || e.ctrlKey,
-  marqueeModifier:     (e: any) => e.shiftKey,
-};
+// Keybinds and other constants live in `./config.ts`. KEYBINDS is re-exported
+// here for backward compatibility with components that still `import { KEYBINDS } from '../App'`.
+export { KEYBINDS } from './config';
+import { KEYBINDS } from './config';
 
 // ── Slot helpers (tiling mode) ────────────────────────────────────────────────
 function slotIds(s: SlotNode): string[] { return s.type === 'pane' ? [s.id] : s.ids; }
@@ -189,7 +168,6 @@ export default function App() {
   }, [activeActivity]);
 
   const [theme, setTheme]           = useState<Theme>('tokyo-night');
-  const [themeSearch, setThemeSearch] = useState('Tokyo Night');
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   // ── Side panel resize ─────────────────────────────────────────────────────
@@ -247,6 +225,15 @@ export default function App() {
   // Apply theme
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
+  // Apply global UI scale. The codebase uses many explicit pixel sizes that
+  // wouldn't react to a root font-size change, so we scale via CSS `zoom`
+  // on the document element — Chromium / WebKit both honor it and scale
+  // every pixel value (text, padding, borders) uniformly.
+  const uiTextScale = useOsStore(s => s.uiTextScale);
+  useEffect(() => {
+    (document.documentElement.style as any).zoom = String(uiTextScale);
+  }, [uiTextScale]);
+
   // Bootstrap
   useEffect(() => {
     fetchSpatialTraits();
@@ -268,9 +255,14 @@ export default function App() {
     catch { /* storage full */ }
   }, [tiledSlots, floatingPaneIds, layoutMode]);
 
-  // Right panel canvas
+  // Right panel canvas. The Edition pane is special-cased so its always-visible
+  // doc picker only appears in the right side panel, not in the main canvas
+  // or DWM tiled layouts.
   const rightPanelContent = useMemo(() => {
     if (!rightPanelId) return null;
+    if (rightPanelId === 'edition') {
+      return <ErrorBoundary label="Edition"><EditionPanel inRightPanel /></ErrorBoundary>;
+    }
     const p = ALL_PANES.find(x => x.id === rightPanelId);
     return p ? p.content : null;
   }, [rightPanelId]);
@@ -561,8 +553,8 @@ export default function App() {
             <ActivityBar />
 
             <SidePanel
-              themeSearch={themeSearch}
-              onThemeChange={setTheme} onThemeSearchChange={setThemeSearch}
+              theme={theme}
+              onThemeChange={setTheme}
               width={sidePanelWidth}
             />
             <div className="side-panel-resizer" onPointerDown={onSidePanelResizeStart} />

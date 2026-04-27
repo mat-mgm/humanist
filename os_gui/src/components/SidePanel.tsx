@@ -14,9 +14,8 @@ type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night'
   | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
 
 interface SidePanelProps {
-  themeSearch: string;
+  theme: Theme;
   onThemeChange: (t: Theme) => void;
-  onThemeSearchChange: (s: string) => void;
   width?: number;
 }
 
@@ -33,11 +32,10 @@ const PANEL_TITLES: Record<string, string> = {
   settings:  'Settings',
 };
 
-function SidePanelContent({ activity, themeSearch, onThemeChange, onThemeSearchChange }: {
+function SidePanelContent({ activity, theme, onThemeChange }: {
   activity: string;
-  themeSearch: string;
+  theme: Theme;
   onThemeChange: (t: Theme) => void;
-  onThemeSearchChange: (s: string) => void;
 }) {
   switch (activity) {
     case 'inputs':    return <InputsSidePanel />;
@@ -54,16 +52,13 @@ function SidePanelContent({ activity, themeSearch, onThemeChange, onThemeSearchC
     case 'registry':  return <ErrorBoundary label="Entities & Relations"><EntityKnowledgePanel /></ErrorBoundary>;
     case 'preview':   return <ErrorBoundary label="Preview"><AssetPreview /></ErrorBoundary>;
     case 'settings':  return (
-      <SettingsPanel
-        themeSearch={themeSearch}
-        onThemeChange={onThemeChange} onThemeSearchChange={onThemeSearchChange}
-      />
+      <SettingsPanel theme={theme} onThemeChange={onThemeChange} />
     );
     default: return null;
   }
 }
 
-export function SidePanel({ themeSearch, onThemeChange, onThemeSearchChange, width }: SidePanelProps) {
+export function SidePanel({ theme, onThemeChange, width }: SidePanelProps) {
   const activeActivity = useOsStore(s => s.activeActivity);
   const sidePanelOpen  = useOsStore(s => s.sidePanelOpen);
 
@@ -77,8 +72,8 @@ export function SidePanel({ themeSearch, onThemeChange, onThemeSearchChange, wid
       <div className="side-panel-body">
         <SidePanelContent
           activity={activeActivity}
-          themeSearch={themeSearch}
-          onThemeChange={onThemeChange} onThemeSearchChange={onThemeSearchChange}
+          theme={theme}
+          onThemeChange={onThemeChange}
         />
       </div>
     </div>

@@ -1,60 +1,16 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useOsStore } from '../store';
-import { SearchableDropdown } from './SearchableDropdown';
-
-type Theme = 'catppuccin-mocha' | 'catppuccin-latte' | 'dracula' | 'tokyo-night'
-  | 'solarized-dark' | 'solarized-light' | 'nord' | 'gruvbox-dark' | 'github-light';
-
-const THEMES: { id: Theme; label: string }[] = [
-  { id: 'catppuccin-mocha',  label: 'Catppuccin Mocha' },
-  { id: 'catppuccin-latte',  label: 'Catppuccin Latte' },
-  { id: 'dracula',           label: 'Dracula' },
-  { id: 'tokyo-night',       label: 'Tokyo Night' },
-  { id: 'solarized-dark',    label: 'Solarized Dark' },
-  { id: 'solarized-light',   label: 'Solarized Light' },
-  { id: 'nord',              label: 'Nord' },
-  { id: 'gruvbox-dark',      label: 'Gruvbox Dark' },
-  { id: 'github-light',      label: 'GitHub Light' },
-];
-
-const LOCALES = [
-  { value: 'en', label: 'en — English' },
-  { value: 'de', label: 'de — Deutsch' },
-  { value: 'fr', label: 'fr — Français' },
-  { value: 'pt', label: 'pt — Português' },
-  { value: 'es', label: 'es — Español' },
-  { value: 'ca', label: 'ca — Català' },
-  { value: 'it', label: 'it — Italiano' },
-  { value: 'nl', label: 'nl — Nederlands' },
-  { value: 'zh', label: 'zh — 中文' },
-  { value: 'ja', label: 'ja — 日本語' },
-  { value: 'ko', label: 'ko — 한국어' },
-  { value: 'ar', label: 'ar — العربية' },
-  { value: 'ru', label: 'ru — Русский' },
-];
-
-const KEYBINDS_REFERENCE = [
-  { key: 'Ctrl+G', action: 'Graph canvas' },
-  { key: 'Ctrl+M', action: 'Globe canvas' },
-  { key: 'Ctrl+L', action: 'Timeline canvas' },
-  { key: 'Ctrl+Y', action: 'Calendar canvas' },
-  { key: 'Ctrl+T', action: 'Terminal' },
-  { key: 'Ctrl+B', action: 'Toggle side panel' },
-  { key: 'Ctrl+\\', action: 'Toggle right panel' },
-  { key: 'Ctrl+Tab', action: 'Cycle activities' },
-  { key: 'Ctrl+N', action: 'New entity' },
-  { key: 'Ctrl+I', action: 'Ingest data' },
-  { key: 'Delete', action: 'Delete selected nodes' },
-];
+import { formatBytes } from './StoreStatePanel';
+import { THEMES, LOCALES, KEYBINDS_REFERENCE, TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP, type Theme } from '../config';
+import { ThemedSelect } from './ThemedSelect';
 
 interface SettingsPanelProps {
-  themeSearch: string;
+  theme: Theme;
   onThemeChange: (t: Theme) => void;
-  onThemeSearchChange: (s: string) => void;
 }
 
-export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
   const activeLocale        = useOsStore(s => s.activeLocale);
   const setActiveLocale     = useOsStore(s => s.setActiveLocale);
   const tilingModeEnabled   = useOsStore(s => s.tilingModeEnabled);
@@ -65,6 +21,11 @@ export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange 
   const fetchSpatialTraits  = useOsStore(s => s.fetchSpatialTraits);
   const fetchTemporalTraits = useOsStore(s => s.fetchTemporalTraits);
   const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
+  const uiTextScale         = useOsStore(s => s.uiTextScale);
+  const setUiTextScale      = useOsStore(s => s.setUiTextScale);
+  const gcRunning           = useOsStore(s => s.gcRunning);
+  const lastGcResult        = useOsStore(s => s.lastGcResult);
+  const runInputGc          = useOsStore(s => s.runInputGc);
 
   const [confirmDb,   setConfirmDb]   = useState(false);
   const [confirmBlob, setConfirmBlob] = useState(false);
@@ -104,32 +65,51 @@ export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange 
 
       <div style={section}>
         <span style={sectionLabel}>Theme</span>
-        <SearchableDropdown
-          value={themeSearch}
-          onChange={onThemeSearchChange}
-          onSelect={opt => { onThemeChange(opt.id as Theme); onThemeSearchChange(opt.label); }}
-          options={THEMES.map(t => ({ id: t.id, label: t.label }))}
-          placeholder="Search themes…"
-          style={{ width: '100%' }}
+        <ThemedSelect
+          value={theme}
+          onChange={v => onThemeChange(v as Theme)}
+          options={THEMES.map(t => ({ value: t.id, label: t.label }))}
+          size="sm"
         />
       </div>
 
       <div style={section}>
         <span style={sectionLabel}>Language</span>
-        <select
+        <ThemedSelect
           value={activeLocale}
-          onChange={e => setActiveLocale(e.target.value)}
-          style={{
-            width: '100%', background: 'var(--bg-secondary)',
-            border: '1px solid var(--border)', borderRadius: 4,
-            padding: '4px 8px', fontSize: 11, color: 'var(--text-primary)',
-            outline: 'none', cursor: 'pointer',
-          }}
-        >
-          {LOCALES.map(l => (
-            <option key={l.value} value={l.value}>{l.label}</option>
-          ))}
-        </select>
+          onChange={setActiveLocale}
+          options={LOCALES.map(l => ({ value: l.value, label: l.label }))}
+          size="sm"
+        />
+      </div>
+
+      <div style={section}>
+        <span style={sectionLabel}>Zoom</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            onClick={() => setUiTextScale(uiTextScale - TEXT_SCALE_STEP)}
+            disabled={uiTextScale <= TEXT_SCALE_MIN + 1e-6}
+            title="Decrease zoom"
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', width: 28, height: 24, cursor: uiTextScale <= TEXT_SCALE_MIN + 1e-6 ? 'default' : 'pointer', fontSize: 13, opacity: uiTextScale <= TEXT_SCALE_MIN + 1e-6 ? 0.5 : 1 }}
+          >−</button>
+          <span style={{ minWidth: 48, textAlign: 'center', fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+            {Math.round(uiTextScale * 100)}%
+          </span>
+          <button
+            onClick={() => setUiTextScale(uiTextScale + TEXT_SCALE_STEP)}
+            disabled={uiTextScale >= TEXT_SCALE_MAX - 1e-6}
+            title="Increase zoom"
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', width: 28, height: 24, cursor: uiTextScale >= TEXT_SCALE_MAX - 1e-6 ? 'default' : 'pointer', fontSize: 13, opacity: uiTextScale >= TEXT_SCALE_MAX - 1e-6 ? 0.5 : 1 }}
+          >+</button>
+          <button
+            onClick={() => setUiTextScale(1.0)}
+            title="Reset to 100%"
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-hint)', padding: '0 8px', height: 24, cursor: 'pointer', fontSize: 11, marginLeft: 4 }}
+          >Reset</button>
+        </div>
+        <p style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4, lineHeight: 1.4 }}>
+          Scales every UI element. Restart not required.
+        </p>
       </div>
 
       <div style={section}>
@@ -210,6 +190,32 @@ export function SettingsPanel({ themeSearch, onThemeChange, onThemeSearchChange 
           </div>
 
         </div>
+      </div>
+
+      <div style={section}>
+        <span style={sectionLabel}>Maintenance</span>
+        <p style={{ fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.5, margin: '0 0 8px' }}>
+          {lastGcResult
+            ? `Last GC swept ${lastGcResult.swept_entities} entities, removed ${lastGcResult.removed_blobs} blobs, and reclaimed ${formatBytes(lastGcResult.reclaimed_bytes)}.`
+            : 'Manual GC sweeps expired soft-deleted entities and unreferenced blobs.'}
+        </p>
+        <button
+          onClick={() => runInputGc()}
+          disabled={gcRunning}
+          style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-primary)',
+            borderRadius: 5,
+            padding: '4px 12px',
+            cursor: gcRunning ? 'wait' : 'pointer',
+            fontSize: 11,
+            fontWeight: 700,
+            opacity: gcRunning ? 0.7 : 1,
+          }}
+        >
+          {gcRunning ? 'Running GC…' : 'Run GC'}
+        </button>
       </div>
 
     </div>
