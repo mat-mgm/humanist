@@ -25,6 +25,7 @@ import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { EditionPanel } from './components/EditionPanel';
 import { RulesPanel } from './components/RulesPanel';
+import { syncBenchmark } from './benchmark/SyncBenchmark';
 
 const GlobeFallback = <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-hint)' }}>Loading globe…</div>;
 
@@ -371,6 +372,10 @@ export default function App() {
 
   // ── Keybinds ──────────────────────────────────────────────────────────────
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (KEYBINDS.runBenchmark(e)) {
+      e.preventDefault();
+      void syncBenchmark.startSuite();
+    }
     if (KEYBINDS.ingestData(e))  {
       e.preventDefault();
       setActiveActivity('inputs');

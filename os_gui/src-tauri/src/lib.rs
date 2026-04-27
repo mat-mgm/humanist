@@ -2717,6 +2717,7 @@ pub fn run() {
             pick_icon_file,
             reify_edge,
             bench::benchmark_create_entity,
+            bench::benchmark_reset_results,
             bench::benchmark_report_timing,
          ])
         .run(tauri::generate_context!())

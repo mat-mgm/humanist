@@ -1,7 +1,8 @@
 use core_engine::{
+    blob::{blob_filename_for_label, infer_mime_from_path},
     db::SurrealDbAdapter,
-    models::{Entity, EntityKind, SpatialTrait, TemporalTrait, BlobTrait},
-    ports::{GraphDatabase, BlobStorageProvider},
+    models::{Entity, EntityKind, KeyValueTrait, SpatialTrait, TemporalTrait, BlobTrait},
+    ports::{BlobStorageProvider, GraphDatabase},
     blob::LocalBlobAdapter,
     bus::EventBus,
     ports::StateObserver,
@@ -16,38 +17,57 @@ pub struct DatasetReport {
     pub total_entities: usize,
     pub total_edges: usize,
     pub total_traits: usize,
+    #[serde(default)]
     pub entity_ids: Vec<String>,
+    #[serde(default)]
     pub physical_ids: Vec<String>,
+    #[serde(default)]
     pub digital_ids: Vec<String>,
+    #[serde(default)]
     pub temporal_ids: Vec<String>,
+    #[serde(default)]
     pub abstract_ids: Vec<String>,
+    #[serde(default)]
     pub agent_ids: Vec<String>,
+    #[serde(default)]
     pub blob_ids: Vec<String>,
+    #[serde(default)]
     pub multi_trait_ids: Vec<String>,
+    #[serde(default)]
     pub edge_labels: Vec<String>,
     pub seed: u64,
 }
 
-/// Deterministic test dataset specification — matches thesis Table 4.2.
-const PHYSICAL_COUNT: usize = 200;
-const DIGITAL_COUNT: usize = 150;
-const TEMPORAL_COUNT: usize = 150;
-const ABSTRACT_COUNT: usize = 50;
-const AGENT_COUNT: usize = 30;
-const BLOB_COUNT: usize = 20;
-const TAGGED_AS_EDGES: usize = 400;
-const CUSTOM_EDGES: usize = 300;
-const MULTI_TRAIT_COUNT: usize = 80;
+/// Base dataset shape — multiplied by `scale` at generation time.
+/// scale = 1 reproduces the original 600-entity baseline.
+const BASE_PHYSICAL: usize = 350;
+const BASE_DIGITAL: usize = 170;
+const BASE_ABSTRACT: usize = 50;
+const BASE_AGENT: usize = 30;
+const BASE_TAGGED_AS_EDGES: usize = 400;
+const BASE_CUSTOM_EDGES: usize = 300;
+const BASE_MULTI_TRAIT: usize = 80;
 
 const CUSTOM_EDGE_LABELS: &[&str] = &["contains", "depends_on", "references", "authored_by", "located_at"];
 
-pub async fn generate_dataset(
+pub async fn generate_dataset_scaled(
     db: &SurrealDbAdapter,
     event_bus: &EventBus,
     blob_adapter: &LocalBlobAdapter,
     seed: u64,
+    scale: usize,
     output_dir: &PathBuf,
 ) -> Result<DatasetReport, String> {
+    let scale = scale.max(1);
+    let physical_count = BASE_PHYSICAL * scale;
+    let digital_count = BASE_DIGITAL * scale;
+    let abstract_count = BASE_ABSTRACT * scale;
+    let agent_count = BASE_AGENT * scale;
+    let tagged_as_edges = BASE_TAGGED_AS_EDGES * scale;
+    let custom_edges = BASE_CUSTOM_EDGES * scale;
+    let multi_trait_count = BASE_MULTI_TRAIT * scale;
+    let temporal_count = 0usize;
+
     let mut rng = StdRng::seed_from_u64(seed);
 
     let test_assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_assets");
@@ -58,21 +78,21 @@ pub async fn generate_dataset(
     let mut all_ids: Vec<String> = Vec::new();
     let mut physical_ids = Vec::new();
     let mut digital_ids = Vec::new();
-    let mut temporal_ids = Vec::new();
+    let temporal_ids = Vec::new();
     let mut abstract_ids = Vec::new();
     let mut agent_ids = Vec::new();
-    let mut blob_ids = Vec::new();
+    let blob_ids = Vec::new();
     let mut total_traits = 0usize;
 
-    // ── Physical entities (200) with SpatialTrait ──
-    for i in 0..PHYSICAL_COUNT {
+    // ── Physical entities with SpatialTrait ──
+    for i in 0..physical_count {
         let ulid = ulid::Ulid::from_parts(1_700_000_000_000 + i as u64, rng.gen()).to_string();
         let id = format!("entity:{}", ulid);
         let entity = Entity {
             id: id.clone(),
-            kind: EntityKind::Physical,
+            category: EntityKind::Physical,
             label: format!("phys_{:04}", i),
-            metadata: std::collections::HashMap::new(),
+            lang_canonical: "en".to_string(),
             deleted_at: None,
         };
         db.save_entity(entity).await?;
@@ -84,6 +104,8 @@ pub async fn generate_dataset(
             lng: rng.gen_range(-180.0..180.0),
             alt: rng.gen_range(0.0..5000.0),
             heading: rng.gen_range(0.0..360.0),
+            bbox: None,
+            projection: "EPSG:4326".to_string(),
         };
         db.save_spatial_trait(spatial).await?;
         total_traits += 1;
@@ -92,7 +114,7 @@ pub async fn generate_dataset(
         all_ids.push(id);
     }
 
-    // ── Digital entities (150) with BlobTrait ──
+    // ── Digital entities (170) with BlobTrait ──
     let png_files: Vec<PathBuf> = (0..10).map(|i| test_assets_dir.join(format!("test_{}.png", i))).collect();
     let pdf_files: Vec<PathBuf> = (0..5).map(|i| test_assets_dir.join(format!("test_{}.pdf", i))).collect();
     let gltf_files: Vec<PathBuf> = (0..5).map(|i| test_assets_dir.join(format!("test_{}.gltf", i))).collect();
@@ -101,34 +123,35 @@ pub async fn generate_dataset(
         .chain(gltf_files.iter())
         .collect();
 
-    for i in 0..DIGITAL_COUNT {
-        let ulid = ulid::Ulid::from_parts(1_700_000_000_000 + (PHYSICAL_COUNT + i) as u64, rng.gen()).to_string();
+    for i in 0..digital_count {
+        let ulid = ulid::Ulid::from_parts(1_700_000_000_000 + (physical_count + i) as u64, rng.gen()).to_string();
         let id = format!("entity:{}", ulid);
+        let label = format!("digital_{:04}", i);
         let entity = Entity {
             id: id.clone(),
-            kind: EntityKind::Digital,
-            label: format!("digital_{:04}", i),
-            metadata: std::collections::HashMap::new(),
+            category: EntityKind::Digital,
+            label: label.clone(),
+            lang_canonical: "en".to_string(),
             deleted_at: None,
         };
         db.save_entity(entity).await?;
 
         let test_file = all_test_files[i % all_test_files.len()];
-        let storage_id = format!("{}/file", ulid);
-        let _ = blob_adapter.upload(&test_file.to_string_lossy(), &storage_id).await;
-
-        let mime = if test_file.extension().map(|e| e == "png").unwrap_or(false) { "image/png" }
-                   else if test_file.extension().map(|e| e == "pdf").unwrap_or(false) { "application/pdf" }
-                   else { "model/gltf+json" };
+        let stored = blob_adapter
+            .store_file(&test_file.to_string_lossy(), Some(label.clone()))
+            .await?;
+        let mime = infer_mime_from_path(&test_file.to_string_lossy());
+        let extension = test_file.extension().and_then(|ext| ext.to_str());
 
         let blob_t = BlobTrait {
             id: format!("blob_trait:{}", ulid),
             owner: id.clone(),
-            storage_id,
+            filename: blob_filename_for_label(Some(&label), extension),
+            storage_id: stored.storage_id,
             bucket: "local".to_string(),
-            mime: mime.to_string(),
-            hash: format!("sha256:{:016x}", rng.gen::<u64>()),
-            size: std::fs::metadata(test_file).map(|m| m.len() as i64).unwrap_or(0),
+            mime,
+            hash: stored.hash,
+            size: stored.size,
         };
         db.save_blob_trait(blob_t).await?;
         total_traits += 1;
@@ -137,87 +160,49 @@ pub async fn generate_dataset(
         all_ids.push(id);
     }
 
-    // ── Temporal entities (150) with TemporalTrait ──
-    for i in 0..TEMPORAL_COUNT {
-        let ulid = ulid::Ulid::from_parts(1_700_000_000_000 + (PHYSICAL_COUNT + DIGITAL_COUNT + i) as u64, rng.gen()).to_string();
-        let id = format!("entity:{}", ulid);
-        let entity = Entity {
-            id: id.clone(),
-            kind: EntityKind::Temporal,
-            label: format!("event_{:04}", i),
-            metadata: std::collections::HashMap::new(),
-            deleted_at: None,
-        };
-        db.save_entity(entity).await?;
-
-        let temporal = match i % 3 {
-            0 => TemporalTrait { // Point event
-                id: format!("temporal_trait:{}", ulid),
-                owner: id.clone(),
-                event_at: Some(format!("2025-{:02}-{:02}T12:00:00Z", (i % 12) + 1, (i % 28) + 1)),
-                starts_at: None,
-                ends_at: None,
-                recurrence: None,
-            },
-            1 => TemporalTrait { // Span event
-                id: format!("temporal_trait:{}", ulid),
-                owner: id.clone(),
-                event_at: None,
-                starts_at: Some(format!("2025-{:02}-01T00:00:00Z", (i % 12) + 1)),
-                ends_at: Some(format!("2025-{:02}-28T23:59:59Z", (i % 12) + 1)),
-                recurrence: None,
-            },
-            _ => TemporalTrait { // Recurring event
-                id: format!("temporal_trait:{}", ulid),
-                owner: id.clone(),
-                event_at: Some(format!("2025-01-{:02}T09:00:00Z", (i % 28) + 1)),
-                starts_at: None,
-                ends_at: None,
-                recurrence: Some("FREQ=WEEKLY;COUNT=10".to_string()),
-            },
-        };
-        db.save_temporal_trait(temporal).await?;
-        total_traits += 1;
-
-        temporal_ids.push(id.clone());
-        all_ids.push(id);
-    }
-
-    // ── Abstract entities (50) — tag hubs, no traits ──
-    for i in 0..ABSTRACT_COUNT {
+    // ── Abstract entities — tag hubs, marked via KeyValueTrait ──
+    for i in 0..abstract_count {
         let ulid = ulid::Ulid::from_parts(
-            1_700_000_000_000 + (PHYSICAL_COUNT + DIGITAL_COUNT + TEMPORAL_COUNT + i) as u64,
+            1_700_000_000_000 + (physical_count + digital_count + temporal_count + i) as u64,
             rng.gen(),
         ).to_string();
         let id = format!("entity:{}", ulid);
         let entity = Entity {
             id: id.clone(),
-            kind: EntityKind::Abstract,
+            category: EntityKind::Abstract,
             label: format!("tag_{:04}", i),
-            metadata: {
-                let mut m = std::collections::HashMap::new();
-                m.insert("is_tag".to_string(), serde_json::Value::Bool(true));
-                m
-            },
+            lang_canonical: "en".to_string(),
             deleted_at: None,
         };
         db.save_entity(entity).await?;
+
+        let mut values = std::collections::HashMap::new();
+        values.insert("entity.is_tag".to_string(), serde_json::Value::Bool(true));
+        let kv = KeyValueTrait {
+            id: format!("key_value_trait:tag_{}", ulid),
+            owner: id.clone(),
+            namespace: "entity".to_string(),
+            values,
+        };
+        db.save_key_value_trait(kv).await?;
+        total_traits += 1;
+
         abstract_ids.push(id.clone());
         all_ids.push(id);
     }
 
-    // ── Agent entities (30) with SpatialTrait ──
-    for i in 0..AGENT_COUNT {
+    // ── Persona entities with SpatialTrait ──
+    for i in 0..agent_count {
         let ulid = ulid::Ulid::from_parts(
-            1_700_000_000_000 + (PHYSICAL_COUNT + DIGITAL_COUNT + TEMPORAL_COUNT + ABSTRACT_COUNT + i) as u64,
+            1_700_000_000_000 + (physical_count + digital_count + temporal_count + abstract_count + i) as u64,
             rng.gen(),
         ).to_string();
         let id = format!("entity:{}", ulid);
         let entity = Entity {
             id: id.clone(),
-            kind: EntityKind::Agent,
-            label: format!("agent_{:04}", i),
-            metadata: std::collections::HashMap::new(),
+            category: EntityKind::Persona,
+            label: format!("persona_{:04}", i),
+            lang_canonical: "en".to_string(),
             deleted_at: None,
         };
         db.save_entity(entity).await?;
@@ -229,6 +214,8 @@ pub async fn generate_dataset(
             lng: rng.gen_range(-180.0..180.0),
             alt: 0.0,
             heading: rng.gen_range(0.0..360.0),
+            bbox: None,
+            projection: "EPSG:4326".to_string(),
         };
         db.save_spatial_trait(spatial).await?;
         total_traits += 1;
@@ -237,44 +224,8 @@ pub async fn generate_dataset(
         all_ids.push(id);
     }
 
-    // ── Blob entities (20) with BlobTrait (glTF only) ──
-    for i in 0..BLOB_COUNT {
-        let ulid = ulid::Ulid::from_parts(
-            1_700_000_000_000 + (PHYSICAL_COUNT + DIGITAL_COUNT + TEMPORAL_COUNT + ABSTRACT_COUNT + AGENT_COUNT + i) as u64,
-            rng.gen(),
-        ).to_string();
-        let id = format!("entity:{}", ulid);
-        let entity = Entity {
-            id: id.clone(),
-            kind: EntityKind::Blob,
-            label: format!("model_{:04}", i),
-            metadata: std::collections::HashMap::new(),
-            deleted_at: None,
-        };
-        db.save_entity(entity).await?;
-
-        let gltf = &gltf_files[i % gltf_files.len()];
-        let storage_id = format!("{}/model", ulid);
-        let _ = blob_adapter.upload(&gltf.to_string_lossy(), &storage_id).await;
-
-        let blob_t = BlobTrait {
-            id: format!("blob_trait:{}", ulid),
-            owner: id.clone(),
-            storage_id,
-            bucket: "local".to_string(),
-            mime: "model/gltf+json".to_string(),
-            hash: format!("sha256:{:016x}", rng.gen::<u64>()),
-            size: std::fs::metadata(gltf).map(|m| m.len() as i64).unwrap_or(0),
-        };
-        db.save_blob_trait(blob_t).await?;
-        total_traits += 1;
-
-        blob_ids.push(id.clone());
-        all_ids.push(id);
-    }
-
-    // ── Multi-trait: add TemporalTrait to first 80 Physical entities ──
-    let multi_trait_ids: Vec<String> = physical_ids[..MULTI_TRAIT_COUNT].to_vec();
+    // ── Multi-trait: add TemporalTrait to first N Physical entities ──
+    let multi_trait_ids: Vec<String> = physical_ids[..multi_trait_count.min(physical_ids.len())].to_vec();
     for (i, phys_id) in multi_trait_ids.iter().enumerate() {
         let ulid_part = phys_id.strip_prefix("entity:").unwrap();
         let temporal = TemporalTrait {
@@ -297,27 +248,27 @@ pub async fn generate_dataset(
         .filter(|id| !abstract_ids.contains(id))
         .collect();
 
-    for i in 0..TAGGED_AS_EDGES {
+    for i in 0..tagged_as_edges {
         let target_entity = non_abstract[i % non_abstract.len()];
         let hub = &abstract_ids[i % abstract_ids.len()];
         db.add_edge(target_entity, hub, "tagged_as").await?;
         total_edges += 1;
     }
 
-    // ── Custom relational edges (300): ensure connected graph ──
-    // First pass: chain all entities to guarantee a connected graph
-    let chain_count = all_ids.len().min(CUSTOM_EDGES) - 1;
+    // ── Custom relational edges: ensure connected graph ──
+    let chain_count = all_ids.len().min(custom_edges).saturating_sub(1);
     let mut shuffled_ids = all_ids.clone();
     shuffled_ids.shuffle(&mut rng);
 
-    for i in 0..chain_count.min(CUSTOM_EDGES / 2) {
+    let chain_target = chain_count.min(custom_edges / 2);
+    for i in 0..chain_target {
         let label = CUSTOM_EDGE_LABELS[i % CUSTOM_EDGE_LABELS.len()];
         db.add_edge(&shuffled_ids[i], &shuffled_ids[i + 1], label).await?;
         total_edges += 1;
     }
 
     // Second pass: random cross-links to fill remaining edge budget
-    let remaining = CUSTOM_EDGES - chain_count.min(CUSTOM_EDGES / 2);
+    let remaining = custom_edges - chain_target;
     for _ in 0..remaining {
         let from_idx = rng.gen_range(0..all_ids.len());
         let to_idx = rng.gen_range(0..all_ids.len());
@@ -501,7 +452,7 @@ fn minimal_gltf(index: usize) -> String {
     format!(
         concat!(
             "{{\n",
-            "  \"asset\": {{ \"version\": \"2.0\", \"generator\": \"spatial-os-bench\" }},\n",
+            "  \"asset\": {{ \"version\": \"2.0\", \"generator\": \"humanist-bench\" }},\n",
             "  \"scene\": 0,\n",
             "  \"scenes\": [{{ \"nodes\": [0] }}],\n",
             "  \"nodes\": [{{ \"mesh\": 0, \"name\": \"triangle_{}\" }}],\n",

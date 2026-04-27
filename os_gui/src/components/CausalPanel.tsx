@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useRef, useCallback } from 'react';
+import { lazy, Suspense, useState, useRef, useCallback, useEffect } from 'react';
 import { TimelineView } from './TimelineView';
 import { CalendarView } from './CalendarView';
 
@@ -29,6 +29,12 @@ export function CausalPanel() {
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
   }, [splitPct]);
+
+  useEffect(() => {
+    const forceTimeline = () => setBottomTab('timeline');
+    window.addEventListener('humanist:benchmark-prepare', forceTimeline);
+    return () => window.removeEventListener('humanist:benchmark-prepare', forceTimeline);
+  }, []);
 
   return (
     <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>

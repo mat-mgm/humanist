@@ -93,6 +93,7 @@ export const KEYBINDS = {
   cycleActivityBwd:    (e: KeyboardEvent) => e.ctrlKey && e.shiftKey && e.key === 'Tab',
   ingestData:          (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'i',
   createEntity:        (e: KeyboardEvent) => e.ctrlKey && e.key.toLowerCase() === 'n',
+  runBenchmark:        (e: KeyboardEvent) => e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'b',
   multiSelectModifier: (e: any) => e.shiftKey || e.ctrlKey,
   marqueeModifier:     (e: any) => e.shiftKey,
 };

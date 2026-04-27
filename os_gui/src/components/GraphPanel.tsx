@@ -8,6 +8,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 import { useOsStore, entityValues, resolvedLabel } from '../store';
 import { logFrontend } from '../lib/log';
+import { syncBenchmark } from '../benchmark/SyncBenchmark';
 import { RelateDialog } from './RelateDialog';
 import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
 import {
@@ -1206,6 +1207,17 @@ export const GraphPanel = memo(function GraphPanel() {
 
     g.onNodeDragEnd((node: any) => {
       if (node.id) updateNodePosition(node.id, node.x, node.y);
+    });
+
+    g.onRenderFramePost(() => {
+      const ulid = syncBenchmark.getCurrentUlid();
+      if (!ulid || !syncBenchmark.isBenchmarking()) return;
+      const { nodes } = g.graphData();
+      if (nodes.some((n: any) => n.id === ulid)) {
+        requestAnimationFrame(() => {
+          void syncBenchmark.reportRender('D3 Graph', ulid);
+        });
+      }
     });
 
     graphRef.current = g;

@@ -20,15 +20,25 @@ struct QueryClassSummary {
 fn load_dataset_into_prolog(machine: &ScryerMachine, report: &DatasetReport) -> Result<(), String> {
     println!("  Loading {} entities into Prolog...", report.entity_ids.len());
 
+    let persona_ids = if report.agent_ids.is_empty() {
+        Vec::new()
+    } else {
+        report.agent_ids.clone()
+    };
+
     for (i, id) in report.entity_ids.iter().enumerate() {
-        let ulid = id.strip_prefix("entity:").unwrap_or(id);
-        let kind = if report.physical_ids.contains(id) { "physical" }
-            else if report.digital_ids.contains(id) { "digital" }
-            else if report.temporal_ids.contains(id) { "temporal" }
-            else if report.abstract_ids.contains(id) { "abstract_" }
-            else if report.agent_ids.contains(id) { "agent" }
-            else { "blob" };
-        let fact = format!("entity('{}', '{}', 'label_{}')", ulid, kind, i);
+        let kind = if report.physical_ids.contains(id) {
+            "physical"
+        } else if report.digital_ids.contains(id) {
+            "digital"
+        } else if report.abstract_ids.contains(id) {
+            "abstract"
+        } else if persona_ids.contains(id) {
+            "persona"
+        } else {
+            "physical"
+        };
+        let fact = format!("entity('{id}', '{kind}', 'label_{i}', 'en')");
         let _ = machine.ingest(&fact);
     }
 
@@ -43,37 +53,32 @@ fn load_dataset_into_prolog(machine: &ScryerMachine, report: &DatasetReport) -> 
 
     // tagged_as edges (400)
     for i in 0..400usize {
-        let from_ulid = non_abstract[i % non_abstract.len()]
-            .strip_prefix("entity:").unwrap_or(non_abstract[i % non_abstract.len()]);
-        let to_ulid = report.abstract_ids[i % report.abstract_ids.len()]
-            .strip_prefix("entity:").unwrap_or(&report.abstract_ids[i % report.abstract_ids.len()]);
-        let edge_id = format!("edge_tag_{}", i);
-        let fact = format!("edge('{}', '{}', '{}', 'tagged_as')", edge_id, from_ulid, to_ulid);
+        let from_id = non_abstract[i % non_abstract.len()];
+        let to_id = &report.abstract_ids[i % report.abstract_ids.len()];
+        let fact = format!("edge('{from_id}', '{to_id}', 'tagged_as')");
         let _ = machine.ingest(&fact);
     }
 
     // Custom edges (300) — chain + random cross-links
-    let all_ulids: Vec<&str> = report.entity_ids.iter()
-        .map(|id| id.strip_prefix("entity:").unwrap_or(id))
-        .collect();
+    let all_ids: Vec<&str> = report.entity_ids.iter().map(|id| id.as_str()).collect();
 
-    let mut shuffled = all_ulids.clone();
+    let mut shuffled = all_ids.clone();
     shuffled.shuffle(&mut rng);
 
     let chain_count = shuffled.len().min(300) - 1;
     let half = chain_count.min(150);
     for i in 0..half {
         let label = edge_labels[i % edge_labels.len()];
-        let fact = format!("edge('edge_chain_{}', '{}', '{}', '{}')", i, shuffled[i], shuffled[i + 1], label);
+        let fact = format!("edge('{}', '{}', '{}')", shuffled[i], shuffled[i + 1], label);
         let _ = machine.ingest(&fact);
     }
 
-    for i in 0..(300 - half) {
-        let from_idx = rng.gen_range(0..all_ulids.len());
-        let to_idx = rng.gen_range(0..all_ulids.len());
+    for _ in 0..(300 - half) {
+        let from_idx = rng.gen_range(0..all_ids.len());
+        let to_idx = rng.gen_range(0..all_ids.len());
         if from_idx != to_idx {
             let label = edge_labels[rng.gen_range(0..edge_labels.len())];
-            let fact = format!("edge('edge_rand_{}', '{}', '{}', '{}')", i, all_ulids[from_idx], all_ulids[to_idx], label);
+            let fact = format!("edge('{}', '{}', '{}')", all_ids[from_idx], all_ids[to_idx], label);
             let _ = machine.ingest(&fact);
         }
     }
@@ -82,8 +87,8 @@ fn load_dataset_into_prolog(machine: &ScryerMachine, report: &DatasetReport) -> 
     // Depth-limited reachable to prevent infinite recursion on cyclic graphs.
     // reachable(X, Y, Depth) succeeds if Y is reachable from X within Depth hops.
     // Max depth = 6 (sufficient to traverse the graph diameter while staying terminating).
-    machine.ingest("reachable(X, Y, _D) :- edge(_, X, Y, _)")?;
-    machine.ingest("reachable(X, Y, D) :- D > 0, D1 is D - 1, edge(_, X, Z, _), reachable(Z, Y, D1)")?;
+    machine.ingest("reachable(X, Y, _D) :- edge(X, Y, _)")?;
+    machine.ingest("reachable(X, Y, D) :- D > 0, D1 is D - 1, edge(X, Z, _), reachable(Z, Y, D1)")?;
 
     println!("  ✓ Prolog knowledge base loaded.");
     Ok(())
@@ -95,8 +100,7 @@ fn select_source_ulids(report: &DatasetReport, count: usize) -> Vec<String> {
     let step = report.physical_ids.len() / (count + 1);
     for i in 0..count {
         let id = &report.physical_ids[(i + 1) * step];
-        let ulid = id.strip_prefix("entity:").unwrap_or(id);
-        sources.push(ulid.to_string());
+        sources.push(id.to_string());
     }
     sources
 }
@@ -132,12 +136,12 @@ pub fn run_prolog_benchmark(
     println!("  ┌─ Direct Lookup");
     let mut direct_latencies: Vec<f64> = Vec::new();
     for source in &source_ulids {
-        let query = format!("edge(_, '{}', Target, Label).", source);
+        let query = format!("edge('{source}', Target, Label).");
         for trial in 0..config.trials {
             let t_start = Instant::now();
-            let results = engine.query(&query).unwrap_or_default();
+            let results = engine.query_bindings(&query).unwrap_or_default();
             let latency_us = t_start.elapsed().as_secs_f64() * 1_000_000.0;
-            let binding_count = count_bindings(&results);
+            let binding_count = results.len();
 
             if trial >= config.warmup {
                 direct_latencies.push(latency_us);
@@ -160,12 +164,12 @@ pub fn run_prolog_benchmark(
     let mut trans_latencies: Vec<f64> = Vec::new();
     for source in &source_ulids {
         // Depth-limited: reachable(Source, X, 6) — max 6 hops
-        let query = format!("reachable('{}', X, 6).", source);
+        let query = format!("reachable('{source}', X, 6).");
         for trial in 0..config.trials {
             let t_start = Instant::now();
-            let results = engine.query(&query).unwrap_or_default();
+            let results = engine.query_bindings(&query).unwrap_or_default();
             let latency_us = t_start.elapsed().as_secs_f64() * 1_000_000.0;
-            let binding_count = count_bindings(&results);
+            let binding_count = results.len();
 
             if trial >= config.warmup {
                 trans_latencies.push(latency_us);
@@ -190,12 +194,12 @@ pub fn run_prolog_benchmark(
     let mut agg_latencies: Vec<f64> = Vec::new();
     for source in &source_ulids {
         // Use smaller depth for findall to keep runtime bounded
-        let query = format!("findall(X, reachable('{}', X, 4), Xs).", source);
+        let query = format!("findall(X, reachable('{source}', X, 4), Xs).");
         for trial in 0..config.trials {
             let t_start = Instant::now();
-            let results = engine.query(&query).unwrap_or_default();
+            let results = engine.query_bindings(&query).unwrap_or_default();
             let latency_us = t_start.elapsed().as_secs_f64() * 1_000_000.0;
-            let binding_count = count_bindings(&results);
+            let binding_count = results.len();
 
             if trial >= config.warmup {
                 agg_latencies.push(latency_us);
@@ -227,14 +231,3 @@ pub fn run_prolog_benchmark(
     Ok(())
 }
 
-/// Count bindings from the raw debug output of QueryResolution.
-fn count_bindings(results: &[String]) -> usize {
-    let joined = results.join("");
-    if joined.contains("Matches(") {
-        joined.matches("Atom(").count().max(1)
-    } else if joined.contains("True") {
-        1
-    } else {
-        0
-    }
-}

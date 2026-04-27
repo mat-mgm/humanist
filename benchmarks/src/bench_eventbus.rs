@@ -25,8 +25,8 @@ async fn fresh_db(db_dir: &PathBuf) -> Result<SurrealDbAdapter, String> {
     }
     std::fs::create_dir_all(db_dir).map_err(|e| e.to_string())?;
 
-    // Temporarily set env var so SurrealDbAdapter uses our path
-    std::env::set_var("SPATIAL_OS_STORE", db_dir.parent().unwrap_or(db_dir));
+    // Point the benchmark at an isolated store root for this trial.
+    std::env::set_var("HUMANIST_STORE", db_dir);
     let db = SurrealDbAdapter::new().await?;
     Ok(db)
 }
@@ -74,9 +74,9 @@ pub async fn run_eventbus_benchmark(config: &BenchConfig, spec: &EventBusBenchSp
                 let entity_id = format!("entity:{}", ulid);
                 let entity = Entity {
                     id: entity_id,
-                    kind: EntityKind::Physical,
+                    category: EntityKind::Physical,
                     label: format!("bench_{}", i),
-                    metadata: std::collections::HashMap::new(),
+                    lang_canonical: "en".to_string(),
                     deleted_at: None,
                 };
 
@@ -127,7 +127,7 @@ pub async fn run_eventbus_benchmark(config: &BenchConfig, spec: &EventBusBenchSp
     println!("  ✓ Summary written to: {}", summary_path.display());
 
     // Restore env
-    std::env::remove_var("SPATIAL_OS_STORE");
+    std::env::remove_var("HUMANIST_STORE");
 
     Ok(())
 }
