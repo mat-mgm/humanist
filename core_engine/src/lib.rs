@@ -14,8 +14,6 @@ mod tests {
     use blob::LocalBlobAdapter;
     use models::{Entity, EntityKind};
     use ports::{GraphDatabase, StateObserver};
-    use std::collections::HashMap;
-
     #[tokio::test]
     async fn test_verification_gate_2() {
         let db = db::SurrealDbAdapter::new().await.unwrap();
@@ -36,7 +34,6 @@ mod tests {
             category: EntityKind::Physical,
             label: "Test Entity".to_string(),
             lang_canonical: "en".to_string(),
-            metadata: HashMap::new(),
             deleted_at: None,
         };
 

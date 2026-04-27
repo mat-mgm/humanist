@@ -13,6 +13,8 @@
 //! spatial_trait(Id, Owner, Lat, Lon, Alt, Heading, Bbox, Projection).
 //! temporal_trait(Id, Owner, EventAt, StartsAt, EndsAt, Recurrence).
 //! blob_trait(Id, Owner, Filename, StorageId, Mime, Hash).
+//! key_value_trait(Id, Owner, Namespace, Json).
+//! table_trait(Id, Owner, Namespace, ColumnsJson, RowsJson).
 //! blob_file(BlobId, RelativePath, Hash, Mime).
 //! relationship_type(Id, Label, Transitive, Symmetric, InheritsTraits, Visible, Flow, Routing).
 //! edge(From, To, Label).
@@ -24,10 +26,12 @@
 //! `true` / `false`. Numbers serialize with their `Display` representation.
 
 use core_engine::models::{
-    BlobFile, BlobTrait, DomainPatch, DomainSnapshot, Entity, EntityKind, EdgeRecord, LabelTrait,
-    RelationshipType, SpatialTrait, TemporalTrait,
+    BlobFile, BlobTrait, DomainPatch, DomainSnapshot, Entity, EntityKind, EdgeRecord,
+    KeyValueTrait, LabelTrait, RelationshipType, SpatialTrait, TableColumn, TableTrait,
+    TemporalTrait,
 };
-use std::collections::HashMap;
+use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 
 // ---------------------------------------------------------------------------
 // Atom quoting
@@ -108,6 +112,28 @@ fn parse_category(atom: &str) -> Result<EntityKind, String> {
     }
 }
 
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: BTreeMap<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonical_json(v)))
+                .collect();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn to_canonical_json_string<T: Serialize>(value: &T) -> String {
+    let raw = serde_json::to_value(value).expect("canonical JSON conversion should not fail");
+    serde_json::to_string(&canonical_json(&raw))
+        .expect("canonical JSON serialization should not fail")
+}
+
 // ---------------------------------------------------------------------------
 // Serializer
 // ---------------------------------------------------------------------------
@@ -168,6 +194,26 @@ pub fn to_facts(snapshot: &DomainSnapshot) -> String {
         out.push('\n');
     }
     if !blobs.is_empty() {
+        out.push('\n');
+    }
+
+    let mut key_values = snapshot.key_value_traits.clone();
+    key_values.sort_by(|a, b| a.id.cmp(&b.id));
+    for t in &key_values {
+        out.push_str(&key_value_trait_fact(t));
+        out.push('\n');
+    }
+    if !key_values.is_empty() {
+        out.push('\n');
+    }
+
+    let mut tables = snapshot.table_traits.clone();
+    tables.sort_by(|a, b| a.id.cmp(&b.id));
+    for t in &tables {
+        out.push_str(&table_trait_fact(t));
+        out.push('\n');
+    }
+    if !tables.is_empty() {
         out.push('\n');
     }
 
@@ -263,6 +309,27 @@ fn blob_trait_fact(t: &BlobTrait) -> String {
     )
 }
 
+fn key_value_trait_fact(t: &KeyValueTrait) -> String {
+    format!(
+        "key_value_trait({}, {}, {}, {}).",
+        quote_atom(&t.id),
+        quote_atom(&t.owner),
+        quote_atom(&t.namespace),
+        quote_atom(&to_canonical_json_string(&t.values)),
+    )
+}
+
+fn table_trait_fact(t: &TableTrait) -> String {
+    format!(
+        "table_trait({}, {}, {}, {}, {}).",
+        quote_atom(&t.id),
+        quote_atom(&t.owner),
+        quote_atom(&t.namespace),
+        quote_atom(&to_canonical_json_string(&t.columns)),
+        quote_atom(&to_canonical_json_string(&t.rows)),
+    )
+}
+
 fn blob_file_fact(f: &BlobFile) -> String {
     format!(
         "blob_file({}, {}, {}, {}).",
@@ -335,7 +402,6 @@ pub fn from_facts(text: &str) -> Result<DomainPatch, String> {
                     category: cat,
                     label,
                     lang_canonical: lang,
-                    metadata: HashMap::new(),
                     deleted_at: None,
                 });
             }
@@ -385,6 +451,37 @@ pub fn from_facts(text: &str) -> Result<DomainPatch, String> {
                     mime,
                     hash,
                     size: 0,
+                });
+            }
+            ("key_value_trait", 4) => {
+                let values = args[3].as_atom("key_value_trait.values")?;
+                let values: HashMap<String, serde_json::Value> =
+                    serde_json::from_str(&values).map_err(|e| {
+                        format!("key_value_trait.values: invalid JSON payload: {}", e)
+                    })?;
+                patch.key_value_traits.push(KeyValueTrait {
+                    id: args[0].as_atom("key_value_trait.id")?,
+                    owner: args[1].as_atom("key_value_trait.owner")?,
+                    namespace: args[2].as_atom("key_value_trait.namespace")?,
+                    values,
+                });
+            }
+            ("table_trait", 5) => {
+                let columns_raw = args[3].as_atom("table_trait.columns")?;
+                let rows_raw = args[4].as_atom("table_trait.rows")?;
+                let columns: Vec<TableColumn> = serde_json::from_str(&columns_raw).map_err(|e| {
+                    format!("table_trait.columns: invalid JSON payload: {}", e)
+                })?;
+                let rows: Vec<HashMap<String, serde_json::Value>> =
+                    serde_json::from_str(&rows_raw).map_err(|e| {
+                        format!("table_trait.rows: invalid JSON payload: {}", e)
+                    })?;
+                patch.table_traits.push(TableTrait {
+                    id: args[0].as_atom("table_trait.id")?,
+                    owner: args[1].as_atom("table_trait.owner")?,
+                    namespace: args[2].as_atom("table_trait.namespace")?,
+                    columns,
+                    rows,
                 });
             }
             ("blob_file", 4) => {
@@ -787,7 +884,6 @@ mod tests {
                     category: EntityKind::Physical,
                     label: "Tanker A".to_string(),
                     lang_canonical: "en".to_string(),
-                    metadata: HashMap::new(),
                     deleted_at: None,
                 },
                 Entity {
@@ -795,7 +891,6 @@ mod tests {
                     category: EntityKind::Abstract,
                     label: "Cargo's Bay".to_string(),
                     lang_canonical: "en".to_string(),
-                    metadata: HashMap::new(),
                     deleted_at: None,
                 },
             ],
@@ -825,6 +920,39 @@ mod tests {
                 mime: "application/pdf".to_string(),
                 hash: "abcdef".to_string(),
                 size: 1024,
+            }],
+            key_value_traits: vec![KeyValueTrait {
+                id: "kv:01".to_string(),
+                owner: "entity:01HZK0".to_string(),
+                namespace: "entity".to_string(),
+                values: HashMap::from([(
+                    "content.description".to_string(),
+                    serde_json::Value::String("Ship manifest".to_string()),
+                )]),
+            }],
+            table_traits: vec![TableTrait {
+                id: "table:01".to_string(),
+                owner: "entity:01HZK0".to_string(),
+                namespace: "manifest".to_string(),
+                columns: vec![
+                    TableColumn {
+                        name: "item".to_string(),
+                        data_type: "string".to_string(),
+                        nullable: false,
+                    },
+                    TableColumn {
+                        name: "count".to_string(),
+                        data_type: "int".to_string(),
+                        nullable: false,
+                    },
+                ],
+                rows: vec![HashMap::from([
+                    ("item".to_string(), serde_json::Value::String("crate".to_string())),
+                    (
+                        "count".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(4)),
+                    ),
+                ])],
             }],
             relationship_types: vec![RelationshipType {
                 id: "rt:contains".to_string(),
@@ -866,6 +994,14 @@ mod tests {
         assert_eq!(parsed.label_traits.len(), 1);
         assert_eq!(parsed.spatial_traits[0].lat, 36.12);
         assert_eq!(parsed.blob_traits[0].hash, "abcdef");
+        assert_eq!(
+            parsed.key_value_traits[0]
+                .values
+                .get("content.description")
+                .and_then(|v| v.as_str()),
+            Some("Ship manifest")
+        );
+        assert_eq!(parsed.table_traits[0].rows.len(), 1);
         assert_eq!(parsed.blob_files[0].relative_path, "blobs/abcdef");
         assert_eq!(parsed.relationship_types[0].transitive, true);
         assert_eq!(parsed.relationship_types[0].flow.as_deref(), Some("down"));

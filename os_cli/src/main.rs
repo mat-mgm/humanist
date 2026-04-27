@@ -2,12 +2,35 @@ use clap::{Parser, Subcommand};
 use core_engine::{
     bus::EventBus,
     db::SurrealDbAdapter,
-    models::{Entity, EntityKind},
+    models::{Entity, EntityKind, KeyValueTrait},
     ports::{GraphDatabase, StateObserver},
 };
 use std::io::{self, BufRead};
 use std::{collections::HashMap, sync::Arc};
 use ulid::Ulid;
+
+const ENTITY_DATA_NAMESPACE: &str = "entity";
+
+fn canonical_key_value_trait_id(owner: &str, namespace: &str) -> String {
+    let owner_ulid = owner.replace("entity:", "");
+    let ns = namespace.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    format!("key_value_trait:{}_{}", owner_ulid, ns)
+}
+
+async fn save_entity_values(
+    db: &SurrealDbAdapter,
+    owner: &str,
+    values: HashMap<String, serde_json::Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    db.save_key_value_trait(KeyValueTrait {
+        id: canonical_key_value_trait_id(owner, ENTITY_DATA_NAMESPACE),
+        owner: owner.to_string(),
+        namespace: ENTITY_DATA_NAMESPACE.to_string(),
+        values,
+    })
+    .await?;
+    Ok(())
+}
 
 #[derive(Parser)]
 #[command(name = "humanist")]
@@ -94,9 +117,9 @@ enum EntitySub {
         #[arg(long, default_value = "en")]
         lang: String,
     },
-    /// Search entities by label/metadata
+    /// Search entities by label/key-value data
     Search { term: String },
-    /// Update metadata via JSON
+    /// Update canonical entity key-value data via JSON (namespace = "entity")
     Update { term: String, json: String },
     /// Add a tag to an entity
     Tag { term: String, tag: String },
@@ -224,10 +247,19 @@ async fn handle_blob(
                 category: EntityKind::Digital,
                 label: label.clone(),
                 lang_canonical: "en".to_string(),
-                metadata: HashMap::new(),
                 deleted_at: None,
             };
             db.save_entity(entity).await?;
+            let mut values = HashMap::new();
+            values.insert(
+                "fs.source_path".to_string(),
+                serde_json::Value::String(file.clone()),
+            );
+            values.insert(
+                "fs.import_path".to_string(),
+                serde_json::Value::String(file.clone()),
+            );
+            save_entity_values(&db, &id, values).await?;
             bus.on_event("entity.created".to_string(), 1, ulid.clone())
                 .await;
             println!("✅ Ingested: {} ({})", file, id);
@@ -378,7 +410,6 @@ async fn handle_entity(
                 category: category_enum,
                 label: label.clone(),
                 lang_canonical: "en".to_string(),
-                metadata: HashMap::new(),
                 deleted_at: None,
             };
             db.save_entity(entity).await?;
@@ -446,11 +477,9 @@ async fn handle_entity(
                         None
                     })
             {
-                let metadata: HashMap<String, serde_json::Value> = serde_json::from_str(&json)?;
-                let mut e = db.get_entity(&id).await?;
-                e.metadata = metadata;
-                db.save_entity(e).await?;
-                println!("✅ Updated metadata for: {}", term);
+                let values: HashMap<String, serde_json::Value> = serde_json::from_str(&json)?;
+                save_entity_values(&db, &id, values).await?;
+                println!("✅ Updated entity data for: {}", term);
             } else {
                 println!("❌ Could not find entity: {}", term);
             }
@@ -471,18 +500,17 @@ async fn handle_entity(
                 } else {
                     let ulid = ulid::Ulid::new().to_string();
                     let id = format!("entity:{}", ulid);
-                    let mut entity = Entity {
+                    let entity = Entity {
                         id: id.clone(),
                         category: EntityKind::Abstract,
                         label: tag.clone(),
                         lang_canonical: "en".to_string(),
-                        metadata: HashMap::new(),
                         deleted_at: None,
                     };
-                    entity
-                        .metadata
-                        .insert("is_tag".to_string(), serde_json::Value::Bool(true));
                     db.save_entity(entity).await?;
+                    let mut values = HashMap::new();
+                    values.insert("entity.is_tag".to_string(), serde_json::Value::Bool(true));
+                    save_entity_values(&db, &id, values).await?;
                     bus.on_event("entity.created".to_string(), 1, ulid).await;
                     id
                 };
@@ -551,12 +579,26 @@ async fn handle_entity(
                 .await?
                 .into_iter()
                 .find(|t| t.owner == id);
+            let key_value_traits: Vec<_> = db
+                .get_key_value_traits()
+                .await?
+                .into_iter()
+                .filter(|t| t.owner == id)
+                .collect();
+            let table_traits: Vec<_> = db
+                .get_table_traits()
+                .await?
+                .into_iter()
+                .filter(|t| t.owner == id)
+                .collect();
 
             let composite = core_engine::formats::CompositeEntity {
                 entity,
                 spatial,
                 blobs,
                 temporal,
+                key_value_traits,
+                table_traits,
             };
 
             // Serialize
@@ -602,6 +644,12 @@ async fn handle_entity(
                 }
                 if let Some(t) = new_composite.temporal {
                     db.save_temporal_trait(t).await?;
+                }
+                for kv in new_composite.key_value_traits {
+                    db.save_key_value_trait(kv).await?;
+                }
+                for table in new_composite.table_traits {
+                    db.save_table_trait(table).await?;
                 }
 
                 println!("✅ Successfully updated {}", term);

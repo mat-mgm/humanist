@@ -238,6 +238,8 @@ export default function App() {
   useEffect(() => {
     fetchSpatialTraits();
     useOsStore.getState().fetchBlobTraits();
+    useOsStore.getState().fetchKeyValueTraits();
+    useOsStore.getState().fetchTableTraits();
     useOsStore.getState().fetchTemporalTraits();
     fetchAllLabelTraits();
     fetchAllEntities();

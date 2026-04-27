@@ -33,6 +33,8 @@ pub async fn build_snapshot<DB: GraphDatabase>(db: &DB) -> Result<DomainSnapshot
         spatial_traits: db.get_spatial_traits().await?,
         temporal_traits: db.get_temporal_traits().await?,
         blob_traits: db.get_blob_traits().await?,
+        key_value_traits: db.get_key_value_traits().await?,
+        table_traits: db.get_table_traits().await?,
         relationship_types: db.list_relationship_types().await?,
         edges,
         blob_files: Vec::new(),
@@ -122,6 +124,16 @@ pub async fn apply_patch<DB: GraphDatabase>(
         report.temporal_traits += 1;
     }
 
+    for key_value in patch.key_value_traits {
+        db.save_key_value_trait(key_value).await?;
+        report.key_value_traits += 1;
+    }
+
+    for table in patch.table_traits {
+        db.save_table_trait(table).await?;
+        report.table_traits += 1;
+    }
+
     for rel_type in patch.relationship_types {
         db.save_relationship_type(rel_type).await?;
         report.relationship_types += 1;
@@ -196,6 +208,8 @@ pub struct ApplyReport {
     pub spatial_traits: usize,
     pub temporal_traits: usize,
     pub blob_traits: usize,
+    pub key_value_traits: usize,
+    pub table_traits: usize,
     pub relationship_types: usize,
     pub edges: usize,
 }

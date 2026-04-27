@@ -9,7 +9,10 @@ import {
   RelationshipType,
   SpatialTrait,
   BlobTrait,
+  KeyValueTrait,
   TemporalTrait,
+  TableTrait,
+  TableColumn,
   DraftSpatialTrait,
   DraftTemporalTrait,
   TraitSnapshot,
@@ -203,6 +206,14 @@ export function resolvedLabel(
   return entity.label;
 }
 
+export function entityValues(
+  entityId: string,
+  allKeyValueTraits: KeyValueTrait[],
+  namespace = 'entity',
+): Record<string, any> {
+  return allKeyValueTraits.find(t => t.owner === entityId && t.namespace === namespace)?.values ?? {};
+}
+
 // ── Store definition ─────────────────────────────────────────────────────────
 
 interface OsStore {
@@ -210,6 +221,8 @@ interface OsStore {
   entities: Entity[];
   spatialTraits: SpatialTrait[];
   blobTraits: BlobTrait[];
+  keyValueTraits: KeyValueTrait[];
+  tableTraits: TableTrait[];
   temporalTraits: TemporalTrait[];
   edges: GraphEdge[];
   selectedEntityId: string | null;
@@ -305,6 +318,8 @@ interface OsStore {
   fetchEntities: () => Promise<void>;
   fetchSpatialTraits: () => Promise<void>;
   fetchBlobTraits: () => Promise<void>;
+  fetchKeyValueTraits: () => Promise<void>;
+  fetchTableTraits: () => Promise<void>;
   fetchTemporalTraits: () => Promise<void>;
   fetchEdges: () => Promise<void>;
   saveTemporalTrait: (trait: Omit<TemporalTrait, "id">) => Promise<void>;
@@ -318,7 +333,9 @@ interface OsStore {
 
   // Actions — write
   createEntity: (kind: string, label: string) => Promise<string>;
-  updateMetadata: (id: string, metadata: Record<string, any>) => Promise<void>;
+  saveEntityData: (id: string, values: Record<string, any>) => Promise<void>;
+  saveTableTrait: (owner: string, namespace: string, columns: TableColumn[], rows: Record<string, any>[]) => Promise<TableTrait>;
+  deleteTableTrait: (tableTraitId: string) => Promise<void>;
   deleteEntity: (id: string) => Promise<void>;
   deleteEntities: (ids: string[]) => Promise<void>;
   tagEntity: (targetId: string, tagLabel: string) => Promise<void>;
@@ -437,6 +454,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
   entities: [],
   spatialTraits: [],
   blobTraits: [],
+  keyValueTraits: [],
+  tableTraits: [],
   temporalTraits: [],
   edges: [],
   entityHistory: [],
@@ -1025,6 +1044,24 @@ export const useOsStore = create<OsStore>((set, get) => ({
     }
   },
 
+  fetchKeyValueTraits: async () => {
+    try {
+      const traits = await invoke<KeyValueTrait[]>('get_key_value_traits');
+      set({ keyValueTraits: traits });
+    } catch (e) {
+      logFrontend('error', 'fetchKeyValueTraits error: ' + String(e));
+    }
+  },
+
+  fetchTableTraits: async () => {
+    try {
+      const traits = await invoke<TableTrait[]>('get_table_traits');
+      set({ tableTraits: traits });
+    } catch (e) {
+      logFrontend('error', 'fetchTableTraits error: ' + String(e));
+    }
+  },
+
   fetchTemporalTraits: async () => {
     try {
       const traits = await invoke<TemporalTrait[]>('get_temporal_traits');
@@ -1165,6 +1202,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
           invoke<Entity[]>('list_entities'),
           invoke<GraphEdge[]>('get_edges'),
         ]);
+        void get().fetchKeyValueTraits();
+        void get().fetchTableTraits();
         const tagEdges = allEdges.filter(e => e.label === 'tagged_as');
         set({ allEntities: records, allTagEdges: tagEdges, backendReady: true });
         return;
@@ -1218,13 +1257,15 @@ export const useOsStore = create<OsStore>((set, get) => ({
         invoke<Entity[]>('list_entities'),
         invoke<GraphEdge[]>('get_edges'),
       ]);
+      void get().fetchKeyValueTraits();
+      void get().fetchTableTraits();
       const fetchMs = Math.round(performance.now() - t0);
       const allTagEdges = edges.filter(e => e.label === 'tagged_as');
       logFrontend('info',
         `[graph/load] fetch done in ${fetchMs}ms — entities=${entities.length} edges=${edges.length} tagEdges=${allTagEdges.length}`
       );
       logFrontend('info', '[graph/load] setting graphLoading=false (atomic with data)');
-      set({ entities, edges, allTagEdges, allEntities: entities, isLoading: false, graphLoading: false });
+      set({ entities, edges, allTagEdges, allEntities: entities, isLoading: false, graphLoading: false, backendReady: true });
       logFrontend('info', '[graph/load] store update committed');
     } catch (e: any) {
       logFrontend('error', '[graph/load] loadFullGraph failed: ' + String(e));
@@ -1262,13 +1303,25 @@ export const useOsStore = create<OsStore>((set, get) => ({
     // Auto-create canonical notes file for every new entity
     invoke('create_entity_notes', { entityId: id }).catch(() => {});
     await get().fetchEntities();
+    await get().fetchKeyValueTraits();
     await get().fetchStorageHealth();
     return id;
   },
 
-  updateMetadata: async (id, metadata) => {
-    await invoke('update_metadata', { id, metadata });
-    await get().fetchEntities();
+  saveEntityData: async (id, values) => {
+    await invoke('save_entity_data', { id, values });
+    await get().fetchKeyValueTraits();
+  },
+
+  saveTableTrait: async (owner, namespace, columns, rows) => {
+    const t = await invoke<TableTrait>('save_table_trait', { owner, namespace, columns, rows });
+    await get().fetchTableTraits();
+    return t;
+  },
+
+  deleteTableTrait: async (tableTraitId) => {
+    await invoke('delete_table_trait', { tableTraitId });
+    await get().fetchTableTraits();
   },
 
   deleteEntity: async (id) => {
@@ -1279,6 +1332,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       selectedEntityEdges: state.selectedEntityId === id ? [] : state.selectedEntityEdges
     }));
     await get().fetchEntities();
+    await get().fetchKeyValueTraits();
   },
 
   deleteEntities: async (ids) => {
@@ -1288,6 +1342,7 @@ export const useOsStore = create<OsStore>((set, get) => ({
       selectedEntityId: ids.includes(state.selectedEntityId ?? '') ? null : state.selectedEntityId
     }));
     await get().fetchEntities();
+    await get().fetchKeyValueTraits();
   },
 
   tagEntity: async (targetId, tagLabel) => {
@@ -1295,12 +1350,14 @@ export const useOsStore = create<OsStore>((set, get) => ({
     await get().fetchEdges();
     if (get().selectedEntityId) await get().fetchEntityEdges(get().selectedEntityId!);
     await get().fetchEntities(); // tag entity may be new
+    await get().fetchKeyValueTraits();
   },
 
   tagEntities: async (targetIds, tagLabel) => {
     await Promise.all(targetIds.map(id => invoke('tag_entity', { targetId: id, tagLabel })));
     await get().fetchEdges();
     await get().fetchEntities();
+    await get().fetchKeyValueTraits();
     const primary = get().selectedEntityId;
     if (primary) await get().fetchEntityEdges(primary);
   },
@@ -1499,6 +1556,8 @@ export const useOsStore = create<OsStore>((set, get) => ({
       store.fetchEntities();
       store.fetchSpatialTraits();
       store.fetchBlobTraits();
+      store.fetchKeyValueTraits();
+      store.fetchTableTraits();
       store.fetchTemporalTraits();
       store.fetchAllLabelTraits();
       store.fetchAllEntities();

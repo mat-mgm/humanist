@@ -5,8 +5,8 @@ use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
 
 use crate::models::{
-    EdgeRecord, Entity, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait,
-    TraitSnapshot,
+    EdgeRecord, Entity, EntitySnapshot, KeyValueTrait, LabelTrait, RelationshipType, SpatialTrait,
+    TableTrait, TemporalTrait, TraitSnapshot,
 };
 use crate::ports::GraphDatabase;
 
@@ -35,8 +35,11 @@ impl SurrealDbAdapter {
             DEFINE FIELD category ON entity TYPE string ASSERT $value IN ['physical', 'digital', 'abstract', 'persona'];
             DEFINE FIELD label ON entity TYPE string;
             DEFINE FIELD IF NOT EXISTS lang_canonical ON entity TYPE string DEFAULT 'en';
-            DEFINE FIELD metadata ON entity TYPE object FLEXIBLE;
             DEFINE FIELD deleted_at ON entity TYPE option<datetime>;
+            -- Phase 66 migration: drop the legacy untyped `metadata` field if a
+            -- pre-Phase-66 store still defines it. Attached entity data now
+            -- lives in key_value_trait records.
+            REMOVE FIELD IF EXISTS metadata ON entity;
 
             DEFINE TABLE IF NOT EXISTS label_trait SCHEMAFULL;
             DEFINE FIELD IF NOT EXISTS owner ON label_trait TYPE string;
@@ -78,6 +81,19 @@ impl SurrealDbAdapter {
             DEFINE FIELD mime ON blob_trait TYPE string;
             DEFINE FIELD hash ON blob_trait TYPE string;
             DEFINE FIELD size ON blob_trait TYPE int;
+
+            DEFINE TABLE key_value_trait SCHEMAFULL;
+            DEFINE FIELD owner ON key_value_trait TYPE string;
+            DEFINE FIELD namespace ON key_value_trait TYPE string;
+            DEFINE FIELD values ON key_value_trait TYPE object FLEXIBLE;
+            DEFINE INDEX IF NOT EXISTS idx_key_value_trait_owner_namespace ON key_value_trait FIELDS owner, namespace UNIQUE;
+
+            DEFINE TABLE table_trait SCHEMAFULL;
+            DEFINE FIELD owner ON table_trait TYPE string;
+            DEFINE FIELD namespace ON table_trait TYPE string;
+            DEFINE FIELD columns ON table_trait TYPE array;
+            DEFINE FIELD rows ON table_trait TYPE array;
+            DEFINE INDEX IF NOT EXISTS idx_table_trait_owner_namespace ON table_trait FIELDS owner, namespace UNIQUE;
 
             DEFINE TABLE spatial_trait SCHEMAFULL;
             DEFINE FIELD owner ON spatial_trait TYPE string;
@@ -158,7 +174,10 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn get_entity(&self, id: &str) -> Result<Entity, String> {
-        let qs = format!("SELECT *, type::string(id) AS id FROM {};", id);
+        let qs = format!(
+            "SELECT type::string(id) AS id, category, label, lang_canonical, deleted_at FROM {};",
+            id
+        );
 
         let mut response = self.db.query(qs).await.map_err(|e| e.to_string())?;
 
@@ -259,6 +278,154 @@ impl GraphDatabase for SurrealDbAdapter {
 
         let traits: Vec<crate::models::BlobTrait> = response.take(0).map_err(|e| e.to_string())?;
         Ok(traits)
+    }
+
+    async fn save_key_value_trait(&self, trait_: KeyValueTrait) -> Result<(), String> {
+        // The unique index on (owner, namespace) means at most one row may
+        // carry a given (owner, namespace) tuple. If a row already exists at
+        // a different id (e.g. one written by a seed script using a different
+        // id scheme), we collapse onto that row's id rather than letting the
+        // unique index reject our write.
+        let mut by_pair = self
+            .db
+            .query(
+                "SELECT type::string(id) AS id FROM key_value_trait \
+                 WHERE owner = $owner AND namespace = $namespace;",
+            )
+            .bind(("owner", trait_.owner.clone()))
+            .bind(("namespace", trait_.namespace.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let by_pair_rows: Vec<serde_json::Value> = by_pair.take(0).map_err(|e| e.to_string())?;
+        let canonical_id = by_pair_rows
+            .first()
+            .and_then(|row| row.get("id"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.replace("key_value_trait:", ""))
+            .unwrap_or_else(|| trait_.id.replace("key_value_trait:", ""));
+
+        let qs = format!("UPSERT key_value_trait:{} CONTENT $trait_;", canonical_id);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
+        self.db
+            .query(qs)
+            .bind(("trait_", value.clone()))
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+
+        let snap = serde_json::json!({
+            "entity_id": trait_.owner,
+            "trait_type": "key_value",
+            "data": value,
+            "changed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = self
+            .db
+            .query("CREATE trait_history CONTENT $snap;")
+            .bind(("snap", snap))
+            .await;
+        Ok(())
+    }
+
+    async fn get_key_value_traits(&self) -> Result<Vec<KeyValueTrait>, String> {
+        let mut response = self
+            .db
+            .query(
+                "SELECT type::string(id) AS id, type::string(owner) AS owner, namespace, values \
+                 FROM key_value_trait;",
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let traits: Vec<KeyValueTrait> = response.take(0).map_err(|e| e.to_string())?;
+        Ok(traits)
+    }
+
+    async fn delete_key_value_trait(&self, key_value_trait_id: &str) -> Result<(), String> {
+        let id_cleaned = key_value_trait_id.replace("key_value_trait:", "");
+        let qs = format!("DELETE key_value_trait:{};", id_cleaned);
+        self.db
+            .query(qs)
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn save_table_trait(&self, trait_: TableTrait) -> Result<(), String> {
+        // Same (owner, namespace) UNIQUE-index protection as save_key_value_trait.
+        let mut by_pair = self
+            .db
+            .query(
+                "SELECT type::string(id) AS id FROM table_trait \
+                 WHERE owner = $owner AND namespace = $namespace;",
+            )
+            .bind(("owner", trait_.owner.clone()))
+            .bind(("namespace", trait_.namespace.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let by_pair_rows: Vec<serde_json::Value> = by_pair.take(0).map_err(|e| e.to_string())?;
+        let canonical_id = by_pair_rows
+            .first()
+            .and_then(|row| row.get("id"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.replace("table_trait:", ""))
+            .unwrap_or_else(|| trait_.id.replace("table_trait:", ""));
+
+        let qs = format!("UPSERT table_trait:{} CONTENT $trait_;", canonical_id);
+        let mut value = serde_json::to_value(&trait_).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("id");
+        }
+        self.db
+            .query(qs)
+            .bind(("trait_", value.clone()))
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+
+        let snap = serde_json::json!({
+            "entity_id": trait_.owner,
+            "trait_type": "table",
+            "data": value,
+            "changed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = self
+            .db
+            .query("CREATE trait_history CONTENT $snap;")
+            .bind(("snap", snap))
+            .await;
+        Ok(())
+    }
+
+    async fn get_table_traits(&self) -> Result<Vec<TableTrait>, String> {
+        let mut response = self
+            .db
+            .query(
+                "SELECT type::string(id) AS id, type::string(owner) AS owner, namespace, columns, rows \
+                 FROM table_trait;",
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let traits: Vec<TableTrait> = response.take(0).map_err(|e| e.to_string())?;
+        Ok(traits)
+    }
+
+    async fn delete_table_trait(&self, table_trait_id: &str) -> Result<(), String> {
+        let id_cleaned = table_trait_id.replace("table_trait:", "");
+        let qs = format!("DELETE table_trait:{};", id_cleaned);
+        self.db
+            .query(qs)
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     async fn save_temporal_trait(&self, trait_: TemporalTrait) -> Result<(), String> {
@@ -462,7 +629,7 @@ impl GraphDatabase for SurrealDbAdapter {
         let mut resp = self
             .db
             .query(
-                "SELECT *, type::string(id) AS id FROM entity \
+                "SELECT type::string(id) AS id, category, label, lang_canonical, deleted_at FROM entity \
              WHERE string::contains(string::lowercase(label), $q) AND deleted_at = NONE LIMIT 50;",
             )
             .bind(("q", q_lower.clone()))
@@ -689,14 +856,23 @@ impl GraphDatabase for SurrealDbAdapter {
     }
 
     async fn resolve_path(&self, path: &str) -> Result<Option<String>, String> {
-        let entities = self.list_entities().await?;
-        Ok(entities
+        let traits = self.get_key_value_traits().await?;
+        Ok(traits
             .into_iter()
-            .find(|e| {
-                e.metadata.get("source_path").and_then(|v| v.as_str()) == Some(path)
-                    || e.metadata.get("import_path").and_then(|v| v.as_str()) == Some(path)
+            .find(|trait_| {
+                trait_.namespace == "entity"
+                    && (trait_
+                        .values
+                        .get("fs.source_path")
+                        .and_then(|v| v.as_str())
+                        == Some(path)
+                        || trait_
+                            .values
+                            .get("fs.import_path")
+                            .and_then(|v| v.as_str())
+                            == Some(path))
             })
-            .map(|e| e.id))
+            .map(|trait_| trait_.owner))
     }
 
     async fn delete_edge(
@@ -744,7 +920,10 @@ impl GraphDatabase for SurrealDbAdapter {
     async fn list_entities(&self) -> Result<Vec<Entity>, String> {
         let mut response = self
             .db
-            .query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
+            .query(
+                "SELECT type::string(id) AS id, category, label, lang_canonical, deleted_at \
+                 FROM entity WHERE deleted_at = NONE;",
+            )
             .await
             .map_err(|e| e.to_string())?;
         let entities: Vec<Entity> = response.take(0).map_err(|e| e.to_string())?;
@@ -755,7 +934,10 @@ impl GraphDatabase for SurrealDbAdapter {
 
     async fn get_entity_history(&self, entity_id: &str) -> Result<Vec<EntitySnapshot>, String> {
         let mut resp = self.db
-            .query("SELECT *, type::string(id) AS id FROM entity_history WHERE entity_id = $eid ORDER BY changed_at DESC;")
+            .query(
+                "SELECT type::string(id) AS id, entity_id, category, label, deleted_at, changed_at \
+                 FROM entity_history WHERE entity_id = $eid ORDER BY changed_at DESC;",
+            )
             .bind(("eid", entity_id.to_string()))
             .await.map_err(|e| e.to_string())?;
         let snaps: Vec<EntitySnapshot> = resp.take(0).map_err(|e| e.to_string())?;
@@ -768,7 +950,11 @@ impl GraphDatabase for SurrealDbAdapter {
         timestamp: &str,
     ) -> Result<Option<EntitySnapshot>, String> {
         let mut resp = self.db
-            .query("SELECT *, type::string(id) AS id FROM entity_history WHERE entity_id = $eid AND changed_at <= $ts ORDER BY changed_at DESC LIMIT 1;")
+            .query(
+                "SELECT type::string(id) AS id, entity_id, category, label, deleted_at, changed_at \
+                 FROM entity_history WHERE entity_id = $eid AND changed_at <= $ts \
+                 ORDER BY changed_at DESC LIMIT 1;",
+            )
             .bind(("eid", entity_id.to_string()))
             .bind(("ts", timestamp.to_string()))
             .await.map_err(|e| e.to_string())?;
@@ -788,8 +974,30 @@ impl GraphDatabase for SurrealDbAdapter {
     // Phase 45: Relationship types
 
     async fn save_relationship_type(&self, rel_type: RelationshipType) -> Result<(), String> {
-        let id_clean = rel_type.id.replace("relationship_type:", "");
-        let select_qs = format!("SELECT label FROM relationship_type:{};", id_clean);
+        let requested_id = rel_type.id.replace("relationship_type:", "");
+
+        // Resolve the canonical row id for this label, if one already exists. The
+        // unique label index means at most one row may carry a given label, so we
+        // collapse onto that row regardless of the caller's requested id. This
+        // makes snapshot import idempotent against a DB that already seeded or
+        // received a relationship_type with the same label under a different id.
+        let mut by_label = self
+            .db
+            .query("SELECT type::string(id) AS id FROM relationship_type WHERE label = $label;")
+            .bind(("label", rel_type.label.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let by_label_rows: Vec<serde_json::Value> = by_label.take(0).map_err(|e| e.to_string())?;
+        let canonical_id = by_label_rows
+            .first()
+            .and_then(|row| row.get("id"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.replace("relationship_type:", ""))
+            .unwrap_or(requested_id.clone());
+
+        // Look up the previous label at the canonical row, so a label rename can
+        // still propagate to existing edges.
+        let select_qs = format!("SELECT label FROM relationship_type:{};", canonical_id);
         let mut existing_resp = self
             .db
             .query(select_qs)
@@ -802,7 +1010,7 @@ impl GraphDatabase for SurrealDbAdapter {
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
 
-        let qs = format!("UPSERT relationship_type:{} CONTENT $data;", id_clean);
+        let qs = format!("UPSERT relationship_type:{} CONTENT $data;", canonical_id);
         let mut value = serde_json::to_value(&rel_type).map_err(|e| e.to_string())?;
         if let Some(obj) = value.as_object_mut() {
             obj.remove("id");

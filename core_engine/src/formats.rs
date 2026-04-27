@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::models::{Entity, SpatialTrait, BlobTrait, TemporalTrait};
+use crate::models::{BlobTrait, Entity, KeyValueTrait, SpatialTrait, TableTrait, TemporalTrait};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompositeEntity {
@@ -9,6 +9,10 @@ pub struct CompositeEntity {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blobs: Vec<BlobTrait>,
     pub temporal: Option<TemporalTrait>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_value_traits: Vec<KeyValueTrait>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub table_traits: Vec<TableTrait>,
 }
 
 pub fn to_yaml(composite: &CompositeEntity) -> Result<String, String> {
@@ -29,7 +33,11 @@ pub fn from_json(json: &str) -> Result<CompositeEntity, String> {
 
 pub fn to_markdown(composite: &CompositeEntity) -> Result<String, String> {
     let yaml = to_yaml(composite)?;
-    let description = composite.entity.metadata.get("description")
+    let description = composite
+        .key_value_traits
+        .iter()
+        .find(|t| t.namespace == "entity")
+        .and_then(|t| t.values.get("content.description"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     
@@ -58,7 +66,26 @@ pub fn from_markdown(md: &str) -> Result<CompositeEntity, String> {
         .to_string();
 
     if !clean_body.is_empty() {
-        composite.entity.metadata.insert("description".to_string(), serde_json::Value::String(clean_body));
+        if let Some(trait_) = composite
+            .key_value_traits
+            .iter_mut()
+            .find(|t| t.namespace == "entity")
+        {
+            trait_
+                .values
+                .insert("content.description".to_string(), serde_json::Value::String(clean_body));
+        } else {
+            composite.key_value_traits.push(KeyValueTrait {
+                id: "key_value_trait:entity".to_string(),
+                owner: composite.entity.id.clone(),
+                namespace: "entity".to_string(),
+                values: std::iter::once((
+                    "content.description".to_string(),
+                    serde_json::Value::String(clean_body),
+                ))
+                .collect(),
+            });
+        }
     }
 
     Ok(composite)

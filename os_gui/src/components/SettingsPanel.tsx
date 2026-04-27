@@ -18,6 +18,8 @@ export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
   const fetchAllEntities    = useOsStore(s => s.fetchAllEntities);
   const fetchStorageHealth  = useOsStore(s => s.fetchStorageHealth);
   const fetchBlobTraits     = useOsStore(s => s.fetchBlobTraits);
+  const fetchKeyValueTraits = useOsStore(s => s.fetchKeyValueTraits);
+  const fetchTableTraits    = useOsStore(s => s.fetchTableTraits);
   const fetchSpatialTraits  = useOsStore(s => s.fetchSpatialTraits);
   const fetchTemporalTraits = useOsStore(s => s.fetchTemporalTraits);
   const fetchAllLabelTraits = useOsStore(s => s.fetchAllLabelTraits);
@@ -36,7 +38,7 @@ export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
     setClearDbErr('');
     try {
       await invoke('clear_database');
-      await Promise.all([fetchAllEntities(), fetchSpatialTraits(), fetchTemporalTraits(), fetchBlobTraits(), fetchAllLabelTraits(), fetchStorageHealth()]);
+      await Promise.all([fetchAllEntities(), fetchSpatialTraits(), fetchTemporalTraits(), fetchBlobTraits(), fetchKeyValueTraits(), fetchTableTraits(), fetchAllLabelTraits(), fetchStorageHealth()]);
     } catch (e: any) { setClearDbErr(String(e)); }
     setConfirmDb(false);
   };

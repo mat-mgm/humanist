@@ -4,8 +4,8 @@ use core_engine::{
     db::SurrealDbAdapter,
     gc,
     models::{
-        EdgeRecord, Entity, EntityKind, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait,
-        TemporalTrait, TraitSnapshot,
+        EdgeRecord, Entity, EntityKind, EntitySnapshot, KeyValueTrait, LabelTrait,
+        RelationshipType, SpatialTrait, TableTrait, TemporalTrait, TraitSnapshot,
     },
     ports::{BlobStorageProvider, GraphDatabase, StateObserver},
 };
@@ -126,6 +126,51 @@ fn emit_import_finished(
             error,
         },
     );
+}
+
+const ENTITY_DATA_NAMESPACE: &str = "entity";
+
+fn canonical_key_value_trait_id(owner: &str, namespace: &str) -> String {
+    let owner_ulid = owner.replace("entity:", "");
+    let ns = namespace.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    format!("key_value_trait:{}_{}", owner_ulid, ns)
+}
+
+async fn load_entity_key_value_trait(
+    db: &SurrealDbAdapter,
+    owner: &str,
+    namespace: &str,
+) -> Result<Option<KeyValueTrait>, String> {
+    Ok(db
+        .get_key_value_traits()
+        .await?
+        .into_iter()
+        .find(|trait_| trait_.owner == owner && trait_.namespace == namespace))
+}
+
+async fn save_entity_values(
+    db: &SurrealDbAdapter,
+    owner: &str,
+    values: HashMap<String, serde_json::Value>,
+) -> Result<KeyValueTrait, String> {
+    let trait_ = KeyValueTrait {
+        id: canonical_key_value_trait_id(owner, ENTITY_DATA_NAMESPACE),
+        owner: owner.to_string(),
+        namespace: ENTITY_DATA_NAMESPACE.to_string(),
+        values,
+    };
+    db.save_key_value_trait(trait_.clone()).await?;
+    Ok(trait_)
+}
+
+fn entity_json(entity: &Entity) -> serde_json::Value {
+    serde_json::json!({
+        "id": entity.id,
+        "category": entity.category,
+        "label": entity.label,
+        "lang_canonical": entity.lang_canonical,
+        "deleted_at": entity.deleted_at,
+    })
 }
 
 fn count_blob_store(path: &std::path::Path) -> Result<(usize, u64), String> {
@@ -365,7 +410,6 @@ async fn reify_edge(
         category: EntityKind::Abstract,
         label: label.clone(),
         lang_canonical: "en".to_string(),
-        metadata: HashMap::new(),
         deleted_at: None,
     };
     st.db.save_entity(entity).await?;
@@ -538,7 +582,6 @@ async fn ingest_entity(
         category: EntityKind::Digital,
         label: label.clone(),
         lang_canonical: "en".to_string(),
-        metadata: HashMap::new(),
         deleted_at: None,
     };
 
@@ -635,10 +678,21 @@ async fn begin_import(
                 category: category_enum,
                 label: label.clone(),
                 lang_canonical: "en".to_string(),
-                metadata: HashMap::new(),
                 deleted_at: None,
             };
             db.save_entity(entity).await?;
+            if let Some(path) = source_path.clone() {
+                let mut values = HashMap::new();
+                values.insert(
+                    "fs.source_path".to_string(),
+                    serde_json::Value::String(path.clone()),
+                );
+                values.insert(
+                    "fs.import_path".to_string(),
+                    serde_json::Value::String(path),
+                );
+                save_entity_values(&db, &id, values).await?;
+            }
 
             emit_import_progress(
                 &app,
@@ -721,6 +775,8 @@ async fn clear_database(state: State<'_, Mutex<AppState>>) -> Result<(), String>
              DELETE spatial_trait;
              DELETE temporal_trait;
              DELETE blob_trait;
+             DELETE key_value_trait;
+             DELETE table_trait;
              DELETE label_trait;
              DELETE entity_history;
              DELETE trait_history;
@@ -753,14 +809,8 @@ async fn list_entities(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let st = state.lock().await;
-    let mut response = st
-        .db
-        .db
-        .query("SELECT *, type::string(id) AS id FROM entity WHERE deleted_at = NONE;")
-        .await
-        .map_err(|e| e.to_string())?;
-    let records: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
-    Ok(records)
+    let records = st.db.list_entities().await?;
+    Ok(records.iter().map(entity_json).collect())
 }
 
 #[tauri::command]
@@ -777,6 +827,77 @@ async fn get_blob_traits(
 ) -> Result<Vec<core_engine::models::BlobTrait>, String> {
     let st = state.lock().await;
     st.db.get_blob_traits().await
+}
+
+#[tauri::command]
+async fn get_key_value_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<KeyValueTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_key_value_traits().await
+}
+
+#[tauri::command]
+async fn get_table_traits(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<TableTrait>, String> {
+    let st = state.lock().await;
+    st.db.get_table_traits().await
+}
+
+#[tauri::command]
+async fn save_table_trait(
+    owner: String,
+    namespace: String,
+    columns: Vec<core_engine::models::TableColumn>,
+    rows: Vec<std::collections::HashMap<String, serde_json::Value>>,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<TableTrait, String> {
+    let owner_ulid = owner.replace("entity:", "");
+    let ns_safe: String = namespace
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let trait_ = TableTrait {
+        id: format!("table_trait:{}_{}", owner_ulid, ns_safe),
+        owner: owner.clone(),
+        namespace,
+        columns,
+        rows,
+    };
+    let st = state.lock().await;
+    st.db.save_table_trait(trait_.clone()).await?;
+    app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": owner}),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(trait_)
+}
+
+#[tauri::command]
+async fn delete_table_trait(
+    table_trait_id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let st = state.lock().await;
+    let owner = st
+        .db
+        .get_table_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == table_trait_id)
+        .map(|t| t.owner);
+    st.db.delete_table_trait(&table_trait_id).await?;
+    if let Some(o) = owner {
+        let _ = app.emit(
+            "entity-updated",
+            serde_json::json!({"topic": "entity.updated", "ulid": o}),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -872,16 +993,7 @@ async fn get_entity_neighborhood(
     // Serialize entities the same way list_entities does (id as string)
     let entities_json: Vec<serde_json::Value> = entities
         .iter()
-        .map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "category": e.category,
-                "label": e.label,
-                "lang_canonical": e.lang_canonical,
-                "metadata": e.metadata,
-                "deleted_at": e.deleted_at,
-            })
-        })
+        .map(entity_json)
         .collect();
     Ok(NeighborhoodResult {
         entities: entities_json,
@@ -913,16 +1025,7 @@ async fn search_entities(
         .await?;
     let result = entities
         .iter()
-        .map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "category": e.category,
-                "label": e.label,
-                "lang_canonical": e.lang_canonical,
-                "metadata": e.metadata,
-                "deleted_at": e.deleted_at,
-            })
-        })
+        .map(entity_json)
         .collect();
     Ok(result)
 }
@@ -1011,7 +1114,6 @@ async fn enable_rule(
 ) -> Result<prolog_engine::rules::HeadSignature, String> {
     let st = state.lock().await;
     let body = read_rule_body(&st.db, &st.blob, &rule_id).await?;
-    let mut entity = st.db.get_entity(&rule_id).await?;
     let (tx, rx) = oneshot::channel();
     st.rule_tx
         .send(RuleOp::Enable { body, resp: tx })
@@ -1020,18 +1122,20 @@ async fn enable_rule(
     let head = rx
         .await
         .map_err(|_| "rule channel dropped".to_string())??;
-    entity
-        .metadata
-        .insert("rule_enabled".to_string(), serde_json::Value::Bool(true));
-    entity.metadata.insert(
-        "rule_head_functor".to_string(),
+    let mut values = load_entity_key_value_trait(&st.db, &rule_id, ENTITY_DATA_NAMESPACE)
+        .await?
+        .map(|trait_| trait_.values)
+        .unwrap_or_default();
+    values.insert("rule.enabled".to_string(), serde_json::Value::Bool(true));
+    values.insert(
+        "rule.head_functor".to_string(),
         serde_json::Value::String(head.functor.clone()),
     );
-    entity.metadata.insert(
-        "rule_head_arity".to_string(),
+    values.insert(
+        "rule.head_arity".to_string(),
         serde_json::Value::Number(serde_json::Number::from(head.arity as u64)),
     );
-    st.db.save_entity(entity).await?;
+    save_entity_values(&st.db, &rule_id, values).await?;
     Ok(head)
 }
 
@@ -1043,7 +1147,6 @@ async fn disable_rule(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    let mut entity = st.db.get_entity(&rule_id).await?;
     let head = prolog_engine::rules::HeadSignature {
         functor: head_functor,
         arity: head_arity,
@@ -1054,10 +1157,12 @@ async fn disable_rule(
         .await
         .map_err(|_| "rule channel closed".to_string())?;
     rx.await.map_err(|_| "rule channel dropped".to_string())??;
-    entity
-        .metadata
-        .insert("rule_enabled".to_string(), serde_json::Value::Bool(false));
-    st.db.save_entity(entity).await?;
+    let mut values = load_entity_key_value_trait(&st.db, &rule_id, ENTITY_DATA_NAMESPACE)
+        .await?
+        .map(|trait_| trait_.values)
+        .unwrap_or_default();
+    values.insert("rule.enabled".to_string(), serde_json::Value::Bool(false));
+    save_entity_values(&st.db, &rule_id, values).await?;
     Ok(())
 }
 
@@ -1261,7 +1366,6 @@ async fn create_entity(
         category: category_enum,
         label: label.clone(),
         lang_canonical: "en".to_string(),
-        metadata: HashMap::new(),
         deleted_at: None,
     };
     let st = state.lock().await;
@@ -1278,19 +1382,18 @@ async fn create_entity(
 }
 
 #[tauri::command]
-async fn update_metadata(
+async fn save_entity_data(
     id: String,
-    metadata: serde_json::Value,
+    values: serde_json::Value,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let st = state.lock().await;
-    let mut entity = st.db.get_entity(&id).await?;
-    let map = metadata
+    let map = values
         .as_object()
-        .ok_or("metadata must be a JSON object".to_string())?;
-    entity.metadata = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    st.db.save_entity(entity).await?;
+        .ok_or("values must be a JSON object".to_string())?;
+    let values_map = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    save_entity_values(&st.db, &id, values_map).await?;
     app.emit(
         "entity-updated",
         serde_json::json!({"topic": "entity.updated", "ulid": id}),
@@ -1329,17 +1432,17 @@ async fn tag_entity(
         _ => {
             let ulid = Ulid::new().to_string();
             let id = format!("entity:{}", ulid);
-            let mut meta = HashMap::new();
-            meta.insert("is_tag".to_string(), serde_json::Value::Bool(true));
             let tag_entity = Entity {
                 id: id.clone(),
                 category: EntityKind::Abstract,
                 label: tag_label.clone(),
                 lang_canonical: "en".to_string(),
-                metadata: meta,
                 deleted_at: None,
             };
             st.db.save_entity(tag_entity).await?;
+            let mut values = HashMap::new();
+            values.insert("entity.is_tag".to_string(), serde_json::Value::Bool(true));
+            save_entity_values(&st.db, &id, values).await?;
             st.bus.on_event("entity.created".to_string(), 1, ulid).await;
             id
         }
@@ -1570,12 +1673,28 @@ async fn edit_entity_in_terminal(
         .await?
         .into_iter()
         .find(|t| t.owner == entity_id);
+    let key_value_traits: Vec<_> = st
+        .db
+        .get_key_value_traits()
+        .await?
+        .into_iter()
+        .filter(|t| t.owner == entity_id)
+        .collect();
+    let table_traits: Vec<_> = st
+        .db
+        .get_table_traits()
+        .await?
+        .into_iter()
+        .filter(|t| t.owner == entity_id)
+        .collect();
 
     let composite = core_engine::formats::CompositeEntity {
         entity,
         spatial,
         blobs,
         temporal,
+        key_value_traits,
+        table_traits,
     };
 
     // 2. Serialize
@@ -1665,6 +1784,14 @@ async fn edit_entity_in_terminal(
                         let mut t = t;
                         t.owner = entity_id_c.clone();
                         let _ = st.db.save_temporal_trait(t).await;
+                    }
+                    for mut kv in updated.key_value_traits {
+                        kv.owner = entity_id_c.clone();
+                        let _ = st.db.save_key_value_trait(kv).await;
+                    }
+                    for mut table in updated.table_traits {
+                        table.owner = entity_id_c.clone();
+                        let _ = st.db.save_table_trait(table).await;
                     }
 
                     // Trigger bus event for real-time reactivity
@@ -1968,7 +2095,28 @@ async fn get_entity_text(
         .await?
         .into_iter()
         .find(|t| t.owner == entity_id);
-    let composite = core_engine::formats::CompositeEntity { entity, spatial, blobs, temporal };
+    let key_value_traits: Vec<_> = st
+        .db
+        .get_key_value_traits()
+        .await?
+        .into_iter()
+        .filter(|t| t.owner == entity_id)
+        .collect();
+    let table_traits: Vec<_> = st
+        .db
+        .get_table_traits()
+        .await?
+        .into_iter()
+        .filter(|t| t.owner == entity_id)
+        .collect();
+    let composite = core_engine::formats::CompositeEntity {
+        entity,
+        spatial,
+        blobs,
+        temporal,
+        key_value_traits,
+        table_traits,
+    };
     match format.as_str() {
         "json" => core_engine::formats::to_json(&composite),
         _ => core_engine::formats::to_yaml(&composite),
@@ -2003,6 +2151,14 @@ async fn apply_entity_text(
     for mut b in result.blobs {
         b.owner = entity_id.clone();
         st.db.save_blob_trait(b).await?;
+    }
+    for mut kv in result.key_value_traits {
+        kv.owner = entity_id.clone();
+        st.db.save_key_value_trait(kv).await?;
+    }
+    for mut table in result.table_traits {
+        table.owner = entity_id.clone();
+        st.db.save_table_trait(table).await?;
     }
     app.emit(
         "entity-updated",
@@ -2496,6 +2652,8 @@ pub fn run() {
             get_spatial_traits,
             save_spatial_trait,
             get_blob_traits,
+            get_key_value_traits,
+            get_table_traits,
             get_presigned_url,
             save_blob_content,
             query_context,
@@ -2520,7 +2678,7 @@ pub fn run() {
             execute_sql,
             exit_app,
             create_entity,
-            update_metadata,
+            save_entity_data,
             delete_entity,
             tag_entity,
             untag_entity,
@@ -2528,6 +2686,8 @@ pub fn run() {
             get_entity_edges,
             save_temporal_trait,
             get_temporal_traits,
+            save_table_trait,
+            delete_table_trait,
             get_entity_history,
             get_entity_as_of,
             get_trait_history,

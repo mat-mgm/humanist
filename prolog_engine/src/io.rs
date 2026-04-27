@@ -63,8 +63,6 @@ mod tests {
         BlobFile, BlobTrait, EdgeRecord, Entity, EntityKind, LabelTrait, RelationshipType,
         SpatialTrait, TemporalTrait,
     };
-    use std::collections::HashMap;
-
     fn populated_snapshot() -> DomainSnapshot {
         DomainSnapshot {
             entities: vec![
@@ -73,7 +71,6 @@ mod tests {
                     category: EntityKind::Physical,
                     label: "Tanker".to_string(),
                     lang_canonical: "en".to_string(),
-                    metadata: HashMap::new(),
                     deleted_at: None,
                 },
                 Entity {
@@ -81,7 +78,6 @@ mod tests {
                     category: EntityKind::Persona,
                     label: "Captain".to_string(),
                     lang_canonical: "en".to_string(),
-                    metadata: HashMap::new(),
                     deleted_at: None,
                 },
             ],
@@ -119,6 +115,8 @@ mod tests {
                 hash: "abcdef".to_string(),
                 size: 0,
             }],
+            key_value_traits: vec![],
+            table_traits: vec![],
             relationship_types: vec![RelationshipType {
                 id: "rt:contains".to_string(),
                 label: "contains".to_string(),

@@ -6,7 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-import { useOsStore, resolvedLabel } from '../store';
+import { useOsStore, entityValues, resolvedLabel } from '../store';
 import { logFrontend } from '../lib/log';
 import { RelateDialog } from './RelateDialog';
 import { getConvexHull, drawRoundedHullPath, getStableColor } from '../utils/graphUtils';
@@ -41,6 +41,7 @@ const selectEdges = (s: any) => s.edges;
 const selectSelectedId = (s: any) => s.selectedEntityId;
 const selectSelectEntity = (s: any) => s.selectEntity;
 const selectBlobTraits = (s: any) => s.blobTraits;
+const selectKeyValueTraits = (s: any) => s.keyValueTraits;
 const selectDeleteEntity = (s: any) => s.deleteEntity;
 const selectDeleteEntities = (s: any) => s.deleteEntities;
 const selectTagEntity = (s: any) => s.tagEntity;
@@ -87,6 +88,7 @@ export const GraphPanel = memo(function GraphPanel() {
   const setSelectedIds = useOsStore((s: any) => s.setSelectedIds);
   const toggleSelection = useOsStore((s: any) => s.toggleSelection);
   const blobTraits = useOsStore(selectBlobTraits);
+  const keyValueTraits = useOsStore(selectKeyValueTraits);
   const deleteEntity = useOsStore(selectDeleteEntity);
   const deleteEntities = useOsStore(selectDeleteEntities);
   const tagEntity = useOsStore(selectTagEntity);
@@ -549,8 +551,8 @@ export const GraphPanel = memo(function GraphPanel() {
           }
         }
 
-        // Icon override: render entity icon from metadata.icon (always shown, not toggled)
-        const iconPath = n.metadata?.icon as string | undefined;
+        // Icon override: render entity icon from ui.icon (always shown, not toggled)
+        const iconPath = n.metadata?.['ui.icon'] as string | undefined;
         if (iconPath && !isImageReady) {
           if (!n._iconImg) {
             const img = new Image();
@@ -1419,17 +1421,18 @@ export const GraphPanel = memo(function GraphPanel() {
       const saved = nodePositions[strippedId];
 
       const displayLabel = resolvedLabel(entity, allLabelTraits, activeLocale);
+      const values = entityValues(entity.id, keyValueTraits);
       if (live) {
         live.label = displayLabel;
         live.category = entity.category;
-        live.metadata = entity.metadata;
+        live.metadata = values;
         nextNodes.push(live);
       } else {
         nextNodes.push({
           id: strippedId,
           label: displayLabel,
           category: entity.category,
-          metadata: entity.metadata,
+          metadata: values,
           x: saved?.x,
           y: saved?.y
         });
@@ -1656,9 +1659,10 @@ export const GraphPanel = memo(function GraphPanel() {
                   }
                   const ent = entities.find((e: any) => e.id === ctxMenu.nodeId);
                   if (ent) {
-                    await invoke('update_metadata', {
+                    const values = entityValues(ent.id, keyValueTraits);
+                    await invoke('save_entity_data', {
                       id: ctxMenu.nodeId,
-                      metadata: { ...ent.metadata, icon: iconPath },
+                      values: { ...values, 'ui.icon': iconPath },
                     });
                   }
                 }
@@ -1666,9 +1670,10 @@ export const GraphPanel = memo(function GraphPanel() {
               }},
               { label: 'Clear Icon', action: async () => {
                 const ent2 = entities.find((e: any) => e.id === ctxMenu.nodeId);
-                if (ent2 && (ent2.metadata as any)?.icon) {
-                  const { icon: _removed, ...rest } = ent2.metadata as any;
-                  await invoke('update_metadata', { id: ctxMenu.nodeId, metadata: rest });
+                const values = ent2 ? entityValues(ent2.id, keyValueTraits) : {};
+                if (ent2 && values['ui.icon']) {
+                  const { ['ui.icon']: _removed, ...rest } = values;
+                  await invoke('save_entity_data', { id: ctxMenu.nodeId, values: rest });
                 }
                 setCtxMenu(null);
               }},

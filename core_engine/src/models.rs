@@ -17,7 +17,6 @@ pub struct Entity {
     pub label: String,
     #[serde(default = "default_lang_canonical")]
     pub lang_canonical: String,
-    pub metadata: HashMap<String, serde_json::Value>,
     pub deleted_at: Option<String>,
 }
 
@@ -57,6 +56,40 @@ pub struct BlobTrait {
     pub mime: String,
     pub hash: String,
     pub size: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyValueTrait {
+    pub id: String,
+    pub owner: String,
+    pub namespace: String,
+    pub values: HashMap<String, serde_json::Value>,
+}
+
+impl KeyValueTrait {
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.values.get(key)
+    }
+
+    pub fn insert(&mut self, key: impl Into<String>, value: serde_json::Value) {
+        self.values.insert(key.into(), value);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableColumn {
+    pub name: String,
+    pub data_type: String,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableTrait {
+    pub id: String,
+    pub owner: String,
+    pub namespace: String,
+    pub columns: Vec<TableColumn>,
+    pub rows: Vec<HashMap<String, serde_json::Value>>,
 }
 
 /// Represents a temporal event attached to an entity.
@@ -146,7 +179,6 @@ pub struct EntitySnapshot {
     pub entity_id: String,
     pub category: EntityKind,
     pub label: String,
-    pub metadata: HashMap<String, serde_json::Value>,
     pub deleted_at: Option<String>,
     pub changed_at: String,
 }
@@ -178,6 +210,10 @@ pub struct DomainSnapshot {
     pub temporal_traits: Vec<TemporalTrait>,
     #[serde(default)]
     pub blob_traits: Vec<BlobTrait>,
+    #[serde(default)]
+    pub key_value_traits: Vec<KeyValueTrait>,
+    #[serde(default)]
+    pub table_traits: Vec<TableTrait>,
     #[serde(default)]
     pub relationship_types: Vec<RelationshipType>,
     #[serde(default)]

@@ -6108,6 +6108,7 @@ dependencies = [
  "core_engine",
  "scryer-prolog",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

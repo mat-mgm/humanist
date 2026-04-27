@@ -352,18 +352,17 @@ export const GraphSidePanel = memo(function GraphSidePanel() {
         <span style={label}>Graph</span>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           <button
-            onClick={() => backendReady && loadFullGraph()}
-            disabled={!backendReady}
+            onClick={() => loadFullGraph()}
             style={{
               ...btnBase,
               background: graphMode === 'full' ? 'var(--accent)' : 'var(--bg-secondary)',
               border: `1px solid ${graphMode === 'full' ? 'var(--accent)' : 'var(--border)'}`,
-              color: graphMode === 'full' ? '#fff' : backendReady ? 'var(--text-primary)' : 'var(--text-hint)',
-              cursor: backendReady ? 'pointer' : 'not-allowed',
-              opacity: backendReady ? 1 : 0.5,
+              color: graphMode === 'full' ? '#fff' : 'var(--text-primary)',
+              cursor: 'pointer',
             }}
+            title={backendReady ? 'Load full graph' : 'Backend may still be starting — click to try anyway'}
           >
-            {backendReady ? 'Load' : 'Init…'}
+            Load
           </button>
           <button onClick={() => clearGraph()} style={btnBase}>Clear</button>
         </div>

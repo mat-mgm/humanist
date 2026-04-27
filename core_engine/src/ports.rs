@@ -1,7 +1,7 @@
 use crate::blob::StoredBlob;
 use crate::models::{
-    EdgeRecord, EntitySnapshot, LabelTrait, RelationshipType, SpatialTrait, TemporalTrait,
-    TraitSnapshot,
+    EdgeRecord, EntitySnapshot, KeyValueTrait, LabelTrait, RelationshipType, SpatialTrait,
+    TableTrait, TemporalTrait, TraitSnapshot,
 };
 use async_trait::async_trait;
 
@@ -41,6 +41,14 @@ pub trait GraphDatabase {
     async fn save_blob_trait(&self, trait_: crate::models::BlobTrait) -> Result<(), String>;
     async fn get_blob_traits(&self) -> Result<Vec<crate::models::BlobTrait>, String>;
     async fn delete_blob_trait(&self, blob_trait_id: &str) -> Result<(), String>;
+
+    async fn save_key_value_trait(&self, trait_: KeyValueTrait) -> Result<(), String>;
+    async fn get_key_value_traits(&self) -> Result<Vec<KeyValueTrait>, String>;
+    async fn delete_key_value_trait(&self, key_value_trait_id: &str) -> Result<(), String>;
+
+    async fn save_table_trait(&self, trait_: TableTrait) -> Result<(), String>;
+    async fn get_table_traits(&self) -> Result<Vec<TableTrait>, String>;
+    async fn delete_table_trait(&self, table_trait_id: &str) -> Result<(), String>;
 
     // Phase 35: Temporal traits
     async fn save_temporal_trait(&self, trait_: TemporalTrait) -> Result<(), String>;

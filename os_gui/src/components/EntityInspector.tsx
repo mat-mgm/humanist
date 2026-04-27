@@ -1,11 +1,80 @@
-import { memo, useMemo, useState, useCallback, useEffect } from 'react';
+import { memo, useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Trash2, Pencil, Info, X, Minus, Clipboard, Check, FilePlus2, Database } from 'lucide-react';
 
-import { useOsStore, resolvedLabel } from '../store';
-import { EntitySnapshot, LabelTrait, SpatialTrait, TemporalTrait } from '../models';
+import { useOsStore, entityValues, resolvedLabel } from '../store';
+import { EntitySnapshot, LabelTrait, SpatialTrait, TableTrait, TableColumn, TemporalTrait } from '../models';
 import { SearchableDropdown } from './SearchableDropdown';
 import { RelateDialog } from './RelateDialog';
+
+const KIND_COLORS: Record<string, string> = {
+  physical: '#5a9cff',
+  digital:  '#7aff8c',
+  abstract: '#ffd166',
+  persona:  '#ff8b94',
+};
+
+// Graph-search-style entity dropdown. Selects an existing tag or, on Enter
+// with no match, lets the parent create a new one via free-text.
+function TagSearchDropdown({
+  value, onChange, onSelect, onEnterFreeText, options, placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (label: string) => void;
+  onEnterFreeText: () => void;
+  options: { id: string; label: string; category: string }[];
+  placeholder?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const blurT = useRef<number | null>(null);
+  const q = value.trim().toLowerCase();
+  const filtered = useMemo(() =>
+    !q ? options.slice(0, 80) : options.filter(o => o.label.toLowerCase().includes(q)).slice(0, 80),
+    [q, options]);
+  return (
+    <div style={{ position: 'relative', flex: 1 }}>
+      <input
+        type="text" value={value} placeholder={placeholder ?? 'Add tag…'}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => { if (blurT.current) window.clearTimeout(blurT.current); setFocused(true); }}
+        onBlur={() => { blurT.current = window.setTimeout(() => setFocused(false), 150); }}
+        onKeyDown={e => { if (e.key === 'Enter') onEnterFreeText(); }}
+        style={{
+          width: '100%', background: 'var(--bg-primary)',
+          border: '1px solid var(--accent)', color: 'var(--text-primary)',
+          padding: '5px 10px', borderRadius: 4, outline: 'none',
+          fontSize: 11, height: 28,
+        }}
+      />
+      {focused && filtered.length > 0 && (
+        <div style={{
+          position: 'absolute', top: 27, left: 0, right: 0,
+          maxHeight: 220, overflowY: 'auto',
+          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+          borderRadius: 4, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+        }}>
+          {filtered.map(o => (
+            <div
+              key={o.id}
+              onMouseDown={() => { onSelect(o.label); }}
+              style={{
+                padding: '4px 10px', fontSize: 11, cursor: 'pointer',
+                color: 'var(--text-primary)', borderBottom: '1px solid var(--border)',
+                display: 'flex', gap: 6, alignItems: 'center',
+              }}
+              onMouseEnter={el => (el.currentTarget.style.background = 'var(--bg-primary)')}
+              onMouseLeave={el => (el.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ color: KIND_COLORS[o.category] ?? 'var(--text-hint)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>{o.category}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Atomic selectors ──────────────────────────────────────────────────────────
 const selectSelectedId   = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityId;
@@ -14,6 +83,7 @@ const selectEntities     = (s: ReturnType<typeof useOsStore.getState>) => s.enti
 const selectSelectEntity = (s: ReturnType<typeof useOsStore.getState>) => s.selectEntity;
 const selectSpatialTraits = (s: ReturnType<typeof useOsStore.getState>) => s.spatialTraits;
 const selectTemporalTraits = (s: ReturnType<typeof useOsStore.getState>) => s.temporalTraits;
+const selectKeyValueTraits = (s: ReturnType<typeof useOsStore.getState>) => s.keyValueTraits;
 const selectEdges        = (s: ReturnType<typeof useOsStore.getState>) => s.selectedEntityEdges;
 
 function formatBlobSize(size: number): string {
@@ -150,6 +220,7 @@ const SingleInspector = memo(function SingleInspector() {
   const edges            = useOsStore(selectEdges);
   const spatialTraits    = useOsStore(selectSpatialTraits);
   const temporalTraits   = useOsStore(selectTemporalTraits);
+  const keyValueTraits   = useOsStore(selectKeyValueTraits);
   const selectEntity     = useOsStore(selectSelectEntity);
   const entityHistory    = useOsStore(s => s.entityHistory);
   const labelTraits      = useOsStore(s => s.labelTraits);
@@ -157,7 +228,11 @@ const SingleInspector = memo(function SingleInspector() {
   const allLabelTraits   = useOsStore(s => s.allLabelTraits);
   const blobTraits       = useOsStore(s => s.blobTraits);
 
-  const updateMetadata = useOsStore(s => s.updateMetadata);
+  const tableTraits      = useOsStore(s => s.tableTraits);
+  const saveTableTrait   = useOsStore(s => s.saveTableTrait);
+  const deleteTableTrait = useOsStore(s => s.deleteTableTrait);
+
+  const saveEntityData = useOsStore(s => s.saveEntityData);
   const deleteEntity = useOsStore(s => s.deleteEntity);
   const tagEntity = useOsStore(s => s.tagEntity);
   const untagEntity = useOsStore(s => s.untagEntity);
@@ -173,6 +248,10 @@ const SingleInspector = memo(function SingleInspector() {
 
 
   const selected = useMemo(() => entities.find(e => e.id === selectedId) ?? null, [entities, selectedId]);
+  const selectedValues = useMemo(
+    () => selected ? entityValues(selected.id, keyValueTraits) : {},
+    [selected, keyValueTraits],
+  );
   const ownBlobTraits = selected ? blobTraits.filter(b => b.owner === selected.id) : [];
   const blobTrait = ownBlobTraits[0] ?? null;
   const blobSourcePath = blobTrait?.localUrl ?? null;
@@ -212,9 +291,9 @@ const SingleInspector = memo(function SingleInspector() {
 
   const startEditMeta = useCallback(() => {
     if (!selected) return;
-    setEditMeta(Object.fromEntries(Object.entries(selected.metadata ?? {}).map(([k, v]) => [k, JSON.stringify(v)])));
+    setEditMeta(Object.fromEntries(Object.entries(selectedValues).map(([k, v]) => [k, JSON.stringify(v)])));
     setMetaError('');
-  }, [selected]);
+  }, [selected, selectedValues]);
 
   const saveMeta = useCallback(async () => {
     if (!selected || !editMeta) return;
@@ -222,10 +301,10 @@ const SingleInspector = memo(function SingleInspector() {
       const parsed = Object.fromEntries(Object.entries(editMeta).map(([k, v]) => {
         try { return [k, JSON.parse(v)]; } catch { return [k, v]; }
       }));
-      await updateMetadata(selected.id, parsed);
+      await saveEntityData(selected.id, parsed);
       setEditMeta(null);
     } catch (e: any) { setMetaError(String(e)); }
-  }, [selected, editMeta, updateMetadata]);
+  }, [selected, editMeta, saveEntityData]);
 
   const addMetaRow = useCallback(() => {
     if (!newKey.trim()) return;
@@ -233,16 +312,46 @@ const SingleInspector = memo(function SingleInspector() {
     setNewKey(''); setNewVal('');
   }, [newKey, newVal]);
 
-  // Tag input
+  // Tag input (graph-search-style dropdown)
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState('');
-  const addTag = useCallback(async () => {
-    const t = tagInput.trim();
-    if (!t || !selected) return;
+  const tagOptions = useMemo(() =>
+    entities
+      .filter((e: any) => e.category === 'abstract')
+      .map((e: any) => ({ id: e.id, label: resolvedLabel(e, allLabelTraits, activeLocale), category: e.category })),
+    [entities, allLabelTraits, activeLocale]);
+  const submitTag = useCallback(async (label: string) => {
+    if (!selected) return;
     setTagError('');
-    try { await tagEntity(selected.id, t); setTagInput(''); }
+    try { await tagEntity(selected.id, label); setTagInput(''); }
     catch (e: any) { setTagError(String(e)); }
-  }, [tagInput, selected, tagEntity]);
+  }, [selected, tagEntity]);
+
+  // Tables
+  const ownTableTraits = useMemo(
+    () => selected ? tableTraits.filter(t => t.owner === selected.id) : [],
+    [tableTraits, selected],
+  );
+  const [newTableNs, setNewTableNs]    = useState('');
+  const [newTableCols, setNewTableCols] = useState('col1');
+  const [tableError, setTableError]     = useState('');
+  const addTable = useCallback(async () => {
+    if (!selected) return;
+    const ns = newTableNs.trim();
+    if (!ns) { setTableError('Namespace required'); return; }
+    if (ownTableTraits.some(t => t.namespace === ns)) {
+      setTableError(`A table with namespace "${ns}" already exists`); return;
+    }
+    const cols: TableColumn[] = newTableCols.split(',')
+      .map(s => s.trim()).filter(Boolean)
+      .map(name => ({ name, data_type: 'string', nullable: true }));
+    if (cols.length === 0) { setTableError('At least one column required'); return; }
+    setTableError('');
+    try {
+      await saveTableTrait(selected.id, ns, cols, []);
+      setNewTableNs(''); setNewTableCols('col1');
+    } catch (e: any) { setTableError(String(e)); }
+  }, [selected, newTableNs, newTableCols, ownTableTraits, saveTableTrait]);
 
   // Confirm delete
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -425,9 +534,13 @@ const SingleInspector = memo(function SingleInspector() {
   return (
     <div className="properties-view" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
         <span className={`kind-badge kind-${selected.category}`}>{selected.category}</span>
         <span style={{ fontWeight: 700, fontSize: 14, flex: 1, color: 'var(--text-primary)', wordBreak: 'break-all' }}>{selectedDisplayLabel}</span>
+        <button onClick={onOpenInEditor} title="Open in editor"
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
+          <Pencil size={12} style={{ marginRight: 4 }} /> Edit
+        </button>
         {!confirmDelete ? (
           <button onClick={() => setConfirmDelete(true)}
             style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
@@ -467,20 +580,146 @@ const SingleInspector = memo(function SingleInspector() {
         })}
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-        <SearchableDropdown
+        <TagSearchDropdown
           value={tagInput} onChange={setTagInput}
-          onSelect={async (opt) => {
-            setTagInput('');
-            try { await tagEntity(selected.id, opt.label); }
-            catch (e: any) { setTagError(String(e)); }
-          }}
-          options={entities.filter((e: any) => e.category === 'abstract').map((e: any) => ({ id: e.id, label: e.label }))}
-          placeholder="Add tag…" style={{ flex: 1 }}
+          onSelect={(label) => submitTag(label)}
+          onEnterFreeText={() => { const t = tagInput.trim(); if (t) submitTag(t); }}
+          options={tagOptions} placeholder="Add tag…"
         />
-        <button onClick={addTag}
+        <button onClick={() => { const t = tagInput.trim(); if (t) submitTag(t); }}
           style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>+</button>
       </div>
       {tagError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '4px 0 0' }}>{tagError}</p>}
+
+      {/* Relationships */}
+      <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Relationships</span>
+        <button onClick={() => setShowRelate(true)}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
+          + Relate
+        </button>
+      </div>
+      {otherEdges.length === 0
+        ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No relationships</span>
+        : otherEdges.map((edge, i) => {
+          const isOut = `entity:${edge.from}` === selectedId || edge.from === shortId;
+          const peerId = isOut ? edge.to : edge.from;
+          const peerLabel = labelFor(peerId);
+          const isEdgeSelected = selectedEdgeIdx === i;
+          const hasPayload = edge.strength != null || edge.latency != null || (edge.metadata && Object.keys(edge.metadata).length > 0);
+          return (
+            <div key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, cursor: 'pointer' }}
+                onClick={() => setSelectedEdgeIdx(isEdgeSelected ? null : i)}>
+                <span style={{ color: isOut ? 'var(--accent)' : 'var(--text-hint)', fontWeight: 700, fontSize: 10 }}>{isOut ? '→' : '←'}</span>
+                <span style={{ color: 'var(--text-hint)', fontStyle: 'italic', fontSize: 11 }}>{edge.label}</span>
+                <span style={{ flex: 1, color: 'var(--text-primary)' }}
+                  onClick={e => { e.stopPropagation(); selectEntity(`entity:${peerId}`); }} title="Select entity">
+                  {peerLabel}
+                </span>
+                {hasPayload && <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>●</span>}
+                <button onClick={e => { e.stopPropagation(); removeEdge(
+                  isOut ? selected.id : `entity:${peerId}`,
+                  isOut ? `entity:${peerId}` : selected.id, edge.label,
+                ); }} title="Remove edge"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', display: 'flex', alignItems: 'center' }}><Trash2 size={12} /></button>
+              </div>
+              {isEdgeSelected && (
+                <div style={{ padding: '6px 0 8px 16px', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ color: 'var(--text-hint)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Edge payload</div>
+                  <div className="prop-row"><span className="prop-key">Strength</span><span className="prop-val mono">{edge.strength ?? '—'}</span></div>
+                  <div className="prop-row"><span className="prop-key">Latency</span><span className="prop-val mono">{edge.latency != null ? `${edge.latency} ms` : '—'}</span></div>
+                  {edge.metadata && Object.keys(edge.metadata).length > 0 && (
+                    <div>
+                      <span style={{ color: 'var(--text-hint)', fontSize: 10 }}>Metadata:</span>
+                      <pre style={{ margin: '2px 0 0', padding: '4px 6px', borderRadius: 4, background: 'var(--bg)', fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
+                        {JSON.stringify(edge.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })
+      }
+
+      {/* History */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+          onClick={historyOpen ? () => setHistoryOpen(false) : openHistory}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>History</span>
+          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{historyOpen ? '▲' : '▼'}</span>
+        </div>
+        {historyOpen && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {entityHistory.length === 0
+              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No history records</span>
+              : entityHistory.map((snap) => (
+                <div key={snap.id} onClick={() => loadSnapshot(snap.changed_at)}
+                  style={{ padding: '4px 6px', borderRadius: 4, cursor: 'pointer', fontSize: 11, background: snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent', border: '1px solid transparent', color: 'var(--text-primary)', display: 'flex', gap: 8, alignItems: 'baseline' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent')}>
+                  <span style={{ color: 'var(--text-hint)', fontFamily: 'monospace', flexShrink: 0 }}>{new Date(snap.changed_at).toLocaleString()}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{snap.label}</span>
+                  <span className={`kind-badge kind-${snap.category}`}>{snap.category}</span>
+                </div>
+              ))
+            }
+            {snapshot && (
+              <div style={{ marginTop: 8, padding: 10, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Viewing snapshot — read only</span>
+                  <button onClick={clearSnapshot} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: 0, display: 'flex', alignItems: 'center' }}><X size={12} /></button>
+                </div>
+                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Label: </span><span style={{ color: 'var(--text-primary)' }}>{snapshot.label}</span></div>
+                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Category: </span><span className={`kind-badge kind-${snapshot.category}`}>{snapshot.category}</span></div>
+                <div style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-hint)' }}>Recorded: </span>
+                  <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{new Date(snapshot.changed_at).toLocaleString()}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Translations */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+          onClick={translationsOpen ? () => setTranslationsOpen(false) : openTranslations}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>
+            Translations
+            {selected?.lang_canonical && <span style={{ fontWeight: 400, marginLeft: 6, textTransform: 'none' }}>({selected.lang_canonical})</span>}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{translationsOpen ? '▲' : '▼'}</span>
+        </div>
+        {translationsOpen && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {labelTraits.length === 0
+              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No translations</span>
+              : labelTraits.map((t: LabelTrait) => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'var(--bg-secondary)', color: 'var(--accent)', flexShrink: 0, minWidth: 28, textAlign: 'center' }}>{t.lang}</span>
+                  <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
+                  {t.lang === activeLocale && <span style={{ fontSize: 9, color: 'var(--accent)', flexShrink: 0 }}>active</span>}
+                  <button onClick={() => deleteLabelTrait(t.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: '0 2px', flexShrink: 0, display: 'flex', alignItems: 'center' }} title="Delete translation"><Trash2 size={11} /></button>
+                </div>
+              ))
+            }
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              <input value={newLang} onChange={e => setNewLang(e.target.value)} placeholder="lang (e.g. de)" maxLength={10}
+                style={{ width: 64, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)', outline: 'none' }} />
+              <input value={newText} onChange={e => setNewText(e.target.value)} placeholder="translated label"
+                style={{ flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)', outline: 'none' }}
+                onKeyDown={e => e.key === 'Enter' && addTranslation()} />
+              <button onClick={addTranslation} disabled={!newLang.trim() || !newText.trim()}
+                style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 600, opacity: (!newLang.trim() || !newText.trim()) ? 0.5 : 1 }}>Add</button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Metadata */}
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -495,9 +734,9 @@ const SingleInspector = memo(function SingleInspector() {
       </div>
       {editMeta == null ? (
         <>
-          {Object.keys(selected.metadata ?? {}).length === 0
+          {Object.keys(selectedValues).length === 0
             ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No metadata</span>
-            : Object.entries(selected.metadata ?? {}).map(([k, v]) => (
+            : Object.entries(selectedValues).map(([k, v]) => (
               <div className="prop-row" key={k}>
                 <span className="prop-key">{k}</span>
                 <span className="prop-val mono">{JSON.stringify(v)}</span>
@@ -740,153 +979,47 @@ const SingleInspector = memo(function SingleInspector() {
         </div>
       )}
 
-      {/* Relationships */}
+      {/* Tables */}
       <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Relationships</span>
-        <button onClick={() => setShowRelate(true)}
-          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 11 }}>
-          + Relate
-        </button>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Tables ({ownTableTraits.length})</span>
       </div>
-      {otherEdges.length === 0
-        ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No relationships</span>
-        : otherEdges.map((edge, i) => {
-          const isOut = `entity:${edge.from}` === selectedId || edge.from === shortId;
-          const peerId = isOut ? edge.to : edge.from;
-          const peerLabel = labelFor(peerId);
-          const isEdgeSelected = selectedEdgeIdx === i;
-          const hasPayload = edge.strength != null || edge.latency != null || (edge.metadata && Object.keys(edge.metadata).length > 0);
-          return (
-            <div key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => setSelectedEdgeIdx(isEdgeSelected ? null : i)}>
-                <span style={{ color: isOut ? 'var(--accent)' : 'var(--text-hint)', fontWeight: 700, fontSize: 10 }}>{isOut ? '→' : '←'}</span>
-                <span style={{ color: 'var(--text-hint)', fontStyle: 'italic', fontSize: 11 }}>{edge.label}</span>
-                <span style={{ flex: 1, color: 'var(--text-primary)' }}
-                  onClick={e => { e.stopPropagation(); selectEntity(`entity:${peerId}`); }} title="Select entity">
-                  {peerLabel}
-                </span>
-                {hasPayload && <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>●</span>}
-                <button onClick={e => { e.stopPropagation(); removeEdge(
-                  isOut ? selected.id : `entity:${peerId}`,
-                  isOut ? `entity:${peerId}` : selected.id, edge.label,
-                ); }} title="Remove edge"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', display: 'flex', alignItems: 'center' }}><Trash2 size={12} /></button>
-              </div>
-              {isEdgeSelected && (
-                <div style={{ padding: '6px 0 8px 16px', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <div style={{ color: 'var(--text-hint)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Edge payload</div>
-                  <div className="prop-row"><span className="prop-key">Strength</span><span className="prop-val mono">{edge.strength ?? '—'}</span></div>
-                  <div className="prop-row"><span className="prop-key">Latency</span><span className="prop-val mono">{edge.latency != null ? `${edge.latency} ms` : '—'}</span></div>
-                  {edge.metadata && Object.keys(edge.metadata).length > 0 && (
-                    <div>
-                      <span style={{ color: 'var(--text-hint)', fontSize: 10 }}>Metadata:</span>
-                      <pre style={{ margin: '2px 0 0', padding: '4px 6px', borderRadius: 4, background: 'var(--bg)', fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
-                        {JSON.stringify(edge.metadata, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
+      {ownTableTraits.length === 0 ? (
+        <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No tables</span>
+      ) : ownTableTraits.map((t: TableTrait) => (
+        <div key={t.id} style={{ marginBottom: 8, padding: '6px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>{t.namespace}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>{t.columns.length} cols · {t.rows.length} rows</span>
+            <button onClick={() => deleteTableTrait(t.id)} title="Delete table"
+              style={{ background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: 4, padding: '2px 4px', cursor: 'pointer', color: '#ff6b6b', display: 'flex', alignItems: 'center' }}>
+              <X size={11} />
+            </button>
+          </div>
+          {t.columns.length > 0 && (
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {t.columns.map(c => `${c.name}:${c.data_type}`).join(', ')}
             </div>
-          );
-        })
-      }
+          )}
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+        <input value={newTableNs} onChange={e => setNewTableNs(e.target.value)} placeholder="namespace (e.g. roster)"
+          style={{ width: 110, background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 4, padding: '4px 7px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }} />
+        <input value={newTableCols} onChange={e => setNewTableCols(e.target.value)} placeholder="cols, comma-separated"
+          style={{ flex: 1, background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 4, padding: '4px 7px', color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+          onKeyDown={e => e.key === 'Enter' && addTable()} />
+        <button onClick={addTable} disabled={!newTableNs.trim()}
+          style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: !newTableNs.trim() ? 'not-allowed' : 'pointer', color: '#fff', fontSize: 11, opacity: !newTableNs.trim() ? 0.5 : 1 }}>+</button>
+      </div>
+      {tableError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '4px 0 0' }}>{tableError}</p>}
+
       {showRelate && <RelateDialog sourceEntityId={selected.id} sourceLabel={selected.label} onClose={() => setShowRelate(false)} />}
 
-      {/* History */}
-      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
-          onClick={historyOpen ? () => setHistoryOpen(false) : openHistory}>
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>History</span>
-          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{historyOpen ? '▲' : '▼'}</span>
-        </div>
-        {historyOpen && (
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {entityHistory.length === 0
-              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No history records</span>
-              : entityHistory.map((snap) => (
-                <div key={snap.id} onClick={() => loadSnapshot(snap.changed_at)}
-                  style={{ padding: '4px 6px', borderRadius: 4, cursor: 'pointer', fontSize: 11, background: snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent', border: '1px solid transparent', color: 'var(--text-primary)', display: 'flex', gap: 8, alignItems: 'baseline' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = snapshot?.id === snap.id ? 'var(--bg-secondary)' : 'transparent')}>
-                  <span style={{ color: 'var(--text-hint)', fontFamily: 'monospace', flexShrink: 0 }}>{new Date(snap.changed_at).toLocaleString()}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{snap.label}</span>
-                  <span className={`kind-badge kind-${snap.category}`}>{snap.category}</span>
-                </div>
-              ))
-            }
-            {snapshot && (
-              <div style={{ marginTop: 8, padding: 10, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Viewing snapshot — read only</span>
-                  <button onClick={clearSnapshot} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: 0, display: 'flex', alignItems: 'center' }}><X size={12} /></button>
-                </div>
-                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Label: </span><span style={{ color: 'var(--text-primary)' }}>{snapshot.label}</span></div>
-                <div style={{ fontSize: 11 }}><span style={{ color: 'var(--text-hint)' }}>Category: </span><span className={`kind-badge kind-${snapshot.category}`}>{snapshot.category}</span></div>
-                <div style={{ fontSize: 11 }}>
-                  <span style={{ color: 'var(--text-hint)' }}>Recorded: </span>
-                  <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{new Date(snapshot.changed_at).toLocaleString()}</span>
-                </div>
-                {Object.keys(snapshot.metadata ?? {}).length > 0 && (
-                  <div style={{ fontSize: 11 }}>
-                    <span style={{ color: 'var(--text-hint)', display: 'block', marginBottom: 4 }}>Metadata:</span>
-                    <pre style={{ margin: 0, padding: '6px 8px', borderRadius: 4, background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {JSON.stringify(snapshot.metadata, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Translations */}
-      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
-          onClick={translationsOpen ? () => setTranslationsOpen(false) : openTranslations}>
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>
-            Translations
-            {selected?.lang_canonical && <span style={{ fontWeight: 400, marginLeft: 6, textTransform: 'none' }}>({selected.lang_canonical})</span>}
-          </span>
-          <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{translationsOpen ? '▲' : '▼'}</span>
-        </div>
-        {translationsOpen && (
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {labelTraits.length === 0
-              ? <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No translations</span>
-              : labelTraits.map((t: LabelTrait) => (
-                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'var(--bg-secondary)', color: 'var(--accent)', flexShrink: 0, minWidth: 28, textAlign: 'center' }}>{t.lang}</span>
-                  <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
-                  {t.lang === activeLocale && <span style={{ fontSize: 9, color: 'var(--accent)', flexShrink: 0 }}>active</span>}
-                  <button onClick={() => deleteLabelTrait(t.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-hint)', padding: '0 2px', flexShrink: 0, display: 'flex', alignItems: 'center' }} title="Delete translation"><Trash2 size={11} /></button>
-                </div>
-              ))
-            }
-            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-              <input value={newLang} onChange={e => setNewLang(e.target.value)} placeholder="lang (e.g. de)" maxLength={10}
-                style={{ width: 64, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)', outline: 'none' }} />
-              <input value={newText} onChange={e => setNewText(e.target.value)} placeholder="translated label"
-                style={{ flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 6px', fontSize: 11, color: 'var(--text-primary)', outline: 'none' }}
-                onKeyDown={e => e.key === 'Enter' && addTranslation()} />
-              <button onClick={addTranslation} disabled={!newLang.trim() || !newText.trim()}
-                style={{ background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', color: '#fff', fontSize: 11, fontWeight: 600, opacity: (!newLang.trim() || !newText.trim()) ? 0.5 : 1 }}>Add</button>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Editor */}
+      {blobTrait && blobSourcePath && (
       <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Editor</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onOpenInEditor}
-            style={{ background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 14px', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 600 }}>
-            Edit
-          </button>
           {blobTrait && blobSourcePath && (
             <button onClick={onOpenExternal}
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 12px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, fontWeight: 600 }}>
@@ -895,6 +1028,7 @@ const SingleInspector = memo(function SingleInspector() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 });

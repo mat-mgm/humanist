@@ -5,7 +5,6 @@ export interface Entity {
   category: EntityKind;
   label: string;
   lang_canonical: string;
-  metadata: Record<string, any>;
   deleted_at: string | null;
 }
 
@@ -38,6 +37,27 @@ export interface BlobTrait {
   hash: string;
   size: number;
   localUrl?: string;
+}
+
+export interface KeyValueTrait {
+  id: string;
+  owner: string;
+  namespace: string;
+  values: Record<string, any>;
+}
+
+export interface TableColumn {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+}
+
+export interface TableTrait {
+  id: string;
+  owner: string;
+  namespace: string;
+  columns: TableColumn[];
+  rows: Record<string, any>[];
 }
 
 /** Temporal trait — three event shapes:
@@ -105,7 +125,6 @@ export interface EntitySnapshot {
   entity_id: string;
   category: EntityKind;
   label: string;
-  metadata: Record<string, any>;
   deleted_at: string | null;
   changed_at: string;
 }
