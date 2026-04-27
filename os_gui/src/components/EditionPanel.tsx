@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, useCallback } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { ThemedSelect } from './ThemedSelect';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
@@ -129,7 +130,14 @@ function CMEditor({ initialContent, mime, format, onChange }: CMEditorProps) {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export const EditionPanel = memo(function EditionPanel() {
+interface EditionPanelProps {
+  // When true the panel is being rendered as the right-side panel and the
+  // always-visible Doc/format picker is shown at the top. Off by default
+  // (main canvas + DWM tiled layouts use the side-panel-driven controls).
+  inRightPanel?: boolean;
+}
+
+export const EditionPanel = memo(function EditionPanel({ inRightPanel = false }: EditionPanelProps = {}) {
   const selectedEntityId = useOsStore(s => s.selectedEntityId);
   const editionEntityId  = useOsStore(s => s.editionEntityId);
   const editionDocKey    = useOsStore(s => s.editionDocKey);
@@ -258,6 +266,34 @@ export const EditionPanel = memo(function EditionPanel() {
     return () => window.removeEventListener('keydown', handler);
   }, [editionEntityId, editionDocKey, blobTraits, setEditionDoc]);
 
+  // Doc selector options. Attachments first, then the synthetic entity
+  // document split into yaml/json so the user can choose serialization
+  // without leaving the picker. Selecting either entity:* updates both
+  // editionDocKey ('entity') and editionFormat in one click.
+  const setEditionFormat = useOsStore(s => s.setEditionFormat);
+  const docOptions = useMemo(() => {
+    if (!editionEntityId) return [] as { value: string; label: string }[];
+    const docKeys = buildDocKeyList(editionEntityId, blobTraits);
+    const opts: { value: string; label: string }[] = [];
+    for (const k of docKeys) {
+      if (k === 'entity') {
+        opts.push({ value: 'entity:yaml', label: 'Entity (yaml)' });
+        opts.push({ value: 'entity:json', label: 'Entity (json)' });
+      } else {
+        const t = blobTraits.find(b => b.id === k);
+        opts.push({ value: k, label: t ? `${t.filename} · ${t.mime}` : k });
+      }
+    }
+    return opts;
+  }, [editionEntityId, blobTraits]);
+
+  const docPickerValue = editionDocKey === 'entity' ? `entity:${editionFormat}` : (editionDocKey ?? '');
+  const handleDocPickerChange = useCallback((v: string) => {
+    if (v === 'entity:yaml') { setEditionDoc('entity'); setEditionFormat('yaml'); }
+    else if (v === 'entity:json') { setEditionDoc('entity'); setEditionFormat('json'); }
+    else setEditionDoc(v);
+  }, [setEditionDoc, setEditionFormat]);
+
   // Terminal mode: fire backend command to open $EDITOR in embedded PTY
   const terminalSessionId = editionDocKey === 'entity'
     ? `edit-${editionEntityId ?? ''}`
@@ -274,6 +310,30 @@ export const EditionPanel = memo(function EditionPanel() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  // Always-visible doc picker header — only when this panel is the right side
+  // panel. Main canvas / DWM tiled instances rely on the side panel for doc
+  // navigation and serialization format.
+  const docPicker = inRightPanel && editionEntityId && docOptions.length > 0 ? (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '6px 10px',
+      borderBottom: '1px solid var(--border)',
+      background: 'var(--bg-panel-header)',
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>
+        Doc
+      </span>
+      <ThemedSelect
+        value={docPickerValue || docOptions[0].value}
+        onChange={handleDocPickerChange}
+        options={docOptions}
+        size="sm"
+      />
+    </div>
+  ) : null;
+
   if (!editionEntityId) {
     return (
       <div className="edition-panel edition-panel-empty">
@@ -284,8 +344,11 @@ export const EditionPanel = memo(function EditionPanel() {
 
   if (!editionDocKey) {
     return (
-      <div className="edition-panel edition-panel-empty">
-        <span>Select a document in the side panel.</span>
+      <div className="edition-panel">
+        {docPicker}
+        <div className="edition-panel-empty">
+          <span>Select a document above.</span>
+        </div>
       </div>
     );
   }
@@ -293,6 +356,7 @@ export const EditionPanel = memo(function EditionPanel() {
   if (editionMode === 'terminal') {
     return (
       <div className="edition-panel edition-panel-terminal">
+        {docPicker}
         <PtyCanvas sessionId={terminalSessionId} skipAutoSpawn />
       </div>
     );
@@ -307,6 +371,7 @@ export const EditionPanel = memo(function EditionPanel() {
     };
     return (
       <div className="edition-panel">
+        {docPicker}
         <div className="edition-canvas" style={{ padding: isImage ? 16 : 0 }}>
           {isImage && blobSrc ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
@@ -340,6 +405,7 @@ export const EditionPanel = memo(function EditionPanel() {
   // Web mode: CodeMirror
   return (
     <div className="edition-panel">
+      {docPicker}
       <div className="edition-canvas">
         {loading ? (
           <div className="edition-panel-empty"><span>Loading…</span></div>
@@ -394,10 +460,13 @@ function buildDocKeyList(entityId: string, blobTraits: BlobTrait[]): string[] {
   const notes   = own.filter(t => t.mime === 'text/markdown');
   const texts   = own.filter(t => t.mime !== 'text/markdown' && isTextMime(t.mime));
   const binaries = own.filter(t => !isTextMime(t.mime));
+  // Attachments first (notes → texts → binaries), then the synthetic entity
+  // document last. The Edition panel selector defaults to the first item, so
+  // entities with attachments open on their first attachment.
   return [
-    'entity',
     ...notes.map(t => t.id),
     ...texts.map(t => t.id),
     ...binaries.map(t => t.id),
+    'entity',
   ];
 }

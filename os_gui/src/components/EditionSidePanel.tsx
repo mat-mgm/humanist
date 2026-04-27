@@ -238,25 +238,23 @@ function ModeFormatControls() {
         </div>
       </div>
 
-      {editionDocKey === 'entity' && (
-        <div className="edition-section">
-          <div className="edition-section-label">Format</div>
-          <div className="edition-radio-group">
-            <button
-              className={`edition-radio-btn${editionFormat === 'yaml' ? ' active' : ''}`}
-              onClick={() => setEditionFormat('yaml')}
-            >
-              YAML
-            </button>
-            <button
-              className={`edition-radio-btn${editionFormat === 'json' ? ' active' : ''}`}
-              onClick={() => setEditionFormat('json')}
-            >
-              JSON
-            </button>
-          </div>
+      <div className="edition-section">
+        <div className="edition-section-label">Format</div>
+        <div className="edition-radio-group">
+          <button
+            className={`edition-radio-btn${editionFormat === 'yaml' ? ' active' : ''}`}
+            onClick={() => setEditionFormat('yaml')}
+          >
+            YAML
+          </button>
+          <button
+            className={`edition-radio-btn${editionFormat === 'json' ? ' active' : ''}`}
+            onClick={() => setEditionFormat('json')}
+          >
+            JSON
+          </button>
         </div>
-      )}
+      </div>
     </>
   );
 }
