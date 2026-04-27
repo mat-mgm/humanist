@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Trash2, Pencil, Info, X, Minus } from 'lucide-react';
+import { Trash2, Pencil, Info, X, Minus, Clipboard, Check, FilePlus2, Database } from 'lucide-react';
 
 import { useOsStore, resolvedLabel } from '../store';
 import { EntitySnapshot, LabelTrait, SpatialTrait, TemporalTrait } from '../models';
@@ -255,6 +255,52 @@ const SingleInspector = memo(function SingleInspector() {
   // Relate dialog
   const [showRelate, setShowRelate] = useState(false);
 
+  // Copy ULID feedback flag
+  const [idCopied, setIdCopied] = useState(false);
+
+  // Blob attach state
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [showStorePicker, setShowStorePicker] = useState(false);
+  const [storeFilter, setStoreFilter] = useState('');
+  const fetchBlobTraits = useOsStore(s => s.fetchBlobTraits);
+
+  const handleAttachFromFile = useCallback(async () => {
+    if (!selected) return;
+    setAttachError(null);
+    try {
+      const paths = await invoke<string[]>('pick_native_import_files');
+      if (!paths || paths.length === 0) return;
+      setAttachBusy(true);
+      for (const p of paths) {
+        await invoke('attach_blob_to_entity', { entityId: selected.id, filePath: p });
+      }
+      await fetchBlobTraits();
+    } catch (e) { setAttachError(String(e)); }
+    finally { setAttachBusy(false); }
+  }, [selected, fetchBlobTraits]);
+
+  const handleAttachFromStore = useCallback(async (sourceBlobId: string) => {
+    if (!selected) return;
+    setAttachError(null);
+    setAttachBusy(true);
+    try {
+      await invoke('attach_existing_blob_to_entity', { entityId: selected.id, sourceBlobTraitId: sourceBlobId });
+      await fetchBlobTraits();
+      setShowStorePicker(false);
+      setStoreFilter('');
+    } catch (e) { setAttachError(String(e)); }
+    finally { setAttachBusy(false); }
+  }, [selected, fetchBlobTraits]);
+
+  const handleDetachBlob = useCallback(async (blobTraitId: string) => {
+    setAttachError(null);
+    try {
+      await invoke('delete_blob_trait', { blobTraitId });
+      await fetchBlobTraits();
+    } catch (e) { setAttachError(String(e)); }
+  }, [fetchBlobTraits]);
+
   // Edge inspector
   const [selectedEdgeIdx, setSelectedEdgeIdx] = useState<number | null>(null);
   useEffect(() => { setSelectedEdgeIdx(null); }, [selectedId]);
@@ -396,9 +442,19 @@ const SingleInspector = memo(function SingleInspector() {
         )}
       </div>
 
-      <div className="prop-row">
+      <div className="prop-row" style={{ alignItems: 'center' }}>
         <span className="prop-key">ID</span>
-        <span className="prop-val mono" style={{ fontSize: 10, wordBreak: 'break-all' }}>{selected.id}</span>
+        <span className="prop-val mono" style={{ fontSize: 10, wordBreak: 'break-all', flex: 1 }}>{selected.id}</span>
+        <button
+          onClick={async () => {
+            try { await navigator.clipboard.writeText(shortId); setIdCopied(true); window.setTimeout(() => setIdCopied(false), 1200); }
+            catch { /* clipboard may be unavailable */ }
+          }}
+          title="Copy ULID"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: idCopied ? 'var(--accent)' : 'var(--text-hint)', display: 'flex', alignItems: 'center' }}
+        >
+          {idCopied ? <Check size={13} /> : <Clipboard size={12} />}
+        </button>
       </div>
 
       {/* Tags */}
@@ -473,21 +529,84 @@ const SingleInspector = memo(function SingleInspector() {
       )}
 
       {/* Blobs */}
-      <div style={{ margin: '16px 0 4px' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Documents</span>
+      <div style={{ margin: '16px 0 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-hint)', letterSpacing: '0.07em' }}>Documents ({ownBlobTraits.length})</span>
+        <span style={{ display: 'flex', gap: 4 }}>
+          <button
+            onClick={handleAttachFromFile}
+            disabled={attachBusy}
+            title="Attach a file from disk"
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: attachBusy ? 'wait' : 'pointer', color: 'var(--text-hint)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: attachBusy ? 0.6 : 1 }}
+          >
+            <FilePlus2 size={11} />File
+          </button>
+          <button
+            onClick={() => { setShowStorePicker(v => !v); setStoreFilter(''); }}
+            disabled={attachBusy}
+            title="Attach an existing blob from the store"
+            style={{ background: showStorePicker ? 'var(--bg-primary)' : 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 8px', cursor: attachBusy ? 'wait' : 'pointer', color: showStorePicker ? 'var(--accent)' : 'var(--text-hint)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <Database size={11} />Store
+          </button>
+        </span>
       </div>
+
+      {showStorePicker && (
+        <div style={{ marginBottom: 8, padding: 6, border: '1px solid var(--border)', borderRadius: 5, background: 'var(--bg-secondary)' }}>
+          <input
+            type="text"
+            value={storeFilter}
+            onChange={ev => setStoreFilter(ev.target.value)}
+            placeholder="Filter by filename or mime…"
+            style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 7px', color: 'var(--text-primary)', fontSize: 11, outline: 'none', marginBottom: 6 }}
+          />
+          <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {(() => {
+              const candidates = blobTraits.filter(t => t.owner !== selected.id);
+              const q = storeFilter.trim().toLowerCase();
+              const filtered = q
+                ? candidates.filter(t => t.filename.toLowerCase().includes(q) || t.mime.toLowerCase().includes(q))
+                : candidates;
+              if (filtered.length === 0) {
+                return <span style={{ fontSize: 11, color: 'var(--text-hint)', padding: '4px 6px' }}>No matching blobs in store.</span>;
+              }
+              return filtered.slice(0, 80).map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => handleAttachFromStore(t.id)}
+                  disabled={attachBusy}
+                  style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 7px', textAlign: 'left', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 11, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}
+                >
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.filename}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-hint)', flexShrink: 0 }}>{t.mime}</span>
+                </button>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
+      {attachError && <p style={{ fontSize: 11, color: '#ff6b6b', margin: '0 0 6px' }}>{attachError}</p>}
+
       {ownBlobTraits.length === 0 ? (
         <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>No documents</span>
       ) : ownBlobTraits.map(b => (
         <div key={b.id} style={{ marginBottom: 10, padding: '6px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{b.filename}</span>
             {b.localUrl && (
               <button onClick={async () => { try { await invoke('open_external_path', { path: b.localUrl }); } catch (err) { alert('External editor failed: ' + err); } }}
-                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 10, flexShrink: 0, marginLeft: 6 }}>
+                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', color: 'var(--text-hint)', fontSize: 10, flexShrink: 0 }}>
                 Open
               </button>
             )}
+            <button
+              onClick={() => handleDetachBlob(b.id)}
+              title="Detach this blob from the entity"
+              style={{ background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: 4, padding: '2px 4px', cursor: 'pointer', color: '#ff6b6b', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+            >
+              <X size={11} />
+            </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-hint)', display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div className="prop-row"><span className="prop-key">Mime</span><span className="prop-val mono">{b.mime}</span></div>

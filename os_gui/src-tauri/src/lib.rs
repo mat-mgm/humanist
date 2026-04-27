@@ -2113,6 +2113,103 @@ async fn create_rule_blob(
     Ok(trait_)
 }
 
+/// Attach an additional BlobTrait to an existing entity by ingesting a file
+/// from disk. Each call generates a fresh blob_trait ulid so multiple blobs
+/// can coexist on the same entity. Bytes go through the CAS so duplicates
+/// across entities still hash-deduplicate at storage level.
+#[tauri::command]
+async fn attach_blob_to_entity(
+    entity_id: String,
+    file_path: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<core_engine::models::BlobTrait, String> {
+    let st = state.lock().await;
+    let entity = st.db.get_entity(&entity_id).await?;
+    let stored = st.blob.store_file(&file_path, Some(entity.label.clone())).await?;
+    let mime = core_engine::blob::infer_mime_from_path(&file_path);
+    let extension = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|ext| ext.to_str());
+    let filename = std::path::Path::new(&file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            core_engine::blob::blob_filename_for_label(Some(entity.label.as_str()), extension)
+        });
+    let ulid = Ulid::new().to_string();
+    let trait_ = core_engine::models::BlobTrait {
+        id: format!("blob_trait:{}", ulid),
+        owner: entity_id.clone(),
+        filename,
+        storage_id: stored.storage_id,
+        bucket: "local".to_string(),
+        mime,
+        hash: stored.hash,
+        size: stored.size,
+    };
+    st.db.save_blob_trait(trait_.clone()).await?;
+    let _ = app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": entity_id}),
+    );
+    Ok(trait_)
+}
+
+/// Ingest a file into the CAS without attaching it to any entity, returning
+/// the absolute on-disk path the asset protocol can serve. Used by the Graph
+/// panel's "Set Icon…" action so the picked image lives inside the asset
+/// scope (`$HOME/.local/share/humanist/**`) and renders via convertFileSrc.
+#[tauri::command]
+async fn import_to_store(
+    file_path: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let st = state.lock().await;
+    use core_engine::ports::BlobStorageProvider;
+    let stored = st.blob.store_file(&file_path, None).await?;
+    st.blob.presign_url(&stored.storage_id).await
+}
+
+/// Attach an existing CAS blob to an entity by referencing the source
+/// blob_trait's storage_id. Creates a fresh BlobTrait record (own ulid,
+/// own owner) but reuses the underlying file — no re-ingestion.
+#[tauri::command]
+async fn attach_existing_blob_to_entity(
+    entity_id: String,
+    source_blob_trait_id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<core_engine::models::BlobTrait, String> {
+    let st = state.lock().await;
+    let _entity = st.db.get_entity(&entity_id).await?;
+    let source = st
+        .db
+        .get_blob_traits()
+        .await?
+        .into_iter()
+        .find(|t| t.id == source_blob_trait_id)
+        .ok_or_else(|| format!("Source blob trait {} not found", source_blob_trait_id))?;
+    let ulid = Ulid::new().to_string();
+    let trait_ = core_engine::models::BlobTrait {
+        id: format!("blob_trait:{}", ulid),
+        owner: entity_id.clone(),
+        filename: source.filename.clone(),
+        storage_id: source.storage_id.clone(),
+        bucket: source.bucket.clone(),
+        mime: source.mime.clone(),
+        hash: source.hash.clone(),
+        size: source.size,
+    };
+    st.db.save_blob_trait(trait_.clone()).await?;
+    let _ = app.emit(
+        "entity-updated",
+        serde_json::json!({"topic": "entity.updated", "ulid": entity_id}),
+    );
+    Ok(trait_)
+}
+
 // ── Phase 43: Multilingual label commands ─────────────────────────────────────
 
 #[tauri::command]
@@ -2451,6 +2548,9 @@ pub fn run() {
             apply_entity_text,
             create_entity_notes,
             create_rule_blob,
+            attach_blob_to_entity,
+            attach_existing_blob_to_entity,
+            import_to_store,
             delete_blob_trait,
             rename_blob_trait,
             pick_icon_file,
