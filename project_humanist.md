@@ -9,7 +9,7 @@ A spatial operating system interface and backend.
 ## Status
 Current status: in-progress
 Start date: 
-Last updated: 2026-04-26
+Last updated: 2026-04-27
 Priority: High
 
 State rules:
@@ -1409,3 +1409,171 @@ The phase deliberately stays narrow: only graph-edge inference (rules whose head
 - The `co_tagged` seed body required explicit `entity/4` grounding before `findall`. With unbound `A`, `B` the goal aggregates across all triples instead of per-pair; this pattern is documented in the seed rule's comment so users adapting the rule are warned.
 - Class B / D / F / G use cases (Globe markers, Timeline bands, validation lists, multi-hop pivots) remain deferred. The schema and `PrologValue` API already accommodate them; only the renderers are missing.
 - LLM rule-authoring prompt is shipped as [docs/notes/prolog_rules_prompt.md](docs/notes/prolog_rules_prompt.md) and gives an external model enough context (vocabulary, arity contract, examples, idioms) to generate new rules directly.
+
+### Phase 59: Inputs Panel Restructure
+**Description**
+Re-shape the Inputs activity around a side-panel-driven entry surface and a compact, list-based main canvas. The previous layout split create / import controls, draft queue, and storage stats across two surfaces; this phase consolidates entry into the side panel and turns the main canvas into a single expandable list. Garbage collection moves to Settings where the rest of destructive data-management commands live.
+
+**Tasks**
+- [✓] **Side panel layout**: Top section is the `NewEntitiesForm` (entity button, file/directory pickers, drag-drop hint, path autocomplete) rendered without card chrome; immediately below sits the **Import .pl Snapshot** action so import flows live next to creation; the **Store State** stats (database / blob counts) follow.
+- [✓] **Main canvas as compact list**: Each draft is a single-line row (selection checkbox, status dot, label / filename, stage badge, expand chevron, trash). Clicking the chevron expands the row to the full editor (label, category, source, blob/spatial/temporal toggles, stage timeline, action buttons); collapsed by default so a freshly added batch of files doesn't dominate the canvas.
+- [✓] **Toolbar**: One row above the list — counts (`N drafts · M editable · K selected`), `Expand all` / `Collapse all` toggle, `Select all`, `Clear`, `Run selected`, `Remove all`.
+- [✓] **GC relocation**: The Maintenance section (Run GC button + last-sweep summary) moves out of `StoreStatePanel` into a new `Maintenance` section in `SettingsPanel`. Side-panel store stats stay informational only.
+- [✓] **Expanded-by-default removed**: New drafts always start `expanded: false` — the user opens the rows they want, doesn't have to dismiss them.
+
+**Checks**
+- [✓] Inputs side panel renders New Entities → Prolog Snapshot → Store State stats; no draft queue.
+- [✓] Main canvas shows a compact draft list; expanding/collapsing works per-row and via toolbar.
+- [✓] Settings exposes the Maintenance / Run GC control with the prior summary text.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 60: Centralized Configuration Module
+**Description**
+Promote scattered hard-coded constants (themes, locales, keybinding reference, force-graph parameters, kind colors, region style, panel sizes, perf thresholds) into a single `os_gui/src/config.ts` module. Defaults live there; the Settings UI overrides them at runtime through a typed `PersistedSettings` shape that round-trips via the `humanist:settings` localStorage entry. `App.tsx` re-exports `KEYBINDS` for backward compatibility.
+
+**Tasks**
+- [✓] **`config.ts`** with `THEMES`, `LOCALES`, `KEYBINDS_REFERENCE`, `KEYBINDS` (predicate functions), `KIND_COLORS`, `GRAPH_PRESETS`, `GRAPH_PERF`, `REGION_STYLE`, `PANEL_SIZES`, plus `BASE_FONT_SIZE_PX` / `DEFAULT_TEXT_SCALE` / `TEXT_SCALE_MIN/MAX/STEP`.
+- [✓] **`PersistedSettings`** interface and `loadPersistedSettings()` / `persistSettings()` helpers backed by `localStorage[SETTINGS_STORAGE_KEY]`.
+- [✓] **Component rewires**: `SettingsPanel`, `GraphPanel`, `GraphSidePanel`, `App.tsx` all import constants from `config.ts` instead of duplicating them.
+- [✓] **Store wiring**: settings the user can change (graph layout mode, simulation paused, label visibility, hidden categories, UI zoom) read defaults from `config.ts` on init and persist on every mutation.
+
+**Checks**
+- [✓] `grep -rn "const THEMES\|KEYBINDS_REFERENCE\|REGION_STYLE" os_gui/src` returns only `config.ts` definitions.
+- [✓] localStorage `humanist:settings` accumulates entries on first toggle and survives reload.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 61: Graph Workbench — Layout Modes, Hard Collide, Performance, Labels
+**Description**
+Five-front upgrade to the Knowledge Graph: a layout-preset selector with three modes, a play/pause control, four performance wins, configurable label visibility, and a hard collision invariant that keeps nodes from ever overlapping. The preview rectangle for an opened image / PDF is treated as an exclusion zone so neighbouring nodes glide cleanly out of the way; click hit-area painting keeps surrounding nodes selectable around the preview.
+
+**Design decisions**
+- Decision: Layout mode is a preset selector (default / clustered / hairball), not free-form sliders.
+  Rationale: Three named profiles cover the full range of graph shapes (sparse, many small dense subgraphs, single hub) while keeping the side panel to a single dropdown. Power users can tweak `GRAPH_PRESETS` in `config.ts`.
+- Decision: Hard collide uses circular geometry for normal pairs and AABB rect for pairs involving a preview.
+  Rationale: Circular collision aligns separation with the line between centres so it cooperates with the link force instead of fighting it on a single axis (the AABB-everywhere variant collapsed clusters). Rectangular for previews so the displayed image footprint is the exclusion shape.
+- Decision: Run the resolver every render frame, not only during simulation ticks.
+  Rationale: The d3 simulation cools after `cooldownTicks`; without per-frame enforcement, dragging a node into another or opening a preview after settle would create permanent overlap.
+- Decision: Add a `gravityStrength` per preset that nudges nodes toward (0, 0).
+  Rationale: With charge force pushing components apart and hard collide preventing merging, gravity is the only knob that pulls disconnected subgraphs close to one another; tuned higher in `clustered`, lower in `hairball`.
+
+**Tasks**
+
+*Layout & simulation*
+- [✓] **Layout-mode presets** (`default`, `clustered`, `hairball`) in `GRAPH_PRESETS` with full force parameter set (charge, link, decay, gravity).
+- [✓] **Play/Pause button** in the Graph side panel's new **Simulation** section, with a layout-mode `<select>`. Mode change re-applies preset and reheats live.
+- [✓] **Subgraph cohesion**: per-tick velocity-bias gravity force toward (0, 0), strength taken from current preset via `gravityStrengthRef`.
+- [✓] **Hard collide invariant** (`resolveAllCollisions`): registered as `g.d3Force('nodeCollide')` AND re-run on every `onRenderFramePost` so the no-overlap rule holds during sim, after cooldown, and for pinned/dragged nodes.
+- [✓] **Preview rectangle exclusion**: AABB resolver shares the same function; `__imgW × __imgH` cleared at the start of every node draw so a closed preview no longer keeps a preview-sized bubble around a tiny node.
+- [✓] **Reheat on preview toggle**: opening or closing a preview reheats the simulation so freshly created overlaps resolve within one paint.
+
+*Performance wins*
+- [✓] **Image LOD**: when zoom < `GRAPH_PERF.imageLodZoomThreshold` (0.45), image / PDF nodes draw a kind-color rectangle of the same footprint instead of the bitmap.
+- [✓] **Off-screen edge culling** in `linkCanvasObject`: skip pairs where both endpoints are outside the viewport (with margin).
+- [✓] **Cooldown auto-pause**: `cooldownTicks` per preset, no per-frame work after settle.
+- [✓] **Theme color cache**: `getComputedStyle(documentElement).getPropertyValue(...)` resolved once into a ref, refreshed via `MutationObserver` on `data-theme` / `class` attribute changes.
+- [✓] **Precise click hit-area**: `nodePointerAreaPaint` paints exactly `__imgW × __imgH` for previewed nodes, an 8 px disc otherwise.
+
+*Label visibility*
+- [✓] **Globals**: `Show node labels` / `Show edge labels` toggles in a new **Labels** side-panel section.
+- [✓] **Per-entity-category** chips (physical / digital / abstract / persona); hidden categories don't render labels in the canvas but their nodes still draw.
+- [✓] **Persistence**: both flags and the hidden-category set live in `humanist:settings`.
+
+*UX additions in the side panel*
+- [✓] **Collapse all previews** button (Display section) clears the toggled-image set in one click; lifted from `GraphPanel` local state into the store with localStorage persistence.
+- [✓] **Inline delete confirmation**: the previous modal in `GraphPanel` is removed; pressing Delete (or clicking a new "Delete selected" row in Selection actions) reveals a red-bordered confirm block at the top of the side panel.
+
+**Checks**
+- [✓] Switching layout modes visibly re-settles the graph; gravity tucks isolated subgraphs without merging them.
+- [✓] Opening a preview pushes neighbours out of the rectangle; closing reverts the preview to a tiny node and the exclusion zone disappears.
+- [✓] No two nodes ever overlap once the simulation has run.
+- [✓] Toggling node labels off hides every node label; per-category chips hide just one category at a time.
+- [✓] Pressing Delete in the graph reveals the inline confirm row; Yes deletes, Cancel dismisses.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 62: Properties Panel & Multi-BlobTrait Lifecycle
+**Description**
+Properties (the Entity Inspector) gains the missing day-to-day operations: a one-click **Copy ULID** icon, an attach-blob workflow with two sources (file picker, existing store), and per-row detach. Multiple `BlobTrait`s per entity were always supported by the data model (separate ulid per trait, owner is just a foreign key); the Inputs / ingest paths previously reused the entity's ulid for the trait id, implicitly enforcing 1:1. Two new IPCs make the multi-attach lifecycle first-class. A separate `import_to_store` IPC ingests a file into the CAS without attaching, used by the Graph "Set Icon…" flow so picked icons land inside the asset-protocol scope and `convertFileSrc` can serve them.
+
+**Tasks**
+- [✓] **Copy ULID button** next to the entity ID — clipboard icon flips to a check mark for ~1.2 s. Copies the bare ULID without the `entity:` prefix.
+- [✓] **Attach blob from file** (`attach_blob_to_entity` IPC): native picker → CAS ingest → fresh `BlobTrait` (own ulid) on the entity.
+- [✓] **Attach blob from store** (`attach_existing_blob_to_entity` IPC): inline filterable list of every blob in the CAS not already owned by the current entity; click attaches a new `BlobTrait` referencing the same `storage_id` (no re-upload).
+- [✓] **Detach** per blob row: small `×` button calls `delete_blob_trait` and refetches.
+- [✓] **Documents section**: lists every owned `BlobTrait` (filename · mime · size · path); count appears in the header.
+- [✓] **`import_to_store` IPC**: ingests a file into CAS without attaching to any entity, returning the absolute on-disk path inside the asset-protocol scope.
+- [✓] **Set Icon… rewires through CAS**: the Graph context-menu action now calls `import_to_store` after `pick_icon_file` so the path stored in `metadata.icon` is one the WebView is allowed to load — icons display reliably regardless of where the user picked them from.
+
+**Design decisions**
+- Decision: New IPCs (`attach_blob_to_entity`, `attach_existing_blob_to_entity`, `import_to_store`) instead of fixing the existing `ingest_entity` path.
+  Rationale: `ingest_entity` is the single-entity-with-blob create path; multi-attach is a different operation against an existing entity. Splitting the surface keeps both APIs narrow.
+- Decision: Detach has no per-row confirmation.
+  Rationale: Deleting a `BlobTrait` does not remove the underlying CAS blob (GC sweeps unreferenced bytes later). The action is recoverable by re-attaching from the store.
+
+**Checks**
+- [✓] Copy ULID copies the bare id and shows the check feedback.
+- [✓] Attach from file and attach from store both add new rows; detach removes.
+- [✓] Multiple `BlobTrait`s per entity work end-to-end (visible in Documents, listed in the Edition Doc picker).
+- [✓] Set Icon… persists the chosen image and the icon renders on the graph node immediately.
+- [✓] `cargo check --workspace` and `npm run build` both pass with zero warnings / errors.
+
+### Phase 63: Edition Right-Panel Doc Picker & Multi-Format Entity
+**Description**
+The Edition activity gains an always-visible **Doc** picker when rendered as the right side panel, listing every blob attachment first and the synthetic entity document last. Selecting an entity defaults to its first attachment if any exist, so blob-bearing entities open straight on their content. The entity doc has two variants in the picker — yaml and json — and switching between them updates both `editionDocKey` and `editionFormat` in one click. The YAML / JSON toggle in the Edition left-side panel is unconditional (no longer gated on the entity doc being active).
+
+**Tasks**
+- [✓] **`EditionPanel` `inRightPanel` prop**: gates the Doc picker so the main canvas and DWM tiled instances stay clean.
+- [✓] **App-level routing**: the right-panel content for `'edition'` instantiates `<EditionPanel inRightPanel />`; `ALL_PANES` keeps the prop off for the registry-driven instances.
+- [✓] **Doc picker** uses `ThemedSelect`; entries are `{Entity (yaml), Entity (json)} ∪ attachments`; default selection is the first attachment if any, else `Entity (yaml)`.
+- [✓] **`buildDocKeyList` reorder**: attachments first, then `entity` — picker default and Alt+[ / Alt+] navigation both land on attachments first.
+- [✓] **`setEditionEntity` default**: when called with a new entity, picks the first owned `BlobTrait`; falls back to `'entity'` only when none exist.
+- [✓] **Format toggle in `EditionSidePanel`**: shown for any open doc.
+
+**Checks**
+- [✓] Right-side panel Edition shows the Doc picker; main canvas Edition and tiled-layout Edition do not.
+- [✓] Selecting an entity with attachments opens the first attachment by default.
+- [✓] `Entity (yaml)` and `Entity (json)` are both reachable from the picker and switch the format atomically.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 64: ThemedSelect & Global UI Zoom
+**Description**
+Two cross-cutting UI improvements. First, native `<select>` popups on Linux WebKit2GTK ignore CSS background / color variables and render in OS chrome; this phase introduces a minimal click-to-open `ThemedSelect` component that mirrors native semantics (single value, click to pick, Esc / outside-click to close) but renders entirely with theme variables. Used in Settings (Theme, Language) and in the Edition Doc picker. Second, a global UI **Zoom** stepper in Settings applies CSS `zoom` to `<html>` so every pixel-based size in the codebase scales uniformly.
+
+**Tasks**
+- [✓] **`ThemedSelect` component** (`os_gui/src/components/ThemedSelect.tsx`): props `{value, onChange, options, placeholder?, disabled?, width?, size?}`; chevron icon, hover highlighting, scrollable popup.
+- [✓] **Settings Theme / Language** switched to `ThemedSelect`. The custom `SearchableDropdown` stays in places that genuinely need search (entity pickers, path-finder).
+- [✓] **Edition Doc picker** uses `ThemedSelect` with `size="sm"`.
+- [✓] **Global UI Zoom**: persisted as `uiTextScale` in `humanist:settings`, clamped to `[TEXT_SCALE_MIN, TEXT_SCALE_MAX]`; `App.tsx` applies via `documentElement.style.zoom = String(uiTextScale)`.
+- [✓] **Settings stepper**: − / value / + / Reset row labelled **Zoom**, ±5% per step, clamps at min / max.
+
+**Design decisions**
+- Decision: Use CSS `zoom` instead of root `font-size`.
+  Rationale: The codebase uses many explicit pixel sizes (`fontSize: 11`, `padding: '4px 8px'`); root font-size only affects `rem`/`em` cascades, so it had near-zero visible effect. `zoom` scales every pixel uniformly.
+- Decision: Setting label is **Zoom**, not **Text Size**.
+  Rationale: Because `zoom` scales layout dimensions in addition to text, "Zoom" is the accurate description.
+
+**Checks**
+- [✓] Theme / Language popups follow the active theme on Linux WebView.
+- [✓] Zoom stepper changes text + padding + borders proportionally; persists across reload.
+- [✓] `npm run build` passes with zero TypeScript errors.
+
+### Phase 65: Per-RelationshipType Label Visibility (deferred from Phase 61)
+**Description**
+Add a `show_label: Option<bool>` field to `RelationshipType` in the core schema so the user can hide labels for selected relationship types (e.g. structural `tagged_as` edges) without hiding the edges themselves. Bumps the canonical Prolog `relationship_type` arity from 8 to 9. The Relationships panel exposes a per-row checkbox; the Graph renderer reads the flag at edge-label paint time. Existing snapshots without the field default to `true`.
+
+**Tasks**
+- [ ] **Model**: `pub show_label: Option<bool>` on `RelationshipType` with `#[serde(default = "default_show_label")] -> true`.
+- [ ] **DB schema migration**: `DEFINE FIELD IF NOT EXISTS show_label ON relationship_type TYPE option<bool> DEFAULT true;` in `core_engine/src/db.rs`.
+- [ ] **Prolog schema**: `relationship_type/8` → `/9`; `to_facts` / `from_facts` updated; `bridging_rules` unchanged; round-trip tests amended.
+- [ ] **IPC**: `update_relationship_type` accepts the new field; existing callers default to `true`.
+- [ ] **Relationships panel UI**: a small "Show label" checkbox per row.
+- [ ] **GraphPanel**: read `rt?.show_label !== false` before drawing the edge label; arrowhead and stroke unaffected.
+- [ ] **Snapshot interop**: `prolog_engine::io` round-trips the new arity; existing `.pl` files without the field parse as `true`.
+
+**Checks**
+- [ ] `cargo test -p prolog_engine` passes including a new round-trip test that preserves `show_label`.
+- [ ] Toggling a relationship type's `show_label` off hides every label of that type without removing the edge.
+- [ ] Importing a Phase-57-era snapshot still works; all relationship types come back with `show_label = true`.
+
+**Notes / Risks / Resources**
+- This is the only remaining "Batch C" item; multi-`BlobTrait` per entity (the other deferred item) shipped in Phase 62.
+- Backwards compatibility for existing snapshots is straightforward: `from_facts` treats a missing 9th argument as `none` and `default_show_label()` resolves it to `true`.
