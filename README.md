@@ -24,6 +24,19 @@ Developed as part of a master's thesis on knowledge representation and spatial o
 
 ---
 
+## Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Getting Started](#getting-started)
+- [Key Concepts](#key-concepts)
+- [Evaluation & Benchmarks](#evaluation--benchmarks)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
+---
+
 ## Overview
 
 Humanist is a desktop application and headless CLI that treats all knowledge as a graph of typed entities connected by semantic edges. Nodes can carry spatial coordinates, temporal intervals, file attachments, and key-value metadata through composable traits rather than rigid schemas. A live-synchronised Scryer Prolog engine lets users author rules that derive new edges from existing facts; derived relationships can be persisted back into the graph.
