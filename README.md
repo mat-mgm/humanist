@@ -6,6 +6,9 @@
   <a href="https://github.com/mat-mgm/humanist/actions/workflows/ci.yml">
     <img src="https://github.com/mat-mgm/humanist/actions/workflows/ci.yml/badge.svg" alt="CI"/>
   </a>
+  <a href="https://github.com/mat-mgm/humanist/releases/latest">
+    <img src="https://img.shields.io/github/v/release/mat-mgm/humanist" alt="Latest release"/>
+  </a>
 </p>
 
 # Humanist
@@ -26,6 +29,14 @@ Developed as part of a master's thesis on knowledge representation and spatial o
 Humanist is a desktop application and headless CLI that treats all knowledge as a graph of typed entities connected by semantic edges. Nodes can carry spatial coordinates, temporal intervals, file attachments, and key-value metadata through composable traits rather than rigid schemas. A live-synchronised Scryer Prolog engine lets users author rules that derive new edges from existing facts; derived relationships can be persisted back into the graph.
 
 The system is designed around three principles: local-first operation (no cloud dependency, embedded SurrealDB), symmetrical interfaces (every CLI command has a GUI equivalent), and a content-addressed blob store modelled after Git's object model.
+
+---
+
+## Acknowledgements
+
+This project was developed as part of a master's thesis for the **Master's degree in Machine Learning and Cybersecurity for Internet Connected Systems**.
+
+Supervised by **Cristian Rodriguez Rivero** and **Alireza Nik Aein Koupaei**.
 
 ---
 
@@ -164,14 +175,6 @@ bash benchmarks/run_gui_benchmark.sh
 ```
 
 The script prompts for manual steps inside the running GUI: arrange the three view planes (Globe, Timeline, Graph), then press `Ctrl+Shift+B` to start the suite (3 warm-up + 30 measured trials per plane). Results are saved to `docs/thesis/results/frontend_sync_lag.csv`.
-
----
-
-## Acknowledgements
-
-This project was developed as part of a master's thesis for the **Master's degree in Machine Learning and Cybersecurity for Internet Connected Systems**.
-
-Supervised by **Cristian Rodriguez Rivero** and **Alireza Nik Aein Koupaei**.
 
 ---
 
