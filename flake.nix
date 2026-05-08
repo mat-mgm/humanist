@@ -71,9 +71,7 @@
 
             buildPhase = ''
               runHook preBuild
-              cd os_gui
-              cargo tauri build --bundles none
-              cd ..
+              cargo build --release -p os_gui
               runHook postBuild
             '';
 
