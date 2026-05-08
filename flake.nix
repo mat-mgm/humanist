@@ -47,7 +47,7 @@
             pname       = "humanist-frontend";
             version     = "0.1.0";
             src         = ./os_gui;
-            npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+            npmDepsHash = "sha256-Zu13kH+rZk3mR1P2kLTnjjTBm3XQ9n1ajHGkzuVSNUg=";
             installPhase = ''
               mkdir -p $out
               cp -r dist/. $out/
@@ -61,7 +61,7 @@
             src     = ./.;
             cargoLock.lockFile = ./Cargo.lock;
 
-            nativeBuildInputs = (mkNativeBuildInputs pkgs) ++ [ pkgs.wrapGAppsHook ];
+            nativeBuildInputs = (mkNativeBuildInputs pkgs) ++ [ pkgs.wrapGAppsHook3 ];
             buildInputs       = mkBuildInputs pkgs;
 
             preBuild = ''
