@@ -31,7 +31,7 @@
 
       mkNativeBuildInputs = pkgs: with pkgs; [
         pkg-config gobject-introspection (mkRustToolchain pkgs)
-        cargo-tauri nodejs typescript protobuf
+        cargo-tauri bun typescript protobuf
       ];
     in
     {
@@ -43,15 +43,28 @@
           # Build the Vite frontend separately so Cargo's sandbox can use it.
           # On first run, replace the npmDepsHash with the one reported in the
           # error: run `nix build` and copy the hash from the output.
-          frontend = pkgs.buildNpmPackage {
+          frontend = pkgs.stdenv.mkDerivation {
             pname       = "humanist-frontend";
             version     = "0.1.0";
             src         = ./os_gui;
-            npmDepsHash = "sha256-Zu13kH+rZk3mR1P2kLTnjjTBm3XQ9n1ajHGkzuVSNUg=";
+            nativeBuildInputs = [ pkgs.bun pkgs.cacert ];
+            GIT_SSL_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+            buildPhase = ''
+              export HOME=$TMPDIR
+              bun install --no-save --backend=copy
+              mkdir -p $TMPDIR/bin
+              ln -s ${pkgs.bun}/bin/bun $TMPDIR/bin/node
+              export PATH=$TMPDIR/bin:$PATH
+              patchShebangs node_modules
+              bun run build
+            '';
             installPhase = ''
               mkdir -p $out
               cp -r dist/. $out/
             '';
+            outputHashAlgo = "sha256";
+            outputHashMode = "recursive";
+            outputHash = "sha256-IXGUKBC3fAi1tp7fu5RwSAy4PIIZD5QJyxK9Jvi61uY=";
           };
         in
         {

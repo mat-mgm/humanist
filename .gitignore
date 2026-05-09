@@ -4,6 +4,7 @@ test
 data
 docs
 assets
+project_humanist.md
 
 # Rust
 target
