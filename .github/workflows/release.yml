@@ -60,7 +60,7 @@ jobs:
         working-directory: os_gui
 
       - name: Build GUI packages
-        run: npx tauri build
+        run: bunx tauri build
         working-directory: os_gui
 
       - name: List build artifacts
@@ -114,7 +114,7 @@ jobs:
         working-directory: os_gui
 
       - name: Build GUI packages
-        run: npx tauri build
+        run: bunx tauri build
         working-directory: os_gui
 
       - name: List build artifacts
