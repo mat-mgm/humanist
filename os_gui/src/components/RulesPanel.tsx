@@ -117,6 +117,57 @@ near(A, B) :-
     D < 50.0.
 `,
   },
+  {
+    label: 'sibling',
+    filename: 'sibling.pl',
+    body: `% sibling: pairs of entities that share the same direct parent via
+% 'contains' (Class C — structural kinship). Surfaces items in the same
+% immediate group, school, or collection without traversing the full
+% hierarchy. Cheaper than descendant because it only looks one level up.
+
+sibling(X, Y) :-
+    edge(P, X, contains),
+    edge(P, Y, contains),
+    X @< Y.
+`,
+  },
+  {
+    label: 'temporal_overlap',
+    filename: 'temporal_overlap.pl',
+    body: `% temporal_overlap: pairs of entities whose temporal spans overlap
+% (Class D — temporal coincidence). Both entities need a starts_at and
+% ends_at on their temporal_trait. Answers "who was alive at the same
+% time?" or "which events ran concurrently?".
+%
+% Uses ISO-string lexicographic order (YYYY-MM-DDTHH:MM:SSZ), which is
+% correct for CE dates. BCE strings (starting with '-') sort incorrectly
+% under this scheme and are excluded by the sub_atom guard below.
+
+temporal_overlap(A, B) :-
+    temporal_trait(_, A, none, Sa, Ea, _),
+    temporal_trait(_, B, none, Sb, Eb, _),
+    A @< B,
+    Sa \\= none, Ea \\= none,
+    Sb \\= none, Eb \\= none,
+    sub_atom(Sa, 0, 1, _, Ca), Ca @>= '0',
+    sub_atom(Sb, 0, 1, _, Cb), Cb @>= '0',
+    Sa @=< Eb,
+    Sb @=< Ea.
+`,
+  },
+  {
+    label: 'evolved_from',
+    filename: 'evolved_from.pl',
+    body: `% evolved_from: transitive closure of 'evolved_into' edges
+% (Class A — lineage reachability). Surfaces indirect evolutionary or
+% derivation chains. Best used with the tech_evolution dataset where
+% eras and inventions carry explicit 'evolved_into' edges.
+% e.g. evolved_from(stone_age, information_age) is true across 9 hops.
+
+evolved_from(X, Y) :- edge(X, Y, evolved_into).
+evolved_from(X, Z) :- edge(X, Y, evolved_into), evolved_from(Y, Z).
+`,
+  },
 ];
 
 export function RulesPanel() {
