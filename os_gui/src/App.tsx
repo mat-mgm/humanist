@@ -6,6 +6,7 @@ import { Minus, Square, X, SplitSquareHorizontal, Search, Globe, Clock, Calendar
 import './App.css';
 
 import { useOsStore } from './store';
+import { loadPersistedSettings, persistSettings } from './config';
 import { ActivityBar } from './components/ActivityBar';
 import { SidePanel } from './components/SidePanel';
 import { GraphPanel } from './components/GraphPanel';
@@ -167,7 +168,11 @@ export default function App() {
     if (PRIMARY_CANVAS_IDS.has(activeActivity)) setPrimaryCanvasId(activeActivity);
   }, [activeActivity]);
 
-  const [theme, setTheme]           = useState<Theme>('tokyo-night');
+  const [theme, setTheme]           = useState<Theme>(() => loadPersistedSettings().theme ?? 'github-light');
+  const handleThemeChange = useCallback((newTheme: Theme) => {
+    setTheme(newTheme);
+    persistSettings({ theme: newTheme });
+  }, []);
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   // ── Side panel resize ─────────────────────────────────────────────────────
@@ -556,7 +561,7 @@ export default function App() {
 
             <SidePanel
               theme={theme}
-              onThemeChange={setTheme}
+              onThemeChange={handleThemeChange}
               width={sidePanelWidth}
             />
             <div className="side-panel-resizer" onPointerDown={onSidePanelResizeStart} />

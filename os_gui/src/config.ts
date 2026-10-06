@@ -110,15 +110,15 @@ export const KIND_COLORS: Record<string, string> = {
 // via the Graph side panel; the GraphPanel re-applies on every mode change.
 export const GRAPH_PRESETS: Record<GraphLayoutMode, ForceGraphParams> = {
   default: {
-    chargeStrength: -50,
-    chargeDistanceMin: 8,
-    chargeDistanceMax: 300,
-    linkDistance: 40,
+    chargeStrength: -150,
+    chargeDistanceMin: 10,
+    chargeDistanceMax: 500,
+    linkDistance: 80,
     alphaDecay: 0.02,
     velocityDecay: 0.3,
     cooldownTicks: 300,
     flowBias: 0.6,
-    gravityStrength: 0.06,
+    gravityStrength: 0.02,
   },
   // Many small dense subgraphs: stronger charge to push clusters apart, shorter
   // links so each cluster stays compact, slower cooldown so the layout settles.
@@ -195,7 +195,7 @@ export const PANEL_SIZES = {
   rightPanelMax:     720,
 };
 
-export const DEFAULT_THEME: Theme = 'tokyo-night';
+export const DEFAULT_THEME: Theme = 'github-light';
 export const DEFAULT_LOCALE: Locale = 'en';
 export const DEFAULT_GRAPH_MODE: GraphLayoutMode = 'default';
 
