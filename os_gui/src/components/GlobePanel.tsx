@@ -211,12 +211,15 @@ export const GlobePanel = memo(function GlobePanel() {
     if (selectedId) {
       const target = spatialTraits.find(t => t.owner === selectedId);
       if (target) {
+        const targetLng = target.lng ?? ((target.bbox && target.bbox.length === 4) ? (target.bbox[0] + target.bbox[2]) / 2 : 0);
+        const targetLat = target.lat ?? ((target.bbox && target.bbox.length === 4) ? (target.bbox[1] + target.bbox[3]) / 2 : 0);
+        const isBbox = target.bbox && target.bbox.length === 4;
         viewer.camera.flyTo({
-          destination: Cartesian3.fromDegrees(target.lng, target.lat, 2_000_000),
+          destination: Cartesian3.fromDegrees(targetLng, targetLat, isBbox ? 800_000 : 150_000),
           duration: 1.5,
           orientation: {
             heading: CesiumMath.toRadians(0),
-            pitch: CesiumMath.toRadians(-45),
+            pitch: CesiumMath.toRadians(-90), // Point straight down so the target is perfectly centered
             roll: 0,
           },
         });

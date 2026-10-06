@@ -1205,6 +1205,8 @@ export const GraphPanel = memo(function GraphPanel() {
     resolveRectCollisionsRef.current = resolveAllCollisions;
 
     g.onNodeDragEnd((node: any) => {
+      node.fx = node.x;
+      node.fy = node.y;
       if (node.id) updateNodePosition(node.id, node.x, node.y);
     });
 
@@ -1426,6 +1428,10 @@ export const GraphPanel = memo(function GraphPanel() {
         live.label = displayLabel;
         live.category = entity.category;
         live.metadata = values;
+        if (saved) {
+          live.fx = saved.x;
+          live.fy = saved.y;
+        }
         nextNodes.push(live);
       } else {
         nextNodes.push({
@@ -1434,7 +1440,9 @@ export const GraphPanel = memo(function GraphPanel() {
           category: entity.category,
           metadata: values,
           x: saved?.x,
-          y: saved?.y
+          y: saved?.y,
+          fx: saved?.x,
+          fy: saved?.y
         });
       }
     }
