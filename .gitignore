@@ -53,3 +53,6 @@ result-*
 
 # Benchmarks
 benchmarks/
+
+# local demo seeding script (depends on ignored test/seeds)
+demo.sh
