@@ -18,7 +18,7 @@
       };
 
       mkRustToolchain = pkgs: pkgs.rust-bin.stable.latest.default.override {
-        extensions = [ "rust-src" "rustfmt" "clippy" ];
+        extensions = [ "rust-src" "rust-analyzer" "rustfmt" "clippy" ];
       };
 
       mkBuildInputs = pkgs: with pkgs; [
@@ -109,11 +109,25 @@
       devShells = forAllSystems (system:
         let
           pkgs                    = mkPkgs system;
-          commonNativeBuildInputs = (mkNativeBuildInputs pkgs) ++ (with pkgs; [
+          # Standard Rust dev tooling (same set as ../template)
+          devTools = with pkgs; [
+            clang sccache
+            bacon cargo-nextest cargo-seek cargo-sweep cargo-cache
+          ] ++ lib.optional stdenv.isLinux mold;
+          commonNativeBuildInputs = (mkNativeBuildInputs pkgs) ++ devTools ++ (with pkgs; [
             bash coreutils findutils xdg-utils
           ]);
           commonBuildInputs = mkBuildInputs pkgs;
           commonShellHook   = ''
+            export RUST_BACKTRACE=1
+            export RUSTC_WRAPPER=sccache
+            export SCCACHE_DIR="$HOME/.cache/sccache"
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              # Fast linking, scoped to this shell so CI and release builds are unaffected
+              export CARGO_TARGET_${if pkgs.stdenv.isAarch64 then "AARCH64" else "X86_64"}_UNKNOWN_LINUX_GNU_LINKER=clang
+              export CARGO_TARGET_${if pkgs.stdenv.isAarch64 then "AARCH64" else "X86_64"}_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+            ''}
+            export RUST_SRC_PATH="${(mkRustToolchain pkgs)}/lib/rustlib/src/rust/library"
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath (with pkgs; [
               webkitgtk_4_1 gtk3 cairo gdk-pixbuf glib dbus openssl
               gst_all_1.gstreamer gst_all_1.gst-plugins-base

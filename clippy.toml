@@ -1,0 +1,11 @@
+# ==============================================================================
+# Clippy Configuration
+# ==============================================================================
+# While production code strictly denies unwraps, panics, and indexing slicing,
+# tests often benefit from concise assertions and unwrap shortcuts.
+# These flags selectively allow them within #[test] functions and test modules.
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
